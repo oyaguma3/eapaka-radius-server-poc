@@ -1,0 +1,35 @@
+{
+    "eap_aka_log": {
+        "title": "EAP-AKA System Logs",
+        "description": "Structured logs from Go RADIUS PoC",
+        "url": "http://localhost",
+        "json": true,
+        "key_field": "time",
+        "level_field": "level",
+        "body_field": "msg",
+        "timestamp_format": "%Y-%m-%dT%H:%M:%S.%L%Z",
+        "value": {
+            "imsi": { "kind": "string", "identifier": true },
+            "trace_id": { "kind": "string", "identifier": true },
+            "event_id": { "kind": "string", "identifier": true },
+            "backend_id": { "kind": "string", "identifier": true },
+            "plmn": { "kind": "string", "identifier": true },
+            "latency_ms": { "kind": "integer" },
+            "input_octets": { "kind": "integer" },
+            "output_octets": { "kind": "integer" },
+            "retry_count": { "kind": "integer" },
+            "downtime_ms": { "kind": "integer" },
+            "failure_count": { "kind": "integer" },
+            "resync_count": { "kind": "integer" },
+            "http_status": { "kind": "integer" }
+        },
+        "line_format": [
+            { "field": "time" }, " ",
+            { "field": "level" }, " ",
+            { "field": "app" }, " ",
+            { "field": "event_id", "default": "-" }, " ",
+            "[", { "field": "imsi", "default": "no-imsi" }, "] ",
+            { "field": "msg" }
+        ]
+    }
+}
