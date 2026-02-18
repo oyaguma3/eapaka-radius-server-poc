@@ -1,0 +1,154 @@
+x-logging: &fluent-bit-logging
+  driver: fluentd
+  options:
+    fluentd-address: localhost:24224
+    fluentd-async: "true"
+    fluentd-buffer-limit: "1048576"
+    tag: "{{.Name}}.logs"
+
+x-timezone: &timezone
+  TZ: Asia/Tokyo
+
+services:
+  # ==========================================================================
+  # Logic Layer
+  # ==========================================================================
+  auth-server:
+    build: ../apps/auth-server
+    ports:
+      - "1812:1812/udp"
+    environment:
+      <<: *timezone
+      REDIS_HOST: valkey
+      REDIS_PORT: "6379"
+      REDIS_PASS: ${VALKEY_PASSWORD}
+      VECTOR_API_URL: http://vector-gateway:8080
+      RADIUS_SECRET: ${RADIUS_SECRET}
+      LOG_MASK_IMSI: ${LOG_MASK_IMSI:-true}
+    depends_on:
+      valkey:
+        condition: service_healthy
+      vector-gateway:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "pgrep", "-x", "auth-server"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: always
+    logging: *fluent-bit-logging
+
+  acct-server:
+    build: ../apps/acct-server
+    ports:
+      - "1813:1813/udp"
+    environment:
+      <<: *timezone
+      REDIS_HOST: valkey
+      REDIS_PORT: "6379"
+      REDIS_PASS: ${VALKEY_PASSWORD}
+      RADIUS_SECRET: ${RADIUS_SECRET}
+      LOG_MASK_IMSI: ${LOG_MASK_IMSI:-true}
+    depends_on:
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "pgrep", "-x", "acct-server"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: always
+    logging: *fluent-bit-logging
+
+  vector-gateway:
+    build: ../apps/vector-gateway
+    expose:
+      - "8080"
+    environment:
+      <<: *timezone
+      VECTOR_GATEWAY_MODE: ${VECTOR_GATEWAY_MODE:-gateway}
+      VECTOR_GATEWAY_INTERNAL_URL: http://vector-api:8080
+      VECTOR_GATEWAY_PLMN_MAP: ${VECTOR_GATEWAY_PLMN_MAP:-}
+      VECTOR_GATEWAY_INTERNAL_TIMEOUT: ${VECTOR_GATEWAY_INTERNAL_TIMEOUT:-5s}
+      LOG_MASK_IMSI: ${LOG_MASK_IMSI:-true}
+    depends_on:
+      vector-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: always
+    logging: *fluent-bit-logging
+
+  vector-api:
+    build: ../apps/vector-api
+    expose:
+      - "8080"
+    environment:
+      <<: *timezone
+      REDIS_HOST: valkey
+      REDIS_PORT: "6379"
+      REDIS_PASS: ${VALKEY_PASSWORD}
+      LOG_MASK_IMSI: ${LOG_MASK_IMSI:-true}
+    depends_on:
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: always
+    logging: *fluent-bit-logging
+
+  # ==========================================================================
+  # Data Layer
+  # ==========================================================================
+  valkey:
+    image: valkey/valkey:9.0
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - valkey_data:/data
+    command: >
+      valkey-server
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 512mb
+      --maxmemory-policy noeviction
+      --requirepass ${VALKEY_PASSWORD}
+    environment:
+      <<: *timezone
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-a", "${VALKEY_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    restart: always
+    logging: *fluent-bit-logging
+
+  # ==========================================================================
+  # Logging Layer
+  # ==========================================================================
+  fluent-bit:
+    image: fluent/fluent-bit:3.0
+    ports:
+      - "24224:24224"
+      - "24224:24224/udp"
+    volumes:
+      - ../configs/fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+      - ../configs/fluent-bit/parsers.conf:/fluent-bit/etc/parsers.conf:ro
+      - ./logs_on_host:/output_logs
+    environment:
+      <<: *timezone
+    restart: always
+
+volumes:
+  valkey_data:

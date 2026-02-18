@@ -1,0 +1,10 @@
+go 1.25.5
+
+use (
+	./apps/acct-server
+	./apps/admin-tui
+	./apps/auth-server
+	./apps/vector-api
+	./apps/vector-gateway
+	./pkg
+)

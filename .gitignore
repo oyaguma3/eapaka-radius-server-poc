@@ -1,0 +1,28 @@
+# 環境変数（機密情報）
+.env
+!.env.example
+
+# テストカバレッジ
+cover.out
+coverage.out
+
+# バイナリ
+*.exe
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 内部ドキュメント
+docs/subdocs/
+docs/testresults/
+
+# ホスト上のログ出力
+deployments/logs_on_host/*.log
+
+# Claude Code
+.claude/
