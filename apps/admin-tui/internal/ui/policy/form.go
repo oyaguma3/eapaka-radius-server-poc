@@ -160,7 +160,7 @@ func (s *FormScreen) updateRulesList() {
 
 func (s *FormScreen) showAddRuleDialog() {
 	s.showRuleDialog(-1, &model.PolicyRule{
-		NasID:        "*",
+		NasID:        "example.com",
 		AllowedSSIDs: []string{},
 	})
 }
@@ -346,8 +346,7 @@ func (s *FormScreen) setupKeyBindings() {
 			s.handleCancel()
 			return nil
 		}
-		if event.Key() == tcell.KeyTab {
-			// TabでルールリストにフォーカスTogle
+		if event.Key() == tcell.KeyF6 {
 			s.app.SetFocus(s.rulesList)
 			return nil
 		}

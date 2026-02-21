@@ -1,14 +1,16 @@
 package ui
 
 import (
+	"fmt"
+
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
 
 // HelpModal はヘルプモーダルを表示する。
 type HelpModal struct {
-	modal   *tview.Modal
-	onClose func()
+	primitive tview.Primitive
+	onClose   func()
 }
 
 // HelpSection はヘルプのセクションを表す。
@@ -17,48 +19,89 @@ type HelpSection struct {
 	Bindings []KeyBinding
 }
 
+// formatSection はセクションのテキストを生成する。
+func formatSection(section HelpSection) string {
+	content := "[yellow::b]" + section.Title + "[::-]\n"
+	for _, b := range section.Bindings {
+		var keyStr string
+		if b.Key != 0 {
+			keyStr = keyToString(b.Key)
+		} else {
+			keyStr = string(b.Rune)
+		}
+		content += fmt.Sprintf("  [cyan]%-10s[-] %s\n", keyStr, b.Description)
+	}
+	return content
+}
+
 // NewHelpModal は新しいHelpModalを生成する。
 func NewHelpModal(sections []HelpSection, onClose func()) *HelpModal {
-	content := ""
+	// 左カラム: Navigation + Global
+	leftContent := ""
+	// 右カラム: List Actions
+	rightContent := ""
 
-	for i, section := range sections {
-		if i > 0 {
-			content += "\n"
-		}
-		content += "[::b]" + section.Title + "[::-]\n"
-		for _, b := range section.Bindings {
-			var keyStr string
-			if b.Key != 0 {
-				keyStr = keyToString(b.Key)
-			} else {
-				keyStr = string(b.Rune)
+	for _, section := range sections {
+		switch section.Title {
+		case "List Actions":
+			rightContent += formatSection(section)
+		default:
+			if leftContent != "" {
+				leftContent += "\n"
 			}
-			content += "  " + keyStr + "  " + b.Description + "\n"
+			leftContent += formatSection(section)
 		}
 	}
 
-	modal := tview.NewModal().
-		SetText(content).
-		AddButtons([]string{"Close"}).
-		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
-			if onClose != nil {
-				onClose()
-			}
-		})
+	// Policy Form用のF6キーバインド情報を右カラムに追記
+	rightContent += "\n[yellow::b]Policy Form[::-]\n"
+	rightContent += fmt.Sprintf("  [cyan]%-10s[-] %s\n", "F6", "Toggle Form/Rules focus")
 
-	modal.SetTitle(" Help ").
+	leftView := tview.NewTextView().
+		SetDynamicColors(true).
+		SetText(leftContent)
+
+	rightView := tview.NewTextView().
+		SetDynamicColors(true).
+		SetText(rightContent)
+
+	columns := tview.NewFlex().
+		AddItem(leftView, 0, 1, false).
+		AddItem(rightView, 0, 1, false)
+
+	columns.SetTitle(" Help ").
+		SetTitleAlign(tview.AlignCenter).
 		SetBorder(true).
 		SetBorderColor(tcell.ColorTeal)
 
+	columns.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyEsc || event.Key() == tcell.KeyEnter {
+			if onClose != nil {
+				onClose()
+			}
+			return nil
+		}
+		return event
+	})
+
+	// centered でモーダル風に表示（幅80, 高さ20）
+	wrapper := tview.NewFlex().
+		AddItem(nil, 0, 1, false).
+		AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
+			AddItem(nil, 0, 1, false).
+			AddItem(columns, 20, 1, true).
+			AddItem(nil, 0, 1, false), 80, 1, true).
+		AddItem(nil, 0, 1, false)
+
 	return &HelpModal{
-		modal:   modal,
-		onClose: onClose,
+		primitive: wrapper,
+		onClose:   onClose,
 	}
 }
 
-// GetModal は内部のtview.Modalを返す。
-func (h *HelpModal) GetModal() *tview.Modal {
-	return h.modal
+// GetPrimitive は内部のtview.Primitiveを返す。
+func (h *HelpModal) GetPrimitive() tview.Primitive {
+	return h.primitive
 }
 
 // GetDefaultHelpSections はデフォルトのヘルプセクションを返す。

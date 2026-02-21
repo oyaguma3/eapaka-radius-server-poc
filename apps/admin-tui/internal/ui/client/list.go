@@ -204,7 +204,15 @@ func (s *ListScreen) render() {
 
 	// 選択を先頭に
 	if len(pageItems) > 0 {
+		s.table.SetSelectable(true, false)
 		s.table.Select(1, 0)
+	} else {
+		s.table.SetSelectable(false, false)
+		emptyCell := tview.NewTableCell("(No data)").
+			SetTextColor(tcell.ColorGray).
+			SetAlign(tview.AlignCenter).
+			SetSelectable(false)
+		s.table.SetCell(1, 0, emptyCell)
 	}
 }
 
@@ -236,13 +244,15 @@ func (s *ListScreen) setupKeyBindings() {
 			}
 			return nil
 		case tcell.KeyF5:
-			s.app.QueueUpdateDraw(func() {
-				if err := s.Refresh(context.Background()); err != nil {
-					s.app.GetStatusBar().ShowError("Failed to refresh: " + err.Error())
-				} else {
-					s.app.GetStatusBar().ShowSuccess("Refreshed")
-				}
-			})
+			go func() {
+				s.app.QueueUpdateDraw(func() {
+					if err := s.Refresh(context.Background()); err != nil {
+						s.app.GetStatusBar().ShowError("Failed to refresh: " + err.Error())
+					} else {
+						s.app.GetStatusBar().ShowSuccess("Refreshed")
+					}
+				})
+			}()
 			return nil
 		case tcell.KeyPgUp:
 			if s.pagination.PrevPage() {
@@ -278,13 +288,15 @@ func (s *ListScreen) setupKeyBindings() {
 			}
 			return nil
 		case 'r':
-			s.app.QueueUpdateDraw(func() {
-				if err := s.Refresh(context.Background()); err != nil {
-					s.app.GetStatusBar().ShowError("Failed to refresh: " + err.Error())
-				} else {
-					s.app.GetStatusBar().ShowSuccess("Refreshed")
-				}
-			})
+			go func() {
+				s.app.QueueUpdateDraw(func() {
+					if err := s.Refresh(context.Background()); err != nil {
+						s.app.GetStatusBar().ShowError("Failed to refresh: " + err.Error())
+					} else {
+						s.app.GetStatusBar().ShowSuccess("Refreshed")
+					}
+				})
+			}()
 			return nil
 		case '/':
 			s.showFilterDialog()

@@ -56,6 +56,11 @@ func (s *StatisticsScreen) GetFlex() *tview.Flex {
 	return s.flex
 }
 
+// GetTextView は内部のtview.TextViewを返す。
+func (s *StatisticsScreen) GetTextView() *tview.TextView {
+	return s.textView
+}
+
 // Load はデータを読み込む。
 func (s *StatisticsScreen) Load(ctx context.Context) error {
 	stats, err := s.statisticsStore.Get(ctx)
@@ -108,13 +113,15 @@ func (s *StatisticsScreen) setupKeyBindings() {
 
 		switch event.Rune() {
 		case 'r':
-			s.app.QueueUpdateDraw(func() {
-				if err := s.Refresh(context.Background()); err != nil {
-					s.app.GetStatusBar().ShowError("Failed to refresh: " + err.Error())
-				} else {
-					s.app.GetStatusBar().ShowSuccess("Statistics refreshed")
-				}
-			})
+			go func() {
+				s.app.QueueUpdateDraw(func() {
+					if err := s.Refresh(context.Background()); err != nil {
+						s.app.GetStatusBar().ShowError("Failed to refresh: " + err.Error())
+					} else {
+						s.app.GetStatusBar().ShowSuccess("Statistics refreshed")
+					}
+				})
+			}()
 			return nil
 		case 'q':
 			if s.onBack != nil {

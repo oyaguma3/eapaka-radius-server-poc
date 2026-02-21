@@ -171,7 +171,7 @@ func (a *Application) showHelp() {
 		a.app.RemovePage("help")
 	})
 
-	a.app.AddPage("help", helpModal.GetModal(), true, true)
+	a.app.AddPage("help", helpModal.GetPrimitive(), true, true)
 }
 
 // Subscriber Management
@@ -187,7 +187,7 @@ func (a *Application) showSubscriberList() {
 	})
 
 	screen.SetOnDelete(func(imsi string) {
-		a.showDeleteConfirm("subscriber", imsi, func() {
+		a.showDeleteConfirm("subscriber", imsi, screen.GetTable(), func() {
 			ctx := context.Background()
 			if err := a.subscriberStore.Delete(ctx, imsi); err != nil {
 				a.app.GetStatusBar().ShowError("Failed to delete: " + err.Error())
@@ -200,6 +200,8 @@ func (a *Application) showSubscriberList() {
 	})
 
 	screen.SetOnBack(func() {
+		a.app.HidePage("subscriber-list")
+		a.app.RemovePage("subscriber-list")
 		a.app.SwitchToPage("main-menu")
 	})
 
@@ -223,6 +225,7 @@ func (a *Application) showSubscriberForm(editMode bool, imsi string) {
 	screen.SetOnSave(func() {
 		a.app.HidePage("subscriber-form")
 		a.app.RemovePage("subscriber-form")
+		a.app.RemovePage("subscriber-list")
 		a.showSubscriberList()
 	})
 
@@ -258,7 +261,7 @@ func (a *Application) showClientList() {
 	})
 
 	screen.SetOnDelete(func(ip string) {
-		a.showDeleteConfirm("client", ip, func() {
+		a.showDeleteConfirm("client", ip, screen.GetTable(), func() {
 			ctx := context.Background()
 			if err := a.clientStore.Delete(ctx, ip); err != nil {
 				a.app.GetStatusBar().ShowError("Failed to delete: " + err.Error())
@@ -271,6 +274,8 @@ func (a *Application) showClientList() {
 	})
 
 	screen.SetOnBack(func() {
+		a.app.HidePage("client-list")
+		a.app.RemovePage("client-list")
 		a.app.SwitchToPage("main-menu")
 	})
 
@@ -293,6 +298,7 @@ func (a *Application) showClientForm(editMode bool, ip string) {
 	screen.SetOnSave(func() {
 		a.app.HidePage("client-form")
 		a.app.RemovePage("client-form")
+		a.app.RemovePage("client-list")
 		a.showClientList()
 	})
 
@@ -328,7 +334,7 @@ func (a *Application) showPolicyList() {
 	})
 
 	screen.SetOnDelete(func(imsi string) {
-		a.showDeleteConfirm("policy", imsi, func() {
+		a.showDeleteConfirm("policy", imsi, screen.GetTable(), func() {
 			ctx := context.Background()
 			if err := a.policyStore.Delete(ctx, imsi); err != nil {
 				a.app.GetStatusBar().ShowError("Failed to delete: " + err.Error())
@@ -341,6 +347,8 @@ func (a *Application) showPolicyList() {
 	})
 
 	screen.SetOnBack(func() {
+		a.app.HidePage("policy-list")
+		a.app.RemovePage("policy-list")
 		a.app.SwitchToPage("main-menu")
 	})
 
@@ -363,6 +371,7 @@ func (a *Application) showPolicyForm(editMode bool, imsi string) {
 	screen.SetOnSave(func() {
 		a.app.HidePage("policy-form")
 		a.app.RemovePage("policy-form")
+		a.app.RemovePage("policy-list")
 		a.showPolicyList()
 	})
 
@@ -463,6 +472,7 @@ func (a *Application) showStatistics() {
 
 	a.app.AddPage("statistics", screen.GetFlex(), true, false)
 	a.app.SwitchToPage("statistics")
+	a.app.SetFocus(screen.GetTextView())
 
 	go func() {
 		a.app.QueueUpdateDraw(func() {
@@ -516,7 +526,7 @@ func (a *Application) showSessionDetail() {
 }
 
 // Helpers
-func (a *Application) showDeleteConfirm(targetType, identifier string, onConfirm func()) {
+func (a *Application) showDeleteConfirm(targetType, identifier string, focusAfter tview.Primitive, onConfirm func()) {
 	dialog := ui.NewConfirmDialog(
 		"Confirm Delete",
 		"Are you sure you want to delete this "+targetType+"?\n\n"+identifier,
@@ -524,10 +534,16 @@ func (a *Application) showDeleteConfirm(targetType, identifier string, onConfirm
 			a.app.HidePage("delete-confirm")
 			a.app.RemovePage("delete-confirm")
 			onConfirm()
+			if focusAfter != nil {
+				a.app.SetFocus(focusAfter)
+			}
 		},
 		func() {
 			a.app.HidePage("delete-confirm")
 			a.app.RemovePage("delete-confirm")
+			if focusAfter != nil {
+				a.app.SetFocus(focusAfter)
+			}
 		},
 	)
 

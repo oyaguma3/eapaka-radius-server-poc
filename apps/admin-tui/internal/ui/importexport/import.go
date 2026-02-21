@@ -251,6 +251,29 @@ func (s *ImportScreen) handleImport() {
 	}
 
 	s.resultView.SetText(result.String())
+
+	// Import成功後、Done/Import Moreボタンを表示
+	s.form.Clear(true)
+	s.form.SetTitle(" Import Completed ")
+	s.form.AddButton("Done", func() {
+		if s.onComplete != nil {
+			s.onComplete()
+		}
+	})
+	s.form.AddButton("Import More", func() {
+		s.setupForm()
+		s.resultView.SetText("")
+	})
+
+	// InputCaptureを再登録（form.Clear(true)で消失するため）
+	s.form.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyEsc {
+			s.handleCancel()
+			return nil
+		}
+		return event
+	})
+	s.app.SetFocus(s.form)
 }
 
 func (s *ImportScreen) handleCancel() {

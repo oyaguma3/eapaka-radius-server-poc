@@ -63,9 +63,16 @@ func (a *App) AddPage(name string, page tview.Primitive, resize, visible bool) {
 	a.pages.AddPage(name, page, resize, visible)
 }
 
+// Sync はターミナル画面全体の再描画を強制する。
+func (a *App) Sync() {
+	a.app.Sync()
+}
+
 // SwitchToPage は指定されたページに切り替える。
+// ページ切替後にSync()で完全再描画を強制し、前画面の残存を防ぐ。
 func (a *App) SwitchToPage(name string) {
 	a.pages.SwitchToPage(name)
+	a.app.Sync()
 }
 
 // ShowPage は指定されたページを表示する。
@@ -79,8 +86,10 @@ func (a *App) HidePage(name string) {
 }
 
 // RemovePage はページを削除する。
+// ページ削除後にSync()で完全再描画を強制し、ダイアログ枠等の残存を防ぐ。
 func (a *App) RemovePage(name string) {
 	a.pages.RemovePage(name)
+	a.app.Sync()
 }
 
 // SetFocus はフォーカスを設定する。
