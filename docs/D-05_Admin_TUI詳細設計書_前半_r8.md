@@ -1,4 +1,4 @@
-# D-05 Admin TUI 詳細設計書【前半】(r6)
+# D-05 Admin TUI 詳細設計書【前半】(r8)
 
 ## 1. 概要
 
@@ -204,7 +204,7 @@ HSET "policy:440101234567890" "default" "deny" "rules" '[{"ssid":"CORP-WIFI","ac
 | `n` | 新規登録画面へ |
 | `d` | 削除確認ダイアログ表示 |
 | `/` | 検索モード（フィルタ入力） |
-| `r` | 一覧を再読み込み |
+| `r` / `F5` | 一覧を再読み込み |
 | `←` | 前のページへ |
 | `→` | 次のページへ |
 
@@ -283,7 +283,128 @@ HSET "policy:440101234567890" "default" "deny" "rules" '[{"ssid":"CORP-WIFI","ac
 | UI形式 | `[Prev] Page 1/25 [Next]` |
 | フィルタ併用時 | 取得済みデータに適用、必要に応じて追加取得 |
 
-### 3.9 テキスト切り詰め仕様
+### 3.9 ページライフサイクル管理
+
+#### 画面遷移時のページクリーンアップパターン
+
+tviewはtcell上で動作し、tcellは**変更されたセルのみ更新**する差分レンダリングを行う。ページ遷移時に、削除されたページの内容がターミナルバッファに残存し、新ページのウィジェットが描画しない領域が更新されない問題がある。
+
+この問題を回避するため、以下のページ遷移パターンを採用する。
+
+**遷移元ページを破棄する場合（リスト画面→メニュー、フォーム→リスト等）：**
+
+```go
+// 1. ページを非表示にする
+app.HidePage("current-page")
+// 2. ページを削除する
+app.RemovePage("current-page")
+// 3. 遷移先ページに切り替える
+app.SwitchToPage("target-page")
+```
+
+**SwitchToPage / RemovePage のSync()呼び出し：**
+
+`SwitchToPage()` および `RemovePage()` は内部で `tcell.Screen.Sync()` を呼び出し、全セルの再描画を強制する。これにより、前画面の残存描画を確実にクリアする。
+
+#### InputCapture内でのQueueUpdateDraw
+
+tview v0.42.0の `QueueUpdateDraw` は内部で `Draw()` を呼び、`Draw()` はmutexロックを取得する。`InputCapture`（イベントハンドラ）処理中は既にmutexがロックされているため、直接呼び出すとデッドロックが発生する。
+
+**対策：** `InputCapture` 内から `QueueUpdateDraw` を呼ぶ場合は、goroutineでラップする。
+
+```go
+// InputCapture 内での正しい呼び出しパターン
+go func() {
+    s.app.QueueUpdateDraw(func() {
+        if err := s.Refresh(context.Background()); err != nil {
+            // エラー処理
+        }
+    })
+}()
+return nil
+```
+
+#### Import/Export完了時のページクリーンアップ
+
+Import/Export画面の完了コールバック（`SetOnComplete`）でも、キャンセルコールバック（`SetOnCancel`）と同じく `HidePage` → `RemovePage` → `SwitchToPage` のパターンを適用する。`SwitchToPage` のみでは前画面のTUI要素が残存する。
+
+#### form.Clear(true) 後のInputCapture再登録
+
+`tview.Form.Clear(true)` は `true` パラメータによりInputCaptureもクリアする。Import/Export画面で完了後にフォームを再構成する際は、InputCapture（ESCキーハンドラ等）を再登録し、フォーカスも再設定する必要がある。
+
+```go
+// form.Clear(true) 後の再登録パターン
+s.form.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+    if event.Key() == tcell.KeyEsc {
+        s.handleCancel()
+        return nil
+    }
+    return event
+})
+s.app.SetFocus(s.form)
+```
+
+### 3.10 tview Table の Selectable 状態管理
+
+#### 問題: 全セル NotSelectable 時の無限ループ
+
+tview v0.42.0 の `Table` は `SetSelectable(true, false)` で行選択を有効にすると、`Table.Draw()` 内で選択可能なセルを探すループが動作する。**全セルが `NotSelectable` の場合、`selectedRow` が `rowCount` 以上に押し出される。**
+
+この状態で移動キー（↑↓、PgUp/PgDn等）が押されると、`Table.InputHandler()` 内部の `forward()` / `backwards()` 関数が範囲外の `selectedRow` を終了条件（`finalRow`）として受け取る。これらの関数内では `row` が `0` 〜 `rowCount-1` で周回するため、範囲外の `finalRow` に到達できず **無限ループ（CPU 100%、UIフリーズ）** が発生する。
+
+#### 対策: 結果0件時に SetSelectable(false, false) を設定
+
+テーブルに選択可能なデータ行がない場合は `SetSelectable(false, false)` を設定し、データ行がある場合は `SetSelectable(true, false)` に戻す。
+
+```go
+// session_list.go / session_detail.go 共通パターン
+if len(items) == 0 {
+    table.SetSelectable(false, false)
+    table.SetCell(1, 0, tview.NewTableCell("No data").
+        SetSelectable(false))
+} else {
+    table.SetSelectable(true, false)
+    // データ行を追加...
+    table.Select(1, 0)
+}
+```
+
+**注記:** ヘッダー行（固定行）のセルには常に `SetSelectable(false)` を設定すること。ヘッダーのみでデータ行がない場合に `SetSelectable(true, false)` のままだと上記の無限ループが発生する。
+
+### 3.11 非同期データ取得パターン（goroutine + QueueUpdateDraw）
+
+#### QueueUpdateDraw 内でのネットワーク I/O 回避
+
+tview v0.42.0 の `QueueUpdateDraw` は内部で `QueueUpdate` を呼び、コールバック完了まで呼び出し元 goroutine をブロックする（同期的）。コールバックは tview イベントループ内で実行されるため、**コールバック内でネットワーク I/O（Redis クエリ等）を行うとイベントループがブロックされ、UI が応答不能になる。**
+
+**対策:** ネットワーク I/O を goroutine 内で先に実行し、UI 更新のみ `QueueUpdateDraw` で行う。
+
+```go
+// NG: ネットワーク I/O が QueueUpdateDraw 内
+go func() {
+    s.app.QueueUpdateDraw(func() {
+        data, err := store.Fetch(ctx)  // イベントループをブロック
+        // UI更新...
+    })
+}()
+
+// OK: ネットワーク I/O を goroutine 内で先に実行
+go func() {
+    data, err := store.Fetch(ctx)  // goroutine内で実行
+    s.app.QueueUpdateDraw(func() {
+        // UI更新のみ
+        if err != nil {
+            statusBar.ShowError(err.Error())
+        } else {
+            render(data)
+        }
+    })
+}()
+```
+
+**注記:** 既存のマスタ一覧画面（Subscriber List 等）では `QueueUpdateDraw` 内で `Load()` を呼ぶパターンを使用しているが、これはデータ量が少なく Redis 応答が高速なため問題が顕在化していない。Session Detail の検索のように SCAN フォールバックを伴う処理では、上記の分離パターンを採用すること。
+
+### 3.12 テキスト切り詰め仕様
 
 カラム幅を超えるテキストは末尾に "..." を付加して切り詰める。
 
@@ -599,7 +720,7 @@ func checkPoliciesExist(imsiList []string) map[string]bool {
 │  │   2 │ GUEST-WIFI   │ allow  │         │               │ │
 │  │   3 │ *            │ deny   │         │               │ │
 │  │                                                        │ │
-│  │ [a]Add  [e]Edit  [d]Delete  [↑↓]Move                   │ │
+│  │ [a]Add  [e]Edit  [d]Delete  [↑↓]Move  [F6]Focus toggle  │ │
 │  └────────────────────────────────────────────────────────┘ │
 │                                                             │
 ├─────────────────────────────────────────────────────────────┤
@@ -630,6 +751,16 @@ func checkPoliciesExist(imsiList []string) map[string]bool {
 │  [Enter] OK    [Esc] Cancel             │
 └─────────────────────────────────────────┘
 ```
+
+##### ポリシーフォームのキーバインド
+
+| キー | 動作 |
+|------|------|
+| `F6` | フォーム部分とルールリスト間のフォーカス切替 |
+| `Ctrl+S` | 保存実行 |
+| `Esc` | キャンセル |
+
+**注記：** `Tab` キーはtviewのフォーム内ナビゲーション（フィールド間移動）で使用されるため、フォーム/ルールリスト間のフォーカス切替には `F6` キーを使用する。
 
 ##### フィールド定義（ポリシー本体）
 
@@ -940,3 +1071,5 @@ Admin TUIからの操作は、標準出力にJSON形式で記録する。
 | r4 | 2026-02-06 | ポリシーデータ形式の修正: Auth Serverとの互換性確保のため、認可ポリシーをHash形式で保存するよう変更。セクション1.5にデータ形式詳細を追加。PolicyRule.VlanIDをString型に変更 |
 | r5 | 2026-02-07 | 全マスタデータのHash形式統一: 加入者データ・RADIUSクライアントデータもサーバーコンポーネントとの互換性確保のためHash形式に変更。セクション1.5の管理対象データテーブルを更新し、各データ型のHash形式フィールド定義を追加 |
 | r6 | 2026-02-18 | PolicyRule構造をD-02 r10に準拠して更新: 旧構造（NAS-ID/Allowed SSIDs/VLAN ID/Session Timeout）を新構造（SSID/Action/TimeMin/TimeMax）に変更。ポリシー登録/編集画面、ルール編集サブダイアログ、バリデーションルール、CSVフォーマット例を更新 |
+| r7 | 2026-02-21 | 実機検証不具合修正の反映: セクション3.2にF5キー（リフレッシュ）追加、セクション3.9新設（ページライフサイクル管理 — tcell差分レンダリング対策のSync()、InputCapture内QueueUpdateDrawのgoroutineラップ、Import/Export完了時のページクリーンアップ、form.Clear後のInputCapture再登録）、ポリシーフォームのフォーカス切替をTabからF6に変更。旧3.9は3.10に再ナンバリング |
+| r8 | 2026-02-22 | Session Detail フリーズ不具合修正の知見反映: セクション3.10新設（tview Table の Selectable 状態管理 — 全セル NotSelectable 時の無限ループ問題と SetSelectable 切替による対策）、セクション3.11新設（非同期データ取得パターン — QueueUpdateDraw 内でのネットワーク I/O 回避）。旧3.10は3.12に再ナンバリング |

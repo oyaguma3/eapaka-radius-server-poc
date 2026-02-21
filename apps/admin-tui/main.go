@@ -417,6 +417,8 @@ func (a *Application) showImportScreen() {
 	screen := importexport.NewImportScreen(a.app, a.subscriberStore, a.clientStore, a.policyStore, a.auditLogger)
 
 	screen.SetOnComplete(func() {
+		a.app.HidePage("import-screen")
+		a.app.RemovePage("import-screen")
 		a.app.SwitchToPage("import-export-menu")
 	})
 
@@ -434,6 +436,8 @@ func (a *Application) showExportScreen() {
 	screen := importexport.NewExportScreen(a.app, a.subscriberStore, a.clientStore, a.policyStore, a.auditLogger)
 
 	screen.SetOnComplete(func() {
+		a.app.HidePage("export-screen")
+		a.app.RemovePage("export-screen")
 		a.app.SwitchToPage("import-export-menu")
 	})
 

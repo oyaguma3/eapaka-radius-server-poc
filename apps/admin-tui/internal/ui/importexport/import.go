@@ -261,8 +261,14 @@ func (s *ImportScreen) handleImport() {
 		}
 	})
 	s.form.AddButton("Import More", func() {
-		s.setupForm()
-		s.resultView.SetText("")
+		go func() {
+			s.app.QueueUpdateDraw(func() {
+				s.setupForm()
+				s.resultView.SetText("")
+				s.app.SetFocus(s.form)
+				s.app.Sync()
+			})
+		}()
 	})
 
 	// InputCaptureを再登録（form.Clear(true)で消失するため）
@@ -274,6 +280,7 @@ func (s *ImportScreen) handleImport() {
 		return event
 	})
 	s.app.SetFocus(s.form)
+	s.app.Sync()
 }
 
 func (s *ImportScreen) handleCancel() {

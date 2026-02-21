@@ -1,4 +1,4 @@
-# D-07 Admin TUI 詳細設計書【後半】(r4)
+# D-07 Admin TUI 詳細設計書【後半】(r6)
 
 ## 1. 概要
 
@@ -26,7 +26,7 @@
 
 | ドキュメント | 参照内容 |
 |-------------|---------|
-| D-05_Admin_TUI詳細設計書_前半_r6 | 共通仕様、キーバインド規約、ページネーション仕様 |
+| D-05_Admin_TUI詳細設計書_前半_r8 | 共通仕様、キーバインド規約、ページネーション仕様、ページライフサイクル管理、tview Table Selectable状態管理、非同期データ取得パターン |
 | D-02_Valkeyデータ設計仕様書 (r10) | `sess:{UUID}`, `idx:user:{IMSI}` のデータ構造 |
 | D-06_エラーハンドリング詳細設計書 (r6) | TUIエラー表示仕様 |
 
@@ -247,7 +247,11 @@ func (c *StatisticsCache) Refresh(ctx context.Context, rdb *redis.Client) error 
 }
 ```
 
-### 4.6 キーバインド
+### 4.6 フォーカス仕様
+
+Statistics Dashboard画面に遷移した際、TextViewにフォーカスを設定する。これにより、画面表示直後からキー操作（`r` キーによるリロード等）が可能となる。
+
+### 4.7 キーバインド
 
 | キー | 動作 |
 |------|------|
@@ -255,7 +259,7 @@ func (c *StatisticsCache) Refresh(ctx context.Context, rdb *redis.Client) error 
 | `Esc` | モニタリングメニューへ戻る |
 | `?` | ヘルプダイアログ表示 |
 
-### 4.7 エラー時の表示
+### 4.8 エラー時の表示
 
 | 状況 | 表示内容 |
 |------|---------|
@@ -370,38 +374,87 @@ func truncateAcctID(s string, maxLen int) string {
 
 ### 5.8 データ取得方式
 
+#### 5.8.1 処理フロー
+
 ```
 1. SCAN コマンドで sess:* パターンのキーを取得（COUNT 100 で分割取得）
 2. 各キーに対して Pipeline で HGETALL を実行（N+1問題回避）
-3. メモリ上で現在のソートモードに従いソート
-4. ページ分割して該当ページを表示
+3. 取得した map[string]string を mapToSession でモデル構造体に変換
+4. メモリ上で現在のソートモードに従いソート
+5. ページ分割して該当ページを表示
 ```
 
-**実装イメージ：**
+#### 5.8.2 セッションデータのRedis型
+
+Auth Server / Acct Server はセッションを **Redis Hash型** で保存する（`HSET` コマンド）。Admin-TUI の SessionStore も **Hash型** で読み取る（`HGETALL` コマンド）。
+
+| Redis Hashフィールド | 型 | model.Session フィールド | 備考 |
+|---------------------|-----|------------------------|------|
+| `imsi` | String | `IMSI` | 加入者識別番号 |
+| `nas_ip` | String | `NasIP` | NAS IPアドレス |
+| `client_ip` | String | `ClientIP` | クライアントIPアドレス |
+| `acct_id` | String | `AcctSessionID` | アカウンティングセッションID |
+| `start_time` | String (数値) | `StartTime` (int64) | セッション開始時刻（Unix秒） |
+| `input_octets` | String (数値) | `InputOctets` (int64) | 受信バイト数 |
+| `output_octets` | String (数値) | `OutputOctets` (int64) | 送信バイト数 |
+
+**注記：** `UUID` はHashフィールドには含まれない。Redis キー `sess:{UUID}` から `sess:` プレフィックスを除去して取得する。
+
+#### 5.8.3 mapToSession ヘルパー関数
+
+`HGETALL` で取得した `map[string]string` から `model.Session` 構造体へ変換するヘルパー関数を使用する。
 
 ```go
-type SessionListItem struct {
-    UUID      string
-    IMSI      string
-    StartTime time.Time
-    NasIP     string
-    AcctID    string
-}
+func mapToSession(uuid string, m map[string]string) (*model.Session, error) {
+    session := &model.Session{
+        UUID:          uuid,
+        IMSI:          m["imsi"],
+        NasIP:         m["nas_ip"],
+        ClientIP:      m["client_ip"],
+        AcctSessionID: m["acct_id"],
+    }
 
-func (s *SessionListItem) FormatStartTime() string {
-    return s.StartTime.Format("2006-01-02 15:04:05")
-}
+    if v, ok := m["start_time"]; ok && v != "" {
+        n, err := strconv.ParseInt(v, 10, 64)
+        if err != nil {
+            return nil, fmt.Errorf("invalid start_time: %w", err)
+        }
+        session.StartTime = n
+    }
 
+    if v, ok := m["input_octets"]; ok && v != "" {
+        n, err := strconv.ParseInt(v, 10, 64)
+        if err != nil {
+            return nil, fmt.Errorf("invalid input_octets: %w", err)
+        }
+        session.InputOctets = n
+    }
+
+    if v, ok := m["output_octets"]; ok && v != "" {
+        n, err := strconv.ParseInt(v, 10, 64)
+        if err != nil {
+            return nil, fmt.Errorf("invalid output_octets: %w", err)
+        }
+        session.OutputOctets = n
+    }
+
+    return session, nil
+}
+```
+
+#### 5.8.4 セッション一覧取得
+
+```go
 func fetchAllSessions(ctx context.Context, rdb *redis.Client) ([]SessionListItem, error) {
     var sessions []SessionListItem
     var cursor uint64
-    
+
     for {
         keys, nextCursor, err := rdb.Scan(ctx, cursor, "sess:*", 100).Result()
         if err != nil {
             return nil, err
         }
-        
+
         if len(keys) > 0 {
             pipe := rdb.Pipeline()
             cmds := make(map[string]*redis.MapStringStringCmd)
@@ -409,22 +462,27 @@ func fetchAllSessions(ctx context.Context, rdb *redis.Client) ([]SessionListItem
                 cmds[key] = pipe.HGetAll(ctx, key)
             }
             pipe.Exec(ctx)
-            
+
             for key, cmd := range cmds {
                 data, err := cmd.Result()
+                if err != nil || len(data) == 0 {
+                    continue
+                }
+                uuid := strings.TrimPrefix(key, "sess:")
+                session, err := mapToSession(uuid, data)
                 if err != nil {
                     continue
                 }
-                sessions = append(sessions, parseSession(key, data))
+                sessions = append(sessions, sessionToListItem(session))
             }
         }
-        
+
         cursor = nextCursor
         if cursor == 0 {
             break
         }
     }
-    
+
     return sessions, nil
 }
 
@@ -455,7 +513,7 @@ func sortByIMSIAsc(sessions []SessionListItem) {
 | `→` | 次のページへ |
 | `t` | start_time降順リストへ切替（IMSI昇順表示時のみ有効） |
 | `i` | IMSI昇順リストへ切替（start_time降順表示時のみ有効） |
-| `r` | 一覧を再読み込み |
+| `r` / `F5` | 一覧を再読み込み |
 | `Esc` | モニタリングメニューへ戻る |
 | `?` | ヘルプダイアログ表示 |
 
@@ -480,9 +538,19 @@ IMSI完全一致検索により、特定加入者のセッション詳細を表�
 
 | 状態 | 表示内容 |
 |------|---------|
-| 初期状態 | IMSI入力欄のみ表示、入力欄にフォーカス |
-| 検索後（結果あり） | IMSI入力欄 + サマリ + セッションテーブル |
-| 検索後（結果なし） | IMSI入力欄 + 「No active sessions found」メッセージ |
+| 初期状態 | 検索ダイアログ表示、IMSI入力欄にフォーカス |
+| 検索後（結果あり） | サマリ + セッションテーブル |
+| 検索後（結果なし） | サマリ + 「No sessions found」メッセージ |
+
+#### 検索ダイアログ仕様
+
+| 項目 | 仕様 |
+|------|------|
+| 表示方式 | `tview.Form` ベースのモーダルダイアログ（50×7） |
+| 入力フィールド幅 | 20文字（IMSIは最大15桁のため十分） |
+| OKボタン | 非同期検索を開始（セクション6.9.1参照） |
+| Cancelボタン | 初回検索前（IMSI未設定）の場合は Session List に戻る。検索済みの場合は Session Detail 画面に留まる |
+| 再検索 | `/` キーで検索ダイアログを再表示 |
 
 ### 6.3 レイアウト（初期状態）
 
@@ -581,15 +649,82 @@ func formatSessionTrafficKB(octets int64) string {
 
 ### 6.9 データ取得方式
 
+#### 6.9.1 非同期検索パターン
+
+検索ダイアログのOKボタン押下後、ネットワーク I/O を goroutine 内で先に実行し、UI更新のみ `QueueUpdateDraw` で行う（D-05 セクション3.11参照）。
+
+```go
+go func() {
+    // goroutine内でネットワークI/Oを実行（イベントループ外）
+    auditLogger.LogSearch(audit.TargetSession, imsi, 0)
+    sessions, err := sessionStore.GetByIMSI(ctx, imsi)
+    // UI更新のみQueueUpdateDrawで行う
+    app.QueueUpdateDraw(func() {
+        if err != nil {
+            statusBar.ShowError("Search failed: " + err.Error())
+        } else {
+            render(sessions)
+        }
+        app.SetFocus(sessionsList)
+    })
+}()
+```
+
+**注記:** セッションテーブルの描画では、結果0件時に `SetSelectable(false, false)` を設定し、結果がある場合のみ `SetSelectable(true, false)` に戻すこと（D-05 セクション3.10参照）。
+
+#### 6.9.2 処理フロー
+
 ```
 1. idx:user:{IMSI} から該当セッションUUIDのセット（Set）を SMEMBERS で取得
-2. 各UUIDに対して Pipeline で sess:{UUID} を HGETALL
-3. 【クリーンアップ】存在しないセッション（HGETALL結果が空）のUUIDを収集
-4. 【クリーンアップ】収集したUUIDを SREM idx:user:{IMSI} で削除
-5. 存在するセッションのみを start_time降順でソート
-6. サマリ計算（セッション数、通信量合計）
-7. ページ分割して表示
+2. UUIDが取得できた場合:
+   a. 各UUIDに対して Pipeline で sess:{UUID} を HGETALL
+   b. 【クリーンアップ】存在しないセッション（HGETALL結果が空）のUUIDを収集
+   c. 【クリーンアップ】収集したUUIDを SREM idx:user:{IMSI} で削除
+3. idx:user インデックスが空の場合（SCANフォールバック）:
+   a. SCAN で全 sess:* キーを取得し、Pipeline で HGETALL
+   b. 取得したセッションの IMSI フィールドで完全一致フィルタリング
+4. 存在するセッションのみを start_time降順でソート
+5. サマリ計算（セッション数、通信量合計）
+6. ページ分割して表示
 ```
+
+#### 6.9.3 SCAN フォールバック
+
+`idx:user:{IMSI}` インデックスは auth-server が認証成功時に作成する。以下の場合にインデックスが存在しない可能性がある:
+
+- acct-server 経由のみでセッションが作成された場合
+- auth-server が認証フローを完了していない場合
+- テスト環境でセッションを手動作成した場合
+
+このため、`GetByIMSI()` は `idx:user` インデックスが空の場合に全セッション SCAN によるフォールバック検索を行う。
+
+```go
+func (s *SessionStore) GetByIMSI(ctx context.Context, imsi string) ([]*model.Session, error) {
+    // idx:user:{IMSI} からUUID取得を試行
+    uuids, err := s.client.SMembers(ctx, indexKey).Result()
+    // ...
+
+    // インデックスが空の場合は SCAN フォールバック
+    if len(uuids) == 0 {
+        return s.getByIMSIScan(ctx, imsi)
+    }
+
+    // インデックス経由の通常取得...
+}
+
+func (s *SessionStore) getByIMSIScan(ctx context.Context, imsi string) ([]*model.Session, error) {
+    allSessions, err := s.List(ctx)  // SCAN + Pipeline で全セッション取得
+    // IMSI フィールドで完全一致フィルタリング
+    for _, sess := range allSessions {
+        if sess.IMSI == imsi {
+            sessions = append(sessions, sess)
+        }
+    }
+    return sessions, nil
+}
+```
+
+**注記:** SCAN フォールバックは全セッションを走査するため、セッション数が多い環境ではパフォーマンスに影響する。PoC規模（数百〜数千件）では問題ないが、大規模環境では `idx:user` インデックスの整備を前提とすること。
 
 > **クリーンアップ処理の設計意図:**
 > - `idx:user:{IMSI}` はTTLなしのSetであり、Acct-Stop未達やセッションTTL切れでゴミが残る可能性がある
@@ -804,67 +939,38 @@ func fetchSessionsByIMSIWithCleanup(ctx context.Context, rdb *redis.Client, imsi
 
 | 項目 | 仕様 |
 |------|------|
-| 表示方式 | モーダルダイアログ（背景をグレーアウト） |
+| 表示方式 | `tview.Flex` ベースの2カラムレイアウト（`tview.Modal` は表示領域の制約があるため不採用） |
 | 閉じる方法 | `Enter` キーまたは `Esc` キー |
-| タイトル | `Help - {画面名}` |
+| タイトル | `Help` |
 
 ### 7.3 レイアウト
 
-```
-┌─────────────────────────────────────┐
-│  Help - Session List                │
-├─────────────────────────────────────┤
-│                                     │
-│  ←/→   : Page navigation            │
-│  t/i   : Toggle sort mode           │
-│  r     : Reload data                │
-│  Esc   : Back to menu               │
-│  ?     : Show this help             │
-│                                     │
-├─────────────────────────────────────┤
-│         [Enter] or [Esc] Close      │
-└─────────────────────────────────────┘
-```
-
-### 7.4 画面別ヘルプ内容
-
-#### Monitoring Menu
+2カラム構成で、左カラムにNavigation + Global、右カラムにList Actions + Policy Formを表示する。
 
 ```
-│  0     : Statistics Dashboard       │
-│  1     : Session List               │
-│  2     : Session Detail             │
-│  Esc   : Back to main menu          │
-│  ?     : Show this help             │
+┌──────────────────────────────────────────────────────────────────┐
+│  Help                                                            │
+├──────────────────────────────┬───────────────────────────────────┤
+│  Navigation                  │  List Actions                    │
+│  ───────────                 │  ────────────                    │
+│  ↑/↓   : Move cursor        │  n     : New entry               │
+│  ←/→   : Page navigation    │  d     : Delete entry            │
+│  Enter : Select / Edit      │  /     : Filter                  │
+│  Esc   : Back / Cancel      │  r/F5  : Reload data             │
+│  Tab   : Next focus          │                                  │
+│                              │  Policy Form                     │
+│  Global                      │  ───────────                    │
+│  ──────                      │  F6    : Toggle focus            │
+│  ?     : Show this help      │          (Form ↔ Rules)          │
+│  Ctrl+C: Force quit          │  a     : Add rule                │
+│                              │  e     : Edit rule               │
+│                              │  d     : Delete rule             │
+├──────────────────────────────┴───────────────────────────────────┤
+│                    [Enter] or [Esc] Close                         │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-#### Statistics Dashboard
-
-```
-│  r     : Reload statistics          │
-│  Esc   : Back to menu               │
-│  ?     : Show this help             │
-```
-
-#### Session List
-
-```
-│  ←/→   : Page navigation            │
-│  t/i   : Toggle sort mode           │
-│  r     : Reload data                │
-│  Esc   : Back to menu               │
-│  ?     : Show this help             │
-```
-
-#### Session Detail
-
-```
-│  Enter : Search / New search        │
-│  ←/→   : Page navigation            │
-│  r     : Reload current IMSI        │
-│  Esc   : Back to menu               │
-│  ?     : Show this help             │
-```
+**注記：** 画面固有のキーバインド情報（モニタリング画面のソート切替 `t`/`i` 等）は、各画面のフッターバーに表示される。ヘルプダイアログは全画面共通のキーバインドを一覧する。
 
 ---
 
@@ -1128,3 +1234,5 @@ Admin TUIの監査ログでは、**IMSIを常に生値（マスキングなし�
 | r2 | 2026-01-21 | 関連ドキュメント参照バージョン更新: Valkeyデータ設計仕様書 r3→r6、エラーハンドリング詳細設計書 r2→r3 |
 | r3 | 2026-01-27 | IMSI記録方針明確化: セクション10.1.1新設（監査ログにIMSI生値を出力する方針を明記）、idx:userクリーンアップ処理追加（セクション6.10新設）、これに伴い旧 6.10以降の再ナンバリングを実施 |
 | r4 | 2026-02-18 | 関連ドキュメント版数更新: D-05 r3→r6、D-02 r9→r10、D-06 r5→r6 |
+| r5 | 2026-02-21 | 実機検証不具合修正の反映: セッションデータ読み取りをString型(GET+JSON)からHash型(HGETALL+mapToSession)に修正しAuth/Acctサーバーとのデータ型整合性を確保（セクション5.8を5.8.1-5.8.4に再構成）、Statistics Dashboardフォーカス仕様追加（セクション4.6新設、旧4.6以降再ナンバリング）、Session ListにF5キー追加、ヘルプダイアログを2カラムFlexレイアウトに変更（セクション7.3更新）、関連ドキュメント版数更新 D-05 r6→r7 |
+| r6 | 2026-02-22 | Session Detail 不具合修正の反映: 検索ダイアログ仕様追加（セクション6.2拡充 — InputField幅20、Cancel時のSession List戻り動作）、データ取得方式を再構成（セクション6.9を6.9.1-6.9.3に再構成 — 非同期検索パターン、SCANフォールバック追加）、関連ドキュメント版数更新 D-05 r7→r8 |

@@ -164,7 +164,7 @@ func NewInputDialog(title, label, defaultValue string, onSubmit func(value strin
 	form := tview.NewForm()
 	inputName := "input"
 
-	form.AddInputField(label, defaultValue, 40, nil, nil)
+	form.AddInputField(label, defaultValue, 20, nil, nil)
 	form.AddButton("OK", func() {
 		value := form.GetFormItemByLabel(label).(*tview.InputField).GetText()
 		if onSubmit != nil {

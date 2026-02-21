@@ -81,17 +81,29 @@ func (s *SessionDetailScreen) ShowSearchDialog() {
 			s.imsi = value
 			s.app.HidePage("search-dialog")
 			s.app.RemovePage("search-dialog")
-			s.app.QueueUpdateDraw(func() {
-				if err := s.Search(context.Background(), value); err != nil {
-					s.app.GetStatusBar().ShowError("Search failed: " + err.Error())
-				}
-			})
-			s.app.SetFocus(s.sessionsList)
+			go func() {
+				ctx := context.Background()
+				s.auditLogger.LogSearch(audit.TargetSession, value, 0)
+				sessions, err := s.sessionStore.GetByIMSI(ctx, value)
+				s.app.QueueUpdateDraw(func() {
+					if err != nil {
+						s.app.GetStatusBar().ShowError("Search failed: " + err.Error())
+					} else {
+						s.sessions = sessions
+						s.render()
+					}
+					s.app.SetFocus(s.sessionsList)
+				})
+			}()
 		},
 		func() {
 			s.app.HidePage("search-dialog")
 			s.app.RemovePage("search-dialog")
-			s.app.SetFocus(s.textView)
+			if s.imsi == "" && s.onBack != nil {
+				s.onBack()
+			} else {
+				s.app.SetFocus(s.textView)
+			}
 		},
 	)
 
@@ -141,11 +153,14 @@ func (s *SessionDetailScreen) render() {
 	}
 
 	if len(s.sessions) == 0 {
+		s.sessionsList.SetSelectable(false, false)
 		s.sessionsList.SetCell(1, 0, tview.NewTableCell("No sessions found").
 			SetTextColor(tcell.ColorGray).
 			SetSelectable(false))
 		return
 	}
+
+	s.sessionsList.SetSelectable(true, false)
 
 	// データ行
 	for i, session := range s.sessions {

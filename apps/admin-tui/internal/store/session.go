@@ -2,9 +2,11 @@ package store
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
+	"strconv"
+	"strings"
 
 	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/model"
 	"github.com/redis/go-redis/v9"
@@ -26,19 +28,19 @@ func NewSessionStore(client *redis.Client) *SessionStore {
 // Get は指定されたUUIDのセッションを取得する。
 func (s *SessionStore) Get(ctx context.Context, uuid string) (*model.Session, error) {
 	key := SessionKey(uuid)
-	data, err := s.client.Get(ctx, key).Bytes()
+	m, err := s.client.HGetAll(ctx, key).Result()
 	if err != nil {
-		if errors.Is(err, redis.Nil) {
-			return nil, ErrSessionNotFound
-		}
 		return nil, err
+	}
+	if len(m) == 0 {
+		return nil, ErrSessionNotFound
 	}
 
-	var session model.Session
-	if err := json.Unmarshal(data, &session); err != nil {
+	session, err := mapToSession(uuid, m)
+	if err != nil {
 		return nil, err
 	}
-	return &session, nil
+	return session, nil
 }
 
 // List は全セッションのリストを取得する（SCAN使用）。
@@ -61,29 +63,30 @@ func (s *SessionStore) List(ctx context.Context) ([]*model.Session, error) {
 
 	// Pipelineで一括取得
 	pipe := s.client.Pipeline()
-	cmds := make([]*redis.StringCmd, len(keys))
+	cmds := make([]*redis.MapStringStringCmd, len(keys))
 	for i, key := range keys {
-		cmds[i] = pipe.Get(ctx, key)
+		cmds[i] = pipe.HGetAll(ctx, key)
 	}
 	_, err := pipe.Exec(ctx)
 	if err != nil && !errors.Is(err, redis.Nil) {
 		return nil, err
 	}
 
-	for _, cmd := range cmds {
-		data, err := cmd.Bytes()
+	for i, cmd := range cmds {
+		m, err := cmd.Result()
 		if err != nil {
-			if errors.Is(err, redis.Nil) {
-				continue
-			}
-			return nil, err
-		}
-
-		var session model.Session
-		if err := json.Unmarshal(data, &session); err != nil {
 			continue
 		}
-		sessions = append(sessions, &session)
+		if len(m) == 0 {
+			continue
+		}
+
+		uuid := strings.TrimPrefix(keys[i], PrefixSession)
+		session, err := mapToSession(uuid, m)
+		if err != nil {
+			continue
+		}
+		sessions = append(sessions, session)
 	}
 
 	return sessions, nil
@@ -115,8 +118,9 @@ func (s *SessionStore) GetByIMSI(ctx context.Context, imsi string) ([]*model.Ses
 		return nil, err
 	}
 
+	// idx:user インデックスが空の場合は SCAN フォールバック
 	if len(uuids) == 0 {
-		return []*model.Session{}, nil
+		return s.getByIMSIScan(ctx, imsi)
 	}
 
 	var sessions []*model.Session
@@ -124,9 +128,9 @@ func (s *SessionStore) GetByIMSI(ctx context.Context, imsi string) ([]*model.Ses
 
 	// Pipelineで一括取得
 	pipe := s.client.Pipeline()
-	cmds := make([]*redis.StringCmd, len(uuids))
+	cmds := make([]*redis.MapStringStringCmd, len(uuids))
 	for i, uuid := range uuids {
-		cmds[i] = pipe.Get(ctx, SessionKey(uuid))
+		cmds[i] = pipe.HGetAll(ctx, SessionKey(uuid))
 	}
 	_, err = pipe.Exec(ctx)
 	if err != nil && !errors.Is(err, redis.Nil) {
@@ -134,21 +138,21 @@ func (s *SessionStore) GetByIMSI(ctx context.Context, imsi string) ([]*model.Ses
 	}
 
 	for i, cmd := range cmds {
-		data, err := cmd.Bytes()
+		m, err := cmd.Result()
 		if err != nil {
-			if errors.Is(err, redis.Nil) {
-				// セッションが存在しない場合はstaleとしてマーク
-				staleUUIDs = append(staleUUIDs, uuids[i])
-				continue
-			}
-			return nil, err
-		}
-
-		var session model.Session
-		if err := json.Unmarshal(data, &session); err != nil {
 			continue
 		}
-		sessions = append(sessions, &session)
+		if len(m) == 0 {
+			// セッションが存在しない場合はstaleとしてマーク
+			staleUUIDs = append(staleUUIDs, uuids[i])
+			continue
+		}
+
+		session, err := mapToSession(uuids[i], m)
+		if err != nil {
+			continue
+		}
+		sessions = append(sessions, session)
 	}
 
 	// 存在しないセッションをインデックスからクリーンアップ（失敗はログのみ）
@@ -163,8 +167,64 @@ func (s *SessionStore) GetByIMSI(ctx context.Context, imsi string) ([]*model.Ses
 	return sessions, nil
 }
 
+// getByIMSIScan は全セッションを SCAN して IMSI でフィルタリングする（フォールバック用）。
+func (s *SessionStore) getByIMSIScan(ctx context.Context, imsi string) ([]*model.Session, error) {
+	allSessions, err := s.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var sessions []*model.Session
+	for _, sess := range allSessions {
+		if sess.IMSI == imsi {
+			sessions = append(sessions, sess)
+		}
+	}
+	if sessions == nil {
+		sessions = []*model.Session{}
+	}
+	return sessions, nil
+}
+
 // GetSessionCount は指定されたIMSIのセッション数を返す。
 func (s *SessionStore) GetSessionCount(ctx context.Context, imsi string) (int64, error) {
 	indexKey := UserIndexKey(imsi)
 	return s.client.SCard(ctx, indexKey).Result()
+}
+
+// mapToSession はRedis Hashのmap[string]stringからmodel.Sessionに変換する。
+// Auth/Acctサーバーのredisタグに合わせたフィールド名でマッピングする。
+func mapToSession(uuid string, m map[string]string) (*model.Session, error) {
+	session := &model.Session{
+		UUID:          uuid,
+		IMSI:          m["imsi"],
+		NasIP:         m["nas_ip"],
+		ClientIP:      m["client_ip"],
+		AcctSessionID: m["acct_id"],
+	}
+
+	if v, ok := m["start_time"]; ok && v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid start_time: %w", err)
+		}
+		session.StartTime = n
+	}
+
+	if v, ok := m["input_octets"]; ok && v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid input_octets: %w", err)
+		}
+		session.InputOctets = n
+	}
+
+	if v, ok := m["output_octets"]; ok && v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid output_octets: %w", err)
+		}
+		session.OutputOctets = n
+	}
+
+	return session, nil
 }
