@@ -4,7 +4,6 @@ x-logging: &fluent-bit-logging
     fluentd-address: localhost:24224
     fluentd-async: "true"
     fluentd-buffer-limit: "1048576"
-    tag: "{{.Name}}.logs"
 
 x-timezone: &timezone
   TZ: Asia/Tokyo
@@ -37,7 +36,13 @@ services:
       retries: 3
       start_period: 10s
     restart: always
-    logging: *fluent-bit-logging
+    logging:
+      <<: *fluent-bit-logging
+      options:
+        fluentd-address: localhost:24224
+        fluentd-async: "true"
+        fluentd-buffer-limit: "1048576"
+        tag: "app.auth-server"
 
   acct-server:
     build: ../apps/acct-server
@@ -60,7 +65,13 @@ services:
       retries: 3
       start_period: 10s
     restart: always
-    logging: *fluent-bit-logging
+    logging:
+      <<: *fluent-bit-logging
+      options:
+        fluentd-address: localhost:24224
+        fluentd-async: "true"
+        fluentd-buffer-limit: "1048576"
+        tag: "app.acct-server"
 
   vector-gateway:
     build: ../apps/vector-gateway
@@ -83,7 +94,13 @@ services:
       retries: 3
       start_period: 10s
     restart: always
-    logging: *fluent-bit-logging
+    logging:
+      <<: *fluent-bit-logging
+      options:
+        fluentd-address: localhost:24224
+        fluentd-async: "true"
+        fluentd-buffer-limit: "1048576"
+        tag: "app.vector-gateway"
 
   vector-api:
     build: ../apps/vector-api
@@ -105,7 +122,13 @@ services:
       retries: 3
       start_period: 10s
     restart: always
-    logging: *fluent-bit-logging
+    logging:
+      <<: *fluent-bit-logging
+      options:
+        fluentd-address: localhost:24224
+        fluentd-async: "true"
+        fluentd-buffer-limit: "1048576"
+        tag: "app.vector-api"
 
   # ==========================================================================
   # Data Layer
@@ -132,7 +155,13 @@ services:
       retries: 3
       start_period: 5s
     restart: always
-    logging: *fluent-bit-logging
+    logging:
+      <<: *fluent-bit-logging
+      options:
+        fluentd-address: localhost:24224
+        fluentd-async: "true"
+        fluentd-buffer-limit: "1048576"
+        tag: "app.valkey"
 
   # ==========================================================================
   # Logging Layer

@@ -4,10 +4,10 @@
         "description": "Structured logs from Go RADIUS PoC",
         "url": "http://localhost",
         "json": true,
-        "key_field": "time",
-        "level_field": "level",
-        "body_field": "msg",
-        "timestamp_format": "%Y-%m-%dT%H:%M:%S.%L%Z",
+        "timestamp-field": "time",
+        "level-field": "level",
+        "body-field": "msg",
+        "timestamp-format": ["%Y-%m-%dT%H:%M:%S.%L%Z"],
         "value": {
             "imsi": { "kind": "string", "identifier": true },
             "trace_id": { "kind": "string", "identifier": true },
@@ -23,12 +23,12 @@
             "resync_count": { "kind": "integer" },
             "http_status": { "kind": "integer" }
         },
-        "line_format": [
+        "line-format": [
             { "field": "time" }, " ",
             { "field": "level" }, " ",
             { "field": "app" }, " ",
-            { "field": "event_id", "default": "-" }, " ",
-            "[", { "field": "imsi", "default": "no-imsi" }, "] ",
+            { "field": "event_id", "default-value": "-" }, " ",
+            "[", { "field": "imsi", "default-value": "no-imsi" }, "] ",
             { "field": "msg" }
         ]
     }
