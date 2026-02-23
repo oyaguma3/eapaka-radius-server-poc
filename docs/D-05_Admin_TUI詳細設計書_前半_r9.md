@@ -1,4 +1,4 @@
-# D-05 Admin TUI 詳細設計書【前半】(r8)
+# D-05 Admin TUI 詳細設計書【前半】(r9)
 
 ## 1. 概要
 
@@ -189,8 +189,8 @@ HSET "policy:440101234567890" "default" "deny" "rules" '[{"ssid":"CORP-WIFI","ac
 | キー | 動作 | 備考 |
 |------|------|------|
 | `Esc` | 前の画面に戻る / キャンセル | メインメニューでは終了確認表示 |
-| `Ctrl+C` | 強制終了 | 確認なしで即座に終了 |
-| `?` | ヘルプ表示 | 現在画面のキーバインド一覧をモーダル表示 |
+| `Ctrl+Q` | アプリケーション終了 | 確認なしで即座に終了 |
+| `F1` / `?` | ヘルプ表示 | 現在画面のキーバインド一覧をモーダル表示 |
 | `Tab` | 次のフォーカス要素へ移動 | - |
 | `Shift+Tab` | 前のフォーカス要素へ移動 | - |
 
@@ -198,22 +198,21 @@ HSET "policy:440101234567890" "default" "deny" "rules" '[{"ssid":"CORP-WIFI","ac
 
 | キー | 動作 |
 |------|------|
-| `↑` | カーソル上移動 |
-| `↓` | カーソル下移動 |
+| `↑` / `↓` | カーソル上下移動 |
+| `PgUp` / `PgDn` | ページ上下移動 |
 | `Enter` | 選択項目の編集画面へ |
-| `n` | 新規登録画面へ |
-| `d` | 削除確認ダイアログ表示 |
-| `/` | 検索モード（フィルタ入力） |
-| `r` / `F5` | 一覧を再読み込み |
-| `←` | 前のページへ |
-| `→` | 次のページへ |
+| `F2` / `n` | 新規登録画面へ |
+| `F3` / `e` | 選択項目の編集画面へ |
+| `F4` / `d` | 削除確認ダイアログ表示 |
+| `F5` / `r` | 一覧を再読み込み |
+| `F6` / `/` | フィルタ入力ダイアログ表示 |
 
 ### 3.3 キーバインド（フォーム画面共通）
 
 | キー | 動作 |
 |------|------|
-| `Ctrl+S` | 保存実行 |
-| `Esc` | キャンセル（変更破棄確認あり） |
+| `Save` ボタン | 保存実行（tview.Form 標準ボタン） |
+| `Esc` | キャンセル（一覧画面へ戻る） |
 
 ### 3.4 確認ダイアログ仕様
 
@@ -428,35 +427,45 @@ func truncate(s string, maxLen int) string {
 
 #### レイアウト
 
+tview.List（ShowSecondaryText=true）を使用。ボーダータイトルに「Admin TUI - Main Menu」を表示。
+
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  EAP-AKA RADIUS PoC - Admin TUI                    v1.0.0  │
-├─────────────────────────────────────────────────────────────┤
+┌ Admin TUI - Main Menu ─────────────────────────────────────┐
 │                                                             │
-│    [S] Subscriber Management                                │
-│    [C] RADIUS Client Management                             │
-│    [P] Authorization Policy Management                      │
-│    ─────────────────────────────────                        │
-│    [I] Import/Export                                        │
-│    [O] Monitoring                                           │
-│    ─────────────────────────────────                        │
-│    [Q] Exit                                                 │
+│ (1) Subscriber Management                                   │
+│     Manage subscriber data (IMSI, Ki, OPc, etc.)            │
 │                                                             │
-├─────────────────────────────────────────────────────────────┤
-│  Valkey: Connected (127.0.0.1:6379)  │  ? Help             │
+│ (2) RADIUS Client Management                                │
+│     Manage RADIUS client (NAS) configurations               │
+│                                                             │
+│ (3) Authorization Policy Management                         │
+│     Manage access control policies for subscribers          │
+│                                                             │
+│ (4) Import/Export                                            │
+│     Import or export data as CSV files                      │
+│                                                             │
+│ (5) Monitoring                                               │
+│     View statistics and active sessions                     │
+│                                                             │
+│ (q) Exit                                                     │
+│     Exit the application                                    │
+│                                                             │
 └─────────────────────────────────────────────────────────────┘
+F1:Help  |  q:Back/Quit  |  Ctrl+Q:Exit
 ```
+
+**備考:** フッターバー（`F1:Help | q:Back/Quit | Ctrl+Q:Exit`）は全画面共通で、ボーダー外の画面最下部に常時表示される。
 
 #### 操作
 
 | キー | 動作 |
 |------|------|
-| `S` | 加入者管理画面へ |
-| `C` | RADIUSクライアント管理画面へ |
-| `P` | 認可ポリシー管理画面へ |
-| `I` | インポート/エクスポート画面へ |
-| `O` | モニタリング画面へ（後半で定義） |
-| `Q` / `Esc` | 終了確認ダイアログ表示 |
+| `1` | 加入者管理画面へ |
+| `2` | RADIUSクライアント管理画面へ |
+| `3` | 認可ポリシー管理画面へ |
+| `4` | インポート/エクスポート画面へ |
+| `5` | モニタリング画面へ（後半で定義） |
+| `q` / `Esc` | 終了確認ダイアログ表示 |
 
 ---
 
@@ -466,40 +475,40 @@ func truncate(s string, maxLen int) string {
 
 ##### レイアウト
 
+ボーダータイトルに「Subscriber List」+件数・ページ情報を表示。フィルタ適用時は `(Filter: "...")` を付加。
+
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Subscriber Management - List                [n]New [?]Help │
-├─────────────────────────────────────────────────────────────┤
-│  Filter: [________________]              Showing: 125 / 125 │
-├─────┬─────────────────┬────────┬────────────────────────────┤
-│ No. │ IMSI            │ Policy │ Created                    │
-├─────┼─────────────────┼────────┼────────────────────────────┤
-│   1 │ 440101234567890 │ Yes    │ 2025-01-15 10:30           │
-│ ! 2 │ 440101234567891 │ No     │ 2025-01-15 10:31           │
-│   3 │ 440109876543210 │ Yes    │ 2025-01-16 14:20           │
-│   : │ :               │ :      │ :                          │
-├─────────────────────────────────────────────────────────────┤
-│  [Prev] Page 1/3 [Next]                                     │
-├─────────────────────────────────────────────────────────────┤
-│  ↑↓:Move  Enter:Edit  n:New  d:Delete  /:Filter  Esc:Back  │
-└─────────────────────────────────────────────────────────────┘
+┌ Subscriber List 1-9 of 9 (Page 1/1) ──────────────────────────────────────────┐
+│ IMSI              Ki              OPc              AMF    SQN            Created │
+│ 001010000000000   465B5CE8...A6BC CD63CB71...2BAF  B9B9   000000000001   2024-01-01│
+│ 001010000000001   465B5CE8...A6BC CD63CB71...2BAF  B9B9   000000000021   2024-01-01│
+│ 001010000000003   465B5CE8...A6BC CD63CB71...2BAF  8000   0000000000c1   2024-01-01│
+│! 001010000000007  465B5CE8...A6BC CD63CB71...2BAF  B9B9   ff9bb4d0b687   2024-01-01│
+│! 441991234567890  465B5CE8...A6BC CD63CB71...2BAF  B9B9   FF9BB4D0B607   2024-01-01│
+│  :                :               :                :      :              :         │
+└────────────────────────────────────────────────────────────────────────────────────┘
+F1:Help  |  q:Back/Quit  |  Ctrl+Q:Exit
 ```
+
+フィルタ適用時のタイトル例: `Subscriber List (Filter: "00101") 1-6 of 6 (Page 1/1)`
 
 ##### 表示項目
 
-| カラム | 内容 | 幅 |
-|--------|------|-----|
-| No. | 連番 | 5 |
-| IMSI | 加入者識別番号 | 17 |
-| Policy | ポリシー有無 (`Yes` / `No`) | 8 |
-| Created | 作成日時 | 20 |
+| カラム | 内容 | Expansion | 色 | 備考 |
+|--------|------|-----------|-----|------|
+| IMSI | 加入者識別番号 | 1 | White（ポリシー未設定時はYellow/Orange） | 行頭に "!" 表示でポリシー未設定を示す |
+| Ki | 認証鍵（マスク表示） | 1 | Gray | 先頭8文字...末尾4文字（例: `465B5CE8...A6BC`） |
+| OPc | オペレータ鍵（マスク表示） | 1 | Gray | 先頭8文字...末尾4文字（例: `CD63CB71...2BAF`） |
+| AMF | 認証管理フィールド | 1 | White | 4桁Hex |
+| SQN | シーケンス番号 | 1 | White | 12桁Hex |
+| Created | 作成日（先頭10文字） | 1 | Gray | YYYY-MM-DD形式 |
 
 ##### ポリシー未設定加入者の視覚的識別
 
 | 条件 | 表示 |
 |------|------|
-| ポリシーあり | 通常表示、Policyカラムに `Yes` |
-| ポリシーなし | 黄色ハイライト、No.カラムに `!` プレフィックス、Policyカラムに `No` |
+| ポリシーあり | 通常表示（White） |
+| ポリシーなし | 行全体がYellow/Orange表示、IMSIカラムの先頭に `!` プレフィックス |
 
 **実装：**
 
@@ -534,36 +543,29 @@ func checkPoliciesExist(imsiList []string) map[string]bool {
 }
 ```
 
-**注記：** Ki/OPcは一覧では表示しない（編集画面で表示）。SQNは運用中に変化するため一覧から除外。
+**注記：** Ki/OPcは一覧でマスク表示する（先頭8文字+末尾4文字を表示し、中間部分を `...` で省略）。AMF/SQNも一覧に表示し、加入者情報の概要を一目で確認可能とする。
 
 #### 4.2.2 加入者登録 [S2] / 編集 [S3]
 
 ##### レイアウト
 
+tview.Form を centered() ヘルパーで画面中央にダイアログ表示する。背景に一覧テーブルが透過表示される。新規作成時のタイトルは「Create Subscriber」、編集時は「Edit Subscriber」。
+
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Subscriber Management - Add                                │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│    IMSI *:  [440101234567890___]                            │
-│             15 digits                                       │
-│                                                             │
-│    Ki *:    [0123456789ABCDEF0123456789ABCDEF]              │
-│             32 hex characters (128bit)                      │
-│                                                             │
-│    OPc *:   [FEDCBA9876543210FEDCBA9876543210]              │
-│             32 hex characters (128bit)                      │
-│                                                             │
-│    AMF *:   [8000]                                          │
-│             4 hex characters (16bit)                        │
-│                                                             │
-│    SQN:     [000000000000]                                  │
-│             12 hex characters (48bit), auto-managed         │
-│                                                             │
-├─────────────────────────────────────────────────────────────┤
-│  [Ctrl+S] Save    [Esc] Cancel                              │
-└─────────────────────────────────────────────────────────────┘
+              ┌ Create Subscriber ──────────────────────────────┐
+              │                                                   │
+              │  IMSI    [001010000000008       ]                 │
+              │  Ki      [0123456789ABCDEF0123456789ABCDEF     ]  │
+              │  OPc     [FEDCBA9876543210FEDCBA9876543210     ]  │
+              │  AMF     [8000      ]                             │
+              │  SQN     [000000000000   ]                        │
+              │                                                   │
+              │          < Save >  < Cancel >                     │
+              │                                                   │
+              └───────────────────────────────────────────────────┘
 ```
+
+編集時: タイトル「Edit Subscriber」、IMSIフィールドは無効化（グレーアウト、編集不可）。
 
 ##### フィールド定義
 
@@ -579,26 +581,23 @@ func checkPoliciesExist(imsiList []string) map[string]bool {
 
 ユーザーがSQNフィールドを編集しようとした際に以下の警告を表示する。
 
+tview.Modal を使用。ボーダータイトル「SQN Modification Warning」（Yellow）。Edit Subscriber ダイアログの上にオーバーレイ表示。
+
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Warning: Manual SQN Edit                                   │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  1. The displayed value is from when this record was        │
-│     loaded. It may have been updated by authentication      │
-│     attempts since then.                                    │
-│                                                             │
-│  2. Changing SQN during operation may cause authentication  │
-│     failures due to synchronization mismatch with the SIM.  │
-│                                                             │
-│  3. Setting an excessively large value may lead to          │
-│     sequence number exhaustion (SQN rollover issues).       │
-│                                                             │
-│  Are you sure you want to modify SQN manually?              │
-│                                                             │
-├─────────────────────────────────────────────────────────────┤
-│  [Edit Anyway]                                  [Cancel]    │
-└─────────────────────────────────────────────────────────────┘
+        ┌ SQN Modification Warning ──────────────────────────────┐
+        │                                                          │
+        │                    ⚠WARNING ⚠                           │
+        │                                                          │
+        │  Modifying the SQN value may cause                       │
+        │  authentication failures.                                │
+        │                                                          │
+        │  Are you sure you want to change the SQN                 │
+        │  from                                                    │
+        │    000000000000 to 000000000010?                          │
+        │                                                          │
+        │           < Continue >     < Cancel >                     │
+        │                                                          │
+        └──────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -609,60 +608,52 @@ func checkPoliciesExist(imsiList []string) map[string]bool {
 
 ##### レイアウト
 
+ボーダータイトルに「RADIUS Client List」+件数・ページ情報を表示。
+
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  RADIUS Client Management - List             [n]New [?]Help │
-├─────────────────────────────────────────────────────────────┤
-│  Filter: [________________]                Showing: 8 / 8   │
-├─────┬─────────────────┬──────────────────┬──────────────────┤
-│ No. │ IP Address      │ Name             │ Vendor           │
-├─────┼─────────────────┼──────────────────┼──────────────────┤
-│   1 │ 192.168.1.100   │ AP-Floor1        │ cisco            │
-│ > 2 │ 192.168.1.101   │ AP-Floor2-Lon... │ cisco            │
-│   3 │ 10.0.0.1        │ TestClient       │                  │
-├─────────────────────────────────────────────────────────────┤
-│  [Prev] Page 1/1 [Next]                                     │
-├─────────────────────────────────────────────────────────────┤
-│  ↑↓:Move  Enter:Edit  n:New  d:Delete  /:Filter  Esc:Back  │
-└─────────────────────────────────────────────────────────────┘
+┌ RADIUS Client List 1-6 of 6 (Page 1/1) ────────────────────────────────┐
+│ IP Address        Name               Secret          Vendor             │
+│ 10.0.0.100        E2E-NAS            e2****as        generic            │
+│ 127.0.0.1         Localhost           TE****23        generic            │
+│ 172.19.0.1        DockerGateway       TE****23        generic            │
+│ 192.168.1.10      TestAP-01           te****p1        generic            │
+│ 192.168.10.1      Customer01          TE****23        generic            │
+│ 192.168.30.1      testClient          ab****mn        none               │
+└─────────────────────────────────────────────────────────────────────────┘
+F1:Help  |  q:Back/Quit  |  Ctrl+Q:Exit
 ```
 
 ##### 表示項目
 
-| カラム | 内容 | 幅 | 切り詰め |
-|--------|------|-----|---------|
-| No. | 連番 | 5 | - |
-| IP Address | クライアントIPアドレス | 17 | - |
-| Name | クライアント名称 | 18 | "..." 付加 |
-| Vendor | ベンダー名 | 18 | "..." 付加 |
+| カラム | 内容 | Expansion | 色 | 備考 |
+|--------|------|-----------|-----|------|
+| IP Address | クライアントIPアドレス | 1 | White | - |
+| Name | クライアント名称 | 1 | White | 超過時は "..." で切り詰め |
+| Secret | 共有シークレット（マスク表示） | 1 | Gray | 先頭2文字+****+末尾2文字（例: `e2****as`） |
+| Vendor | ベンダー名 | 1 | Gray | 空の場合は `none` と表示 |
 
-**注記：** Shared Secretは一覧では表示しない。
+**注記：** Shared Secretは一覧でマスク表示する（先頭2文字+****+末尾2文字）。
 
 #### 4.3.2 クライアント登録 [C2] / 編集 [C3]
 
 ##### レイアウト
 
+tview.Form を centered() ヘルパーで画面中央にダイアログ表示する。新規作成時のタイトルは「Create RADIUS Client」、編集時は「Edit RADIUS Client」。フォーム内のフィールド数が多いため、フォーカスが下部に移動するとフォーム内がスクロールし、上部フィールドが隠れてSave/Cancelボタンが表示される動作となる。
+
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  RADIUS Client Management - Add                             │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│    IP Address *:  [192.168.1.100____]                       │
-│                   IPv4 format                               │
-│                                                             │
-│    Secret *:      [mysecretkey_______]                      │
-│                   1-128 printable ASCII chars               │
-│                                                             │
-│    Name:          [AP-Floor1_________]                      │
-│                   Display name, max 64 chars                │
-│                                                             │
-│    Vendor:        [cisco_____________]                      │
-│                   For VSA, alphanumeric/hyphen, max 32      │
-│                                                             │
-├─────────────────────────────────────────────────────────────┤
-│  [Ctrl+S] Save    [Esc] Cancel                              │
-└─────────────────────────────────────────────────────────────┘
+              ┌ Create RADIUS Client ───────────────────────────┐
+              │                                                   │
+              │  IP Address  [255.255.255.255    ]                │
+              │  Secret      [ABCDEFGHIJKLMNOPQRSTUVWXYZ       ]  │
+              │  Name        [TestClient                       ]  │
+              │  Vendor      [unknown                          ]  │
+              │                                                   │
+              │          < Save >  < Cancel >                     │
+              │                                                   │
+              └───────────────────────────────────────────────────┘
 ```
+
+編集時: タイトル「Edit RADIUS Client」、IP Addressフィールドは無効化（グレーアウト、編集不可）。
 
 ##### フィールド定義
 
@@ -681,76 +672,72 @@ func checkPoliciesExist(imsiList []string) map[string]bool {
 
 ##### レイアウト
 
+ボーダータイトルに「Authorization Policy List」+件数・ページ情報を表示。
+
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Authorization Policy Management - List      [n]New [?]Help │
-├─────────────────────────────────────────────────────────────┤
-│  Filter: [________________]               Showing: 45 / 45  │
-├─────┬─────────────────┬──────────┬──────────────────────────┤
-│ No. │ IMSI            │ Default  │ Rules                    │
-├─────┼─────────────────┼──────────┼──────────────────────────┤
-│   1 │ 440101234567890 │ deny     │ 2 rules                  │
-│ > 2 │ 440101234567891 │ allow    │ 1 rule                   │
-│   3 │ 440109876543210 │ deny     │ 3 rules                  │
-├─────────────────────────────────────────────────────────────┤
-│  [Prev] Page 1/1 [Next]                                     │
-├─────────────────────────────────────────────────────────────┤
-│  ↑↓:Move  Enter:Edit  n:New  d:Delete  /:Filter  Esc:Back  │
-└─────────────────────────────────────────────────────────────┘
+┌ Authorization Policy List 1-9 of 9 (Page 1/1) ─────────────────────────┐
+│ IMSI              Default   Rules                                        │
+│ 001010000000000   allow     No rules                                     │
+│ 001010000000001   allow     No rules                                     │
+│ 001010000000002   deny      No rules                                     │
+│ 001010000000003   deny      1 rule                                       │
+│ 001010000000004   deny      2 rules                                      │
+│ 001010000000005   deny      1 rule                                       │
+│  :                :         :                                            │
+└──────────────────────────────────────────────────────────────────────────┘
+F1:Help  |  q:Back/Quit  |  Ctrl+Q:Exit
 ```
+
+**表示色:** Default列は `allow` = Yellow/Orange、`deny` = Green。Rules列は `No rules` / `1 rule` / `N rules` / `10+ rules` 形式で表示。
 
 #### 4.4.2 ポリシー登録 [P2] / 編集 [P3]
 
 ##### レイアウト
 
+ボーダータイトル「Policy Details」を表示。FlexRow で上部（Formエリア）と下部（Rules List）に分割し、それぞれ独立したボーダー付きBoxとして描画。Default Action は tview.DropDown で `deny` / `allow` を選択。Rules リストのインデックスは1始まり。
+
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Authorization Policy Management - Edit      IMSI: 44010... │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  IMSI *:     [440101234567890___]                           │
-│                                                             │
-│  Default *:  ( ) allow  (●) deny                            │
-│              Action when no rules match                     │
-│                                                             │
-│  ┌─ Rules ────────────────────────────────────────────────┐ │
-│  │ No. │ SSID         │ Action │ TimeMin │ TimeMax       │ │
-│  │─────┼──────────────┼────────┼─────────┼───────────────│ │
-│  │ > 1 │ CORP-WIFI    │ allow  │ 09:00   │ 18:00         │ │
-│  │   2 │ GUEST-WIFI   │ allow  │         │               │ │
-│  │   3 │ *            │ deny   │         │               │ │
-│  │                                                        │ │
-│  │ [a]Add  [e]Edit  [d]Delete  [↑↓]Move  [F6]Focus toggle  │ │
-│  └────────────────────────────────────────────────────────┘ │
-│                                                             │
-├─────────────────────────────────────────────────────────────┤
-│  [Ctrl+S] Save    [Esc] Cancel                              │
-└─────────────────────────────────────────────────────────────┘
+┌ Policy Details ──────────────────────────────────────────────────┐
+│                                                                    │
+│  IMSI             001010000000004        (disabled)                 │
+│  Default Action   [deny ▼]                                        │
+│                                                                    │
+│  < Add Rule >  < Save >  < Cancel >                               │
+│                                                                    │
+└────────────────────────────────────────────────────────────────────┘
+┌ Rules ─────────────────────────────────────────────────────────────┐
+│ [1] NAS: Customer01                                                 │
+│ SSIDs: TESTSSID-01, TESTSSID-02 | VLAN: 10 | Timeout: 7200s        │
+│ [2] NAS: Customer02                                                 │
+│ SSIDs: Guest | VLAN: 20 | Timeout: 1800s                           │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+F1:Help  |  q:Back/Quit  |  Ctrl+Q:Exit
 ```
+
+**備考:** Rules リストは tview.List を使用（メインテキスト: `[N] NAS: {nasID}`、サブテキスト: `SSIDs: ... | VLAN: ... | Timeout: ...s`、サブテキスト色: Green）。
 
 ##### ルール編集サブダイアログ
 
+centered(form, width=60, height=15) で Policy Details の上にオーバーレイ表示。ボーダー色は Teal/Cyan。
+
+新規追加時のタイトル: 「Add Rule」、ボタン: OK / Cancel
+編集時のタイトル: 「Edit Rule」、ボタン: OK / Delete / Cancel
+
 ```
-┌─────────────────────────────────────────┐
-│  Edit Rule                              │
-├─────────────────────────────────────────┤
-│                                         │
-│  SSID *:           [CORP-WIFI_____]     │
-│                    Required, or *       │
-│                                         │
-│  Action *:         ( ) allow  (●) deny  │
-│                    Required             │
-│                                         │
-│  Time Min:         [09:00]              │
-│                    Optional, HH:MM      │
-│                                         │
-│  Time Max:         [18:00]              │
-│                    Optional, HH:MM      │
-│                                         │
-├─────────────────────────────────────────┤
-│  [Enter] OK    [Esc] Cancel             │
-└─────────────────────────────────────────┘
+       ┌ Edit Rule ───────────────────────────────────────────┐
+       │                                                        │
+       │  NAS ID          [Customer01                        ]  │
+       │  Allowed SSIDs   [TESTSSID-01,TESTSSID-02           ]  │
+       │  VLAN ID         [10        ]                          │
+       │  Session Timeout [7200      ]                          │
+       │                                                        │
+       │       < OK >  < Delete >  < Cancel >                   │
+       │                                                        │
+       └────────────────────────────────────────────────────────┘
 ```
+
+新規追加時の Session Timeout 初期値は `0`。
 
 ##### ポリシーフォームのキーバインド
 
@@ -774,14 +761,14 @@ func checkPoliciesExist(imsiList []string) map[string]bool {
 
 ##### フィールド定義（ルール）
 
-| フィールド | 必須 | 初期値 | 型 |
-|-----------|------|-------|-----|
-| SSID | Yes | 空 | String（ワイルドカード`*`可） |
-| Action | Yes | `deny` | String（`allow` または `deny`） |
-| Time Min | No | 空 | String（HH:MM形式、空で制限なし） |
-| Time Max | No | 空 | String（HH:MM形式、空で制限なし） |
+| フィールド | 必須 | 初期値 | 幅 | 型 |
+|-----------|------|-------|-----|-----|
+| NAS ID | Yes | 空 | 40 | String（NAS IPアドレスまたはNAS ID） |
+| Allowed SSIDs | Yes | 空 | 40 | String（カンマ区切り、例: `SSID1,SSID2`） |
+| VLAN ID | No | 空 | 10 | String |
+| Session Timeout | No | `0` | 10 | String（秒数） |
 
-**注記：** D-02 Valkeyデータ設計仕様書のPolicyRule構造に準拠する。SSIDにはワイルドカード`*`を指定して全SSID対象とすることができる。Time Min/Time Maxは時間帯制限で、両方空の場合は常時有効。
+**注記：** D-02 Valkeyデータ設計仕様書のPolicyRule構造に準拠する。NAS IDにはNAS IPアドレスまたは識別名を指定する。
 
 ---
 
@@ -802,10 +789,10 @@ func checkPoliciesExist(imsiList []string) map[string]bool {
 | Client | Vendor | 0-32文字（英数字とハイフン） | `Vendor must be alphanumeric or hyphen` |
 | Policy | IMSI | （Subscriberと同じ） | （同上） |
 | Policy | Default | `allow` または `deny` | - |
-| Rule | SSID | 1-64文字、またはワイルドカード `*` | `SSID is required` |
-| Rule | Action | `allow` または `deny` | - |
-| Rule | Time Min | 空 または HH:MM形式（00:00-23:59） | `Time Min must be HH:MM format` |
-| Rule | Time Max | 空 または HH:MM形式（00:00-23:59） | `Time Max must be HH:MM format` |
+| Rule | NAS ID | 1-64文字 | `NAS ID is required` |
+| Rule | Allowed SSIDs | 1文字以上（カンマ区切り） | `Allowed SSIDs is required` |
+| Rule | VLAN ID | 空 または 数値文字列 | `VLAN ID must be numeric` |
+| Rule | Session Timeout | 空 または 0以上の整数 | `Session Timeout must be a non-negative integer` |
 
 ### 5.2 バリデーションタイミング
 
@@ -870,38 +857,89 @@ imsi,default,rules_json
 
 ### 6.5 インポート画面 [I1]
 
+FlexRow で上部（Formエリア）と下部（Result表示エリア）に分割。Data Type は tview.DropDown（Subscribers / RADIUS Clients / Policies）。インポート完了後にフォームが状態遷移する。
+
+#### 初期状態（Import Data）
+
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Import                                                     │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  Data Type:   (●) Subscriber  ( ) Client  ( ) Policy        │
-│                                                             │
-│  File Path:   [/home/admin/import.csv_______________]       │
-│                                                             │
-│  Options:                                                   │
-│    [x] Overwrite existing data                              │
-│    [ ] Dry run (do not actually import)                     │
-│                                                             │
-├─────────────────────────────────────────────────────────────┤
-│  [Enter] Execute    [Esc] Cancel                            │
-└─────────────────────────────────────────────────────────────┘
+┌ Import Data ─────────────────────────────────────────────────────┐
+│                                                                    │
+│  Data Type    [Subscribers      ▼]                                │
+│  File Path    [/home/admin/import.csv                          ]  │
+│                                                                    │
+│  < Validate >  < Import >  < Cancel >                             │
+│                                                                    │
+└────────────────────────────────────────────────────────────────────┘
+┌ Import Result ─────────────────────────────────────────────────────┐
+│                                                                     │
+│  (結果表示エリア — スクロール可能)                                   │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+F1:Help  |  q:Back/Quit  |  Ctrl+Q:Exit
+```
+
+Validate 実行後は結果エリアのタイトルが「Validation Result」に変化し、`Validation passed!`（緑色）+ `Records to import: N` を表示。
+
+#### 完了後の状態遷移（Import Completed）
+
+インポート完了後、フォームタイトルが「Import Completed」に変わり、ボタンが Done / Import More に切り替わる。結果エリアには `Import completed!`（緑色）+ `Imported: N {type}` を表示。
+
+```
+┌ Import Completed ────────────────────────────────────────────────┐
+│                                                                    │
+│  < Done >  < Import More >                                        │
+│                                                                    │
+└────────────────────────────────────────────────────────────────────┘
+┌ Import Result ─────────────────────────────────────────────────────┐
+│                                                                     │
+│  Import completed!                                                  │
+│  Imported: 15 subscribers                                           │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+F1:Help  |  q:Back/Quit  |  Ctrl+Q:Exit
 ```
 
 ### 6.6 エクスポート画面 [I2]
 
+FlexRow で上部（Formエリア）と下部（Result表示エリア）に分割。Data Type は tview.DropDown。エクスポート完了後にフォームが状態遷移する。
+
+#### 初期状態（Export Data）
+
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Export                                                     │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  Data Type:   (●) Subscriber  ( ) Client  ( ) Policy        │
-│                                                             │
-│  Output Path: [/home/admin/subscribers_20250620_143000.csv] │
-│                                                             │
-├─────────────────────────────────────────────────────────────┤
-│  [Enter] Execute    [Esc] Cancel                            │
-└─────────────────────────────────────────────────────────────┘
+┌ Export Data ─────────────────────────────────────────────────────┐
+│                                                                    │
+│  Data Type     [Subscribers      ▼]                               │
+│  Output File   [/home/admin/subscriber_export_20260223.txt     ]  │
+│                                                                    │
+│  < Export >  < Cancel >                                           │
+│                                                                    │
+└────────────────────────────────────────────────────────────────────┘
+┌ Export Result ─────────────────────────────────────────────────────┐
+│                                                                     │
+│  (結果表示エリア)                                                    │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+F1:Help  |  q:Back/Quit  |  Ctrl+Q:Exit
+```
+
+#### 完了後の状態遷移（Export Completed）
+
+エクスポート完了後、フォームタイトルが「Export Completed」に変わり、ボタンが Done / Export More に切り替わる。結果エリアには `Export completed!`（緑色）+ 件数・ファイルパスを表示。画面最下部のステータスバーにも緑色で成功メッセージが表示される。
+
+```
+┌ Export Completed ────────────────────────────────────────────────┐
+│                                                                    │
+│  < Done >  < Export More >                                        │
+│                                                                    │
+└────────────────────────────────────────────────────────────────────┘
+┌ Export Result ─────────────────────────────────────────────────────┐
+│                                                                     │
+│  Export completed!                                                  │
+│  Exported: 24 subscribers                                           │
+│  File: /home/admin/subscriber_export_20260223.txt                   │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+✓ Exported 24 subscribers to /home/admin/subscriber_export_20260223.txt
 ```
 
 ### 6.7 インポートロールバック（2フェーズインポート）
@@ -976,24 +1014,23 @@ func importSubscribers(records []SubscriberRecord) error {
 
 ### 7.2 エラー時の表示
 
+tview.Modal を使用した独立ダイアログ。ボーダータイトル「Connection Error」（Red）。画面中央に表示。
+
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  EAP-AKA RADIUS PoC - Admin TUI                            │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  ✗ Startup Error                                            │
-│                                                             │
-│  Failed to connect to Valkey.                               │
-│                                                             │
-│  - Host: 127.0.0.1:6379                                     │
-│  - Error: connection refused                                │
-│                                                             │
-│  Please check:                                              │
-│  1. Docker Compose is running                               │
-│  2. VALKEY_PASSWORD environment variable is correct         │
-│                                                             │
-│  [Enter] Retry    [Esc] Exit                                │
-└─────────────────────────────────────────────────────────────┘
+       ┌ Connection Error ──────────────────────────────────┐
+       │                                                      │
+       │  Failed to connect to Valkey:                        │
+       │                                                      │
+       │  {実際のエラーメッセージ}                              │
+       │                                                      │
+       │  Please check:                                       │
+       │  - Valkey is running on 127.0.0.1:6379               │
+       │  - VALKEY_PASSWORD environment variable is set       │
+       │    correctly                                         │
+       │                                                      │
+       │          < Retry >     < Exit >                       │
+       │                                                      │
+       └──────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -1073,3 +1110,4 @@ Admin TUIからの操作は、標準出力にJSON形式で記録する。
 | r6 | 2026-02-18 | PolicyRule構造をD-02 r10に準拠して更新: 旧構造（NAS-ID/Allowed SSIDs/VLAN ID/Session Timeout）を新構造（SSID/Action/TimeMin/TimeMax）に変更。ポリシー登録/編集画面、ルール編集サブダイアログ、バリデーションルール、CSVフォーマット例を更新 |
 | r7 | 2026-02-21 | 実機検証不具合修正の反映: セクション3.2にF5キー（リフレッシュ）追加、セクション3.9新設（ページライフサイクル管理 — tcell差分レンダリング対策のSync()、InputCapture内QueueUpdateDrawのgoroutineラップ、Import/Export完了時のページクリーンアップ、form.Clear後のInputCapture再登録）、ポリシーフォームのフォーカス切替をTabからF6に変更。旧3.9は3.10に再ナンバリング |
 | r8 | 2026-02-22 | Session Detail フリーズ不具合修正の知見反映: セクション3.10新設（tview Table の Selectable 状態管理 — 全セル NotSelectable 時の無限ループ問題と SetSelectable 切替による対策）、セクション3.11新設（非同期データ取得パターン — QueueUpdateDraw 内でのネットワーク I/O 回避）。旧3.10は3.12に再ナンバリング |
+| r9 | 2026-02-23 | 実装画面とのレイアウト整合性修正: スクリーンショット検証に基づくASCII図全面更新。§3.1 Ctrl+C→Ctrl+Q、F1/?ヘルプキー追加。§3.2 F2-F6ファンクションキー+代替文字キー追加。§4.1 メインメニューをtview.List形式に更新（ショートカット(1)-(q)括弧表記、ボーダータイトル追加）。§4.2.1 加入者一覧を6カラム+行頭"!"表示に更新（Ki/OPcマスク表示追加）。§4.2.2 フォームタイトルCreate/Edit Subscriber、SQN警告タイトルSQN Modification Warning。§4.3.1 クライアント一覧にSecret列マスク表示追加。§4.3.2 フォームタイトルCreate/Edit RADIUS Client。§4.4.1-4.4.2 ポリシーフォームタイトルPolicy Details、NAS ID/SSIDs/VLAN/Timeoutルール構造。§5.1 バリデーションルール表のRule部分をNAS ID/Allowed SSIDs/VLAN ID/Session Timeoutに更新。§6.5-6.6 インポート/エクスポート画面に状態遷移（Import Data→Import Completed、Export Data→Export Completed）追加。§7.2 起動エラーをConnection Errorモーダルに更新 |
