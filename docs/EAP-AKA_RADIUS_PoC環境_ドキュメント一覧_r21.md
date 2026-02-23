@@ -1,4 +1,4 @@
-# EAP-AKA RADIUS PoC環境 ドキュメント一覧 (r20)
+# EAP-AKA RADIUS PoC環境 ドキュメント一覧 (r21)
 
 **作成日:** 2025-12-30
 **最終更新:** 2026-02-23
@@ -257,3 +257,4 @@
 | r18 | 2026-02-22 | T-03結合テスト仕様書 版数更新（r3→r5）: go-eapaka PRF修正後の再テストで得られた知見を反映（identityオーバーライドIMSIのSQNリセット運用補足、Dockerイメージ再ビルド注意事項追加）。 |
 | r19 | 2026-02-23 | lnavフォーマット・Fluent Bit設定修正に伴う版数更新: D-04(r13→r14)、D-08(r10→r11)、B-02(r2→r4)、O-05(r1→r2)。lnavプロパティ名をハイフン区切りに修正、Fluent Bitログルーティング修正（rewrite_tag廃止→parserフィルター＋タグベースルーティング）。 |
 | r20 | 2026-02-23 | Fluent Bit 3.0→4.2アップグレード＋YAML移行に伴う版数更新: D-08(r11→r12)、O-05(r2→r3)。Classic config廃止に伴いYAML形式に移行、Distrolessベースイメージ対応、lnavフォーマットapp値定義追加。 |
+| r21 | 2026-02-23 | README.md更新に伴う改版: 実装状況セクション新規追加、ドキュメント一覧を全22件カテゴリ別記載に拡充、環境変数説明・テスト規模情報追加、リポジトリ構成にpkg/httputil・deployments/.env.example・lnav_formats追加、Fluent Bit 4.2バージョン明記。 |
