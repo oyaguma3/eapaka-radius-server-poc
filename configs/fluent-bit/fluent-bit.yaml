@@ -1,0 +1,60 @@
+service:
+  flush: 1
+  daemon: false
+  log_level: info
+
+parsers:
+  - name: json
+    format: json
+    time_key: false
+
+pipeline:
+  inputs:
+    - name: forward
+      listen: 0.0.0.0
+      port: 24224
+      mem_buf_limit: 5MB
+
+  filters:
+    - name: parser
+      match: "app.*"
+      key_name: log
+      parser: json
+      reserve_data: false
+
+  outputs:
+    - name: file
+      match: app.auth-server
+      path: /output_logs
+      file: auth-server.log
+      format: plain
+
+    - name: file
+      match: app.acct-server
+      path: /output_logs
+      file: acct-server.log
+      format: plain
+
+    - name: file
+      match: app.vector-gateway
+      path: /output_logs
+      file: vector-gateway.log
+      format: plain
+
+    - name: file
+      match: app.vector-api
+      path: /output_logs
+      file: vector-api.log
+      format: plain
+
+    - name: file
+      match: app.valkey
+      path: /output_logs
+      file: valkey.log
+      format: plain
+
+    - name: file
+      match: "*"
+      path: /output_logs
+      file: others.log
+      format: plain

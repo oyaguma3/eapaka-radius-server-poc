@@ -167,13 +167,13 @@ services:
   # Logging Layer
   # ==========================================================================
   fluent-bit:
-    image: fluent/fluent-bit:3.0
+    image: fluent/fluent-bit:4.2
+    command: ["/fluent-bit/bin/fluent-bit", "-c", "/fluent-bit/etc/fluent-bit.yaml"]
     ports:
       - "24224:24224"
       - "24224:24224/udp"
     volumes:
-      - ../configs/fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
-      - ../configs/fluent-bit/parsers.conf:/fluent-bit/etc/parsers.conf:ro
+      - ../configs/fluent-bit/fluent-bit.yaml:/fluent-bit/etc/fluent-bit.yaml:ro
       - ./logs_on_host:/output_logs
     environment:
       <<: *timezone

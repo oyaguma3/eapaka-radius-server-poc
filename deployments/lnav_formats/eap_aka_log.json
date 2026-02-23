@@ -9,6 +9,7 @@
         "body-field": "msg",
         "timestamp-format": ["%Y-%m-%dT%H:%M:%S.%L%Z"],
         "value": {
+            "app": { "kind": "string", "identifier": true },
             "imsi": { "kind": "string", "identifier": true },
             "trace_id": { "kind": "string", "identifier": true },
             "event_id": { "kind": "string", "identifier": true },
