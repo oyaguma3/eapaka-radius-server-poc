@@ -1,0 +1,19 @@
+# INT-POLICY-003: NAS/SSID一致ルールあり（VLAN/Timeout付与）
+# config: config_testvector.yaml
+# 前提: IMSI 001010000000003 のポリシーが登録済みであること
+#   default: "deny"
+#   rules: [{"nas_id":"Customer01","allowed_ssids":["TESTSSID-01"],"vlan_id":"100","session_timeout":3600}]
+# 動作: NAS-ID=Customer01一致、SSID=TESTSSID-01一致 → ルールマッチ → Accept（VLAN=100, Timeout=3600）
+version: 1
+name: policy_nas_ssid_match_testvector
+identity: "0001010000000003@wlan.mnc001.mcc001.3gppnetwork.org"
+radius:
+  attributes:
+    called_station_id: "00-10-A4-23-19-C0:TESTSSID-01"
+    nas_identifier: "Customer01"
+expect:
+  result: accept
+  mppe:
+    require_present: true
+trace:
+  level: verbose

@@ -1,0 +1,14 @@
+# INT-POLICY-007: ポリシー未登録
+# config: config_testvector.yaml
+# 前提: IMSI 001010000000007 のポリシーが未登録であること
+#   policy:001010000000007 キーが存在しないこと
+# 動作: ポリシー取得失敗 → AUTH_POLICY_NOT_FOUND → Reject
+version: 1
+name: policy_not_found_testvector
+identity: "0001010000000007@wlan.mnc001.mcc001.3gppnetwork.org"
+radius:
+  attributes:
+    called_station_id: "00-10-A4-23-19-C0:TESTSSID-01"
+    nas_identifier: "Customer01"
+expect:
+  result: reject

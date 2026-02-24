@@ -1,0 +1,17 @@
+# INT-POLICY-001: default=allow、ルールなし
+# config: config_testvector.yaml
+# 前提: IMSI 001010000000001 のポリシーが登録済みであること
+#   default: "allow"
+#   rules: []
+# 動作: ルールなし → default=allow → Accept（VLAN/Timeoutなし）
+version: 1
+name: policy_default_allow_testvector
+identity: "0001010000000001@wlan.mnc001.mcc001.3gppnetwork.org"
+radius:
+  attributes:
+    called_station_id: "00-10-A4-23-19-C0:TESTSSID-01"
+    nas_identifier: "Customer01"
+expect:
+  result: accept
+  mppe:
+    require_present: true

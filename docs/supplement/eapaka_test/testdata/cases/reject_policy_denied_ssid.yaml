@@ -1,0 +1,12 @@
+# INT-AUTH-AKA-007関連: SSID不一致による拒否
+# ポリシーでTESTSSID-01のみ許可されているIMSIに対し、TESTSSID-02で接続
+# config: config_testvector.yaml（called_station_idをケース側で上書き）
+version: 1
+name: reject_policy_denied_ssid
+identity: "0001010000000003@wlan.mnc001.mcc001.3gppnetwork.org"
+radius:
+  attributes:
+    called_station_id: "00-10-A4-23-19-C0:TESTSSID-02"
+    nas_identifier: "Customer01"
+expect:
+  result: reject

@@ -1,0 +1,16 @@
+# INT-AUTH-AKA-002対応: テストベクターSIMでのEAP-AKA'正常認証
+# config: config_testvector.yaml
+version: 1
+name: success_aka_prime_testvector
+identity: "6001010000000000@wlan.mnc001.mcc001.3gppnetwork.org"
+eap:
+  aka_prime:
+    net_name: "wlan.mnc001.mcc001.3gppnetwork.org"
+radius:
+  attributes:
+    called_station_id: "00-10-A4-23-19-C0:TESTSSID-01"
+    nas_identifier: "Customer01"
+expect:
+  result: accept
+  mppe:
+    require_present: true

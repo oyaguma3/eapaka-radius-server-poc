@@ -1,0 +1,8 @@
+# INT-AUTH-AKA-006対応: IMSI未登録による拒否
+# Valkeyに登録されていないIMSIで認証を試行
+# config: config_testvector.yaml（identityをケース側で上書き）
+version: 1
+name: reject_imsi_not_found
+identity: "0001019999999999@wlan.mnc001.mcc001.3gppnetwork.org"
+expect:
+  result: reject

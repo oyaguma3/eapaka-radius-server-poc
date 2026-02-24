@@ -1,0 +1,32 @@
+radius:
+  server_addr: "127.0.0.1:1812"
+  secret: "testing123"
+  timeout_ms: 1000
+  retries: 3
+
+radius_attrs:
+  nas_ip_address: "192.0.2.10"
+  nas_identifier: "eapaka_test"
+  called_station_id: "aa-bb-cc-dd-ee-ff:MySSID"
+  calling_station_id: "00-11-22-33-44-55"
+
+eap:
+  method_mismatch_policy: "warn"
+  outer_identity_update_on_permanent_req: true
+  permanent_id_policy: "always"
+  aka_prime:
+    net_name: "wlan.mnc010.mcc440.3gppnetwork.org"
+
+identity:
+  realm: "wlan.mnc010.mcc440.3gppnetwork.org"
+
+sim:
+  imsi: "440100123456789"
+  ki: "00112233445566778899aabbccddeeff"
+  opc: "00112233445566778899aabbccddeeff"
+  amf: "8000"
+  sqn_initial_hex: "000000000000"
+
+sqn_store:
+  mode: "file"
+  path: "/tmp/eapaka_test-sqn.json"

@@ -1,0 +1,35 @@
+# 商用確認済みテストSIM用config
+# IMSI: 999700000165480（参考3: 商用設備確認済みテストAKAデータ）
+
+radius:
+  server_addr: "127.0.0.1:1812"
+  secret: "TESTSECRET123"
+  timeout_ms: 3000
+  retries: 3
+
+radius_attrs:
+  nas_ip_address: "192.168.10.1"
+  nas_identifier: "Customer01"
+  called_station_id: "00-10-A4-23-19-C0:TESTSSID-01"
+  calling_station_id: "00-22-FA-94-68-58"
+
+eap:
+  method_mismatch_policy: "warn"
+  outer_identity_update_on_permanent_req: true
+  permanent_id_policy: "always"
+  aka_prime:
+    net_name: "wlan.mnc070.mcc999.3gppnetwork.org"
+
+identity:
+  realm: "wlan.mnc070.mcc999.3gppnetwork.org"
+
+sim:
+  imsi: "999700000165480"
+  ki: "5C820C099FC04C3091EA0265F2824BE7"
+  opc: "0CA072516CFCE2042AD2473BD1AAF7BD"
+  amf: "8000"
+  sqn_initial_hex: "0000000003BD"
+
+sqn_store:
+  mode: "file"
+  path: "/tmp/eapaka_test-sqn-commercial.json"

@@ -1,0 +1,24 @@
+# INT-003対応: テストベクターSIMでのEAP-AKA' SQN再同期フロー
+# config: config_testvector.yaml
+# 前提: 事前に1回以上認証成功してサーバー側SQNがインクリメントされていること
+# 動作: sqn.reset=trueでクライアント側SQNを0にリセット → SQN不整合
+#       → Sync-Failure(AUTS) → SQN再同期 → 再Challenge → 認証成功
+version: 1
+name: resync_aka_prime_testvector
+identity: "6001010000000000@wlan.mnc001.mcc001.3gppnetwork.org"
+eap:
+  aka_prime:
+    net_name: "wlan.mnc001.mcc001.3gppnetwork.org"
+sqn:
+  reset: true
+  persist: true
+radius:
+  attributes:
+    called_station_id: "00-10-A4-23-19-C0:TESTSSID-01"
+    nas_identifier: "Customer01"
+expect:
+  result: accept
+  mppe:
+    require_present: true
+trace:
+  level: verbose

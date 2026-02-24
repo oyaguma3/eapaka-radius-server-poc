@@ -1,0 +1,12 @@
+version: 1
+name: perm_id_req_from_pseudonym
+identity: "2some-pseudonym@example"
+eap:
+  outer_identity_update_on_permanent_req: true
+  permanent_id_policy: "always"
+expect:
+  result: accept
+  mppe:
+    require_present: true
+trace:
+  level: verbose

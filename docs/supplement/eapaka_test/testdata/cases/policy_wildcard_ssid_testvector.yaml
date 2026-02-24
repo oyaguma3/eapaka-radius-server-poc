@@ -1,0 +1,19 @@
+# INT-POLICY-006対応: ワイルドカードSSIDポリシー評価テスト
+# config: config_testvector.yaml
+# 前提: IMSI 001010000000006 のポリシーが登録済みであること
+#   default: "deny"
+#   rules: [{"nas_id":"Customer01","allowed_ssids":["*"],"vlan_id":"200","session_timeout":1800}]
+# 動作: NAS-ID=Customer01 一致、SSID=任意値 → ワイルドカード["*"]で許可 → Accept
+version: 1
+name: policy_wildcard_ssid_testvector
+identity: "0001010000000006@wlan.mnc001.mcc001.3gppnetwork.org"
+radius:
+  attributes:
+    called_station_id: "00-10-A4-23-19-C0:AnySSID-Here"
+    nas_identifier: "Customer01"
+expect:
+  result: accept
+  mppe:
+    require_present: true
+trace:
+  level: verbose

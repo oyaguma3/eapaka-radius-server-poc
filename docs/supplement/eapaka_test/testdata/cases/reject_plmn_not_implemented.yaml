@@ -1,0 +1,16 @@
+# INT-GW-PLMN-010対応: 未実装バックエンドPLMNルーティング
+# config: config_testvector.yaml
+# 前提: VECTOR_GATEWAY_MODE=gateway, VECTOR_GATEWAY_PLMN_MAP に 441999:01 を含むこと
+# 動作: PLMN 441999 → BackendID 01（未登録）→ 501 Not Implemented → Access-Reject
+# 備考: 認証ベクター取得前にGatewayで拒否されるため、SIMパラメータは不問
+version: 1
+name: reject_plmn_not_implemented
+identity: "0441999123456789@wlan.mnc999.mcc441.3gppnetwork.org"
+radius:
+  attributes:
+    called_station_id: "00-10-A4-23-19-C0:TESTSSID-01"
+    nas_identifier: "Customer01"
+expect:
+  result: reject
+trace:
+  level: verbose
