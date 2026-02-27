@@ -13,10 +13,10 @@ type Policy struct {
 
 // PolicyRule はポリシールールを表す。
 type PolicyRule struct {
-	SSID    string `json:"ssid"`     // 対象SSID（ワイルドカード可）
-	Action  string `json:"action"`   // アクション（"allow" or "deny"）
-	TimeMin string `json:"time_min"` // 許可開始時刻（HH:MM形式、空で制限なし）
-	TimeMax string `json:"time_max"` // 許可終了時刻（HH:MM形式、空で制限なし）
+	NasID          string   `json:"nas_id"`                    // NAS識別子（ワイルドカード可）
+	AllowedSSIDs   []string `json:"allowed_ssids"`             // 許可SSIDリスト
+	VlanID         string   `json:"vlan_id,omitempty"`         // VLAN ID（空文字は未設定）
+	SessionTimeout int      `json:"session_timeout,omitempty"` // セッションタイムアウト秒（0は未設定）
 }
 
 // NewPolicy は新しいPolicyを生成する。

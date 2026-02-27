@@ -1,4 +1,4 @@
-# D-02 Valkey データ設計仕様書 (r10)
+# D-02 Valkey データ設計仕様書 (r11)
 
 ## 1. 全体方針
 
@@ -75,37 +75,31 @@ Vector APIがEAP-AKA認証ベクターを計算するための鍵情報。
 
 #### JSON構造 (`rules` フィールド)
 
-SSIDとアクションのマッチング条件に加え、時間帯制限を定義する。
+NAS-IDとSSIDのマッチング条件に加え、VLAN・セッションパラメータを定義する。
 
 ```json
 [
   {
-    "ssid": "CORP-WIFI",
-    "action": "allow",
-    "time_min": "09:00",
-    "time_max": "18:00"
+    "nas_id": "AP-OFFICE-01",
+    "allowed_ssids": ["CORP-WIFI", "GUEST-WIFI"],
+    "vlan_id": "100",
+    "session_timeout": 3600
   },
   {
-    "ssid": "GUEST-WIFI",
-    "action": "allow",
-    "time_min": "",
-    "time_max": ""
-  },
-  {
-    "ssid": "*",
-    "action": "deny",
-    "time_min": "",
-    "time_max": ""
+    "nas_id": "*",
+    "allowed_ssids": ["*"],
+    "vlan_id": "",
+    "session_timeout": 0
   }
 ]
 ```
 
 | フィールド | 型 | 説明 | 備考 |
 |-----------|-----|------|------|
-| `ssid` | string | 対象SSID | ワイルドカード`*`で全SSID対象 |
-| `action` | string | アクション | `"allow"` または `"deny"` |
-| `time_min` | string | 許可開始時刻 | HH:MM形式、空で制限なし |
-| `time_max` | string | 許可終了時刻 | HH:MM形式、空で制限なし |
+| `nas_id` | string | NAS識別子 | ワイルドカード`*`可、完全一致 |
+| `allowed_ssids` | []string | 許可SSIDリスト | `["*"]`で全SSID対象、大文字小文字区別なし |
+| `vlan_id` | string | VLAN ID | 空文字は未設定、省略可 |
+| `session_timeout` | int | セッションタイムアウト秒 | 0は未設定、省略可 |
 
 ------
 
@@ -364,10 +358,10 @@ func (p *Policy) EncodeRules() error       // RulesをJSON文字列にエンコ�
 func (p *Policy) IsAllowByDefault() bool   // デフォルトアクションが許可か判定
 
 type PolicyRule struct {
-    SSID    string `json:"ssid"`     // 対象SSID（ワイルドカード可）
-    Action  string `json:"action"`   // アクション（"allow" or "deny"）
-    TimeMin string `json:"time_min"` // 許可開始時刻（HH:MM形式、空で制限なし）
-    TimeMax string `json:"time_max"` // 許可終了時刻（HH:MM形式、空で制限なし）
+    NasID          string   `json:"nas_id"`                    // NAS識別子（ワイルドカード可）
+    AllowedSSIDs   []string `json:"allowed_ssids"`             // 許可SSIDリスト
+    VlanID         string   `json:"vlan_id,omitempty"`         // VLAN ID（空文字は未設定）
+    SessionTimeout int      `json:"session_timeout,omitempty"` // セッションタイムアウト秒（0は未設定）
 }
 
 // --- State Data ---
@@ -439,3 +433,4 @@ func NewSession(uuid, imsi, nasIP, clientIP, acctSessionID string, startTime int
 | r8 | 2026-01-26 | SQN競合制御明記: セクション2.Aの`sqn`フィールド備考にCAS更新を追記、WATCH/MULTIによる原子更新方式の補足説明を追加 |
 | r9 | 2026-01-27 | idx:userクリーンアップ方針追記: セクション3 F項にAdmin TUIでの読み取り時クリーンアップ方針を明記 |
 | r10 | 2026-02-18 | 実装との整合: PolicyDoc→Policy型名変更、PolicyRuleフィールド更新（SSID/Action/TimeMin/TimeMax）、rulesのJSONサンプル更新、stage値を小文字に変更しmodel.Stage型として定義されている旨を明記、Go構造体定義例からredisタグ除去（ストア層変換方式の補足追記）、全コンストラクタシグネチャ追記 |
+| r11 | 2026-02-27 | PolicyRule構造を実装コードに合わせて修正: フィールドをNasID/AllowedSSIDs/VlanID/SessionTimeoutに変更、JSONサンプルをNAS-ID/SSIDマッチング＋VLAN・セッションパラメータ形式に更新、Go構造体定義例も同期 |

@@ -44,7 +44,7 @@ func TestPolicyParseRules(t *testing.T) {
 
 	t.Run("Valid rules JSON", func(t *testing.T) {
 		policy := &Policy{
-			RulesJSON: `[{"ssid":"test-wifi","action":"allow","time_min":"09:00","time_max":"18:00"}]`,
+			RulesJSON: `[{"nas_id":"AP-OFFICE-01","allowed_ssids":["CORP-WIFI","GUEST-WIFI"],"vlan_id":"100","session_timeout":3600}]`,
 		}
 		err := policy.ParseRules()
 		if err != nil {
@@ -54,17 +54,17 @@ func TestPolicyParseRules(t *testing.T) {
 			t.Fatalf("Rules length = %d, want %d", len(policy.Rules), 1)
 		}
 		rule := policy.Rules[0]
-		if rule.SSID != "test-wifi" {
-			t.Errorf("SSID = %q, want %q", rule.SSID, "test-wifi")
+		if rule.NasID != "AP-OFFICE-01" {
+			t.Errorf("NasID = %q, want %q", rule.NasID, "AP-OFFICE-01")
 		}
-		if rule.Action != "allow" {
-			t.Errorf("Action = %q, want %q", rule.Action, "allow")
+		if len(rule.AllowedSSIDs) != 2 {
+			t.Errorf("AllowedSSIDs length = %d, want %d", len(rule.AllowedSSIDs), 2)
 		}
-		if rule.TimeMin != "09:00" {
-			t.Errorf("TimeMin = %q, want %q", rule.TimeMin, "09:00")
+		if rule.VlanID != "100" {
+			t.Errorf("VlanID = %q, want %q", rule.VlanID, "100")
 		}
-		if rule.TimeMax != "18:00" {
-			t.Errorf("TimeMax = %q, want %q", rule.TimeMax, "18:00")
+		if rule.SessionTimeout != 3600 {
+			t.Errorf("SessionTimeout = %d, want %d", rule.SessionTimeout, 3600)
 		}
 	})
 
@@ -78,7 +78,7 @@ func TestPolicyParseRules(t *testing.T) {
 
 	t.Run("Multiple rules", func(t *testing.T) {
 		policy := &Policy{
-			RulesJSON: `[{"ssid":"wifi-a","action":"allow","time_min":"","time_max":""},{"ssid":"wifi-b","action":"deny","time_min":"00:00","time_max":"06:00"}]`,
+			RulesJSON: `[{"nas_id":"AP-01","allowed_ssids":["WIFI-A"],"vlan_id":"100","session_timeout":3600},{"nas_id":"*","allowed_ssids":["*"]}]`,
 		}
 		err := policy.ParseRules()
 		if err != nil {
@@ -105,7 +105,7 @@ func TestPolicyEncodeRules(t *testing.T) {
 	t.Run("With rules", func(t *testing.T) {
 		policy := NewPolicy("imsi", "deny")
 		policy.Rules = []PolicyRule{
-			{SSID: "guest-wifi", Action: "allow", TimeMin: "", TimeMax: ""},
+			{NasID: "AP-01", AllowedSSIDs: []string{"GUEST-WIFI"}, VlanID: "200", SessionTimeout: 1800},
 		}
 		err := policy.EncodeRules()
 		if err != nil {
@@ -120,8 +120,8 @@ func TestPolicyEncodeRules(t *testing.T) {
 	t.Run("Roundtrip", func(t *testing.T) {
 		original := NewPolicy("imsi", "allow")
 		original.Rules = []PolicyRule{
-			{SSID: "corp-wifi", Action: "allow", TimeMin: "08:00", TimeMax: "20:00"},
-			{SSID: "*", Action: "deny", TimeMin: "", TimeMax: ""},
+			{NasID: "AP-OFFICE-01", AllowedSSIDs: []string{"CORP-WIFI"}, VlanID: "100", SessionTimeout: 3600},
+			{NasID: "*", AllowedSSIDs: []string{"*"}},
 		}
 		err := original.EncodeRules()
 		if err != nil {
@@ -137,11 +137,11 @@ func TestPolicyEncodeRules(t *testing.T) {
 		if len(restored.Rules) != 2 {
 			t.Errorf("Rules length = %d, want %d", len(restored.Rules), 2)
 		}
-		if restored.Rules[0].SSID != "corp-wifi" {
-			t.Errorf("Rules[0].SSID = %q, want %q", restored.Rules[0].SSID, "corp-wifi")
+		if restored.Rules[0].NasID != "AP-OFFICE-01" {
+			t.Errorf("Rules[0].NasID = %q, want %q", restored.Rules[0].NasID, "AP-OFFICE-01")
 		}
-		if restored.Rules[1].SSID != "*" {
-			t.Errorf("Rules[1].SSID = %q, want %q", restored.Rules[1].SSID, "*")
+		if restored.Rules[1].NasID != "*" {
+			t.Errorf("Rules[1].NasID = %q, want %q", restored.Rules[1].NasID, "*")
 		}
 	})
 }
@@ -169,22 +169,22 @@ func TestPolicyIsAllowByDefault(t *testing.T) {
 
 func TestPolicyRule(t *testing.T) {
 	rule := PolicyRule{
-		SSID:    "test-ssid",
-		Action:  "allow",
-		TimeMin: "09:00",
-		TimeMax: "17:00",
+		NasID:          "AP-OFFICE-01",
+		AllowedSSIDs:   []string{"CORP-WIFI", "GUEST-WIFI"},
+		VlanID:         "100",
+		SessionTimeout: 3600,
 	}
 
-	if rule.SSID != "test-ssid" {
-		t.Errorf("SSID = %q, want %q", rule.SSID, "test-ssid")
+	if rule.NasID != "AP-OFFICE-01" {
+		t.Errorf("NasID = %q, want %q", rule.NasID, "AP-OFFICE-01")
 	}
-	if rule.Action != "allow" {
-		t.Errorf("Action = %q, want %q", rule.Action, "allow")
+	if len(rule.AllowedSSIDs) != 2 {
+		t.Errorf("AllowedSSIDs length = %d, want %d", len(rule.AllowedSSIDs), 2)
 	}
-	if rule.TimeMin != "09:00" {
-		t.Errorf("TimeMin = %q, want %q", rule.TimeMin, "09:00")
+	if rule.VlanID != "100" {
+		t.Errorf("VlanID = %q, want %q", rule.VlanID, "100")
 	}
-	if rule.TimeMax != "17:00" {
-		t.Errorf("TimeMax = %q, want %q", rule.TimeMax, "17:00")
+	if rule.SessionTimeout != 3600 {
+		t.Errorf("SessionTimeout = %d, want %d", rule.SessionTimeout, 3600)
 	}
 }
