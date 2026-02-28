@@ -2,13 +2,14 @@
 package logging
 
 // MaskIMSI はIMSIをマスキングする。
-// D-04準拠: 440101234567890 → 44010*******90
+// D-04準拠: 先頭6桁 + マスク + 末尾1桁
+// 例: 440101234567890 → 440101********0
 // enabled=false の場合はマスキングせずにそのまま返す。
 func MaskIMSI(imsi string, enabled bool) string {
 	if !enabled {
 		return imsi
 	}
-	return MaskPartial(imsi, 5, 2, '*')
+	return MaskPartial(imsi, 6, 1, '*')
 }
 
 // MaskPartial は文字列の一部をマスキングする。

@@ -11,7 +11,7 @@ import (
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/auth-server/internal/eap"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/auth-server/internal/eap/aka"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/auth-server/internal/eap/akaprime"
-	"github.com/oyaguma3/eapaka-radius-server-poc/apps/auth-server/internal/logging"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/logging"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/auth-server/internal/policy"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/auth-server/internal/session"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/auth-server/internal/vector"
