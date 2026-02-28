@@ -7,7 +7,10 @@
         "timestamp-field": "time",
         "level-field": "level",
         "body-field": "msg",
-        "timestamp-format": ["%Y-%m-%dT%H:%M:%S.%L%Z"],
+        "timestamp-format": [
+            "%Y-%m-%dT%H:%M:%S.%N%z",
+            "%Y-%m-%dT%H:%M:%S.%L%Z"
+        ],
         "value": {
             "app": { "kind": "string", "identifier": true },
             "imsi": { "kind": "string", "identifier": true },
