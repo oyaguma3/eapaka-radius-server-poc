@@ -10,8 +10,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-gateway/internal/backend"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-gateway/internal/config"
-	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/logging"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-gateway/internal/router"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/httputil"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/logging"
 )
 
 // TraceIDKey はコンテキストにTraceIDを格納するキー。
@@ -44,7 +45,7 @@ func (h *VectorHandler) HandleVector(c *gin.Context) {
 			"event_id", "GW_ERR",
 			"error", err.Error(),
 		)
-		c.JSON(http.StatusBadRequest, backend.NewProblemDetail(
+		c.JSON(http.StatusBadRequest, httputil.NewProblemDetail(
 			http.StatusBadRequest,
 			"Bad Request",
 			"Invalid request body",
@@ -60,7 +61,7 @@ func (h *VectorHandler) HandleVector(c *gin.Context) {
 			"imsi", logging.MaskIMSI(req.IMSI, h.cfg.LogMaskIMSI),
 			"error", err.Error(),
 		)
-		c.JSON(http.StatusBadRequest, backend.NewProblemDetail(
+		c.JSON(http.StatusBadRequest, httputil.NewProblemDetail(
 			http.StatusBadRequest,
 			"Bad Request",
 			"IMSI must be 15 digits",
@@ -111,7 +112,7 @@ func (h *VectorHandler) handleRoutingError(c *gin.Context, traceID any, imsi str
 			"imsi", logging.MaskIMSI(imsi, h.cfg.LogMaskIMSI),
 			"backend_id", notImpl.ID,
 		)
-		c.JSON(http.StatusNotImplemented, backend.NewProblemDetail(
+		c.JSON(http.StatusNotImplemented, httputil.NewProblemDetail(
 			http.StatusNotImplemented,
 			"Not Implemented",
 			fmt.Sprintf("Backend %q is not implemented", notImpl.ID),
@@ -125,7 +126,7 @@ func (h *VectorHandler) handleRoutingError(c *gin.Context, traceID any, imsi str
 		"imsi", logging.MaskIMSI(imsi, h.cfg.LogMaskIMSI),
 		"error", err.Error(),
 	)
-	c.JSON(http.StatusInternalServerError, backend.NewProblemDetail(
+	c.JSON(http.StatusInternalServerError, httputil.NewProblemDetail(
 		http.StatusInternalServerError,
 		"Internal Server Error",
 		"An unexpected error occurred",
@@ -156,7 +157,7 @@ func (h *VectorHandler) handleBackendError(c *gin.Context, traceID any, imsi str
 			"imsi", logging.MaskIMSI(imsi, h.cfg.LogMaskIMSI),
 			"error", commErr.Error(),
 		)
-		c.JSON(http.StatusBadGateway, backend.NewProblemDetail(
+		c.JSON(http.StatusBadGateway, httputil.NewProblemDetail(
 			http.StatusBadGateway,
 			"Bad Gateway",
 			"Failed to communicate with backend service",
@@ -171,7 +172,7 @@ func (h *VectorHandler) handleBackendError(c *gin.Context, traceID any, imsi str
 		"imsi", logging.MaskIMSI(imsi, h.cfg.LogMaskIMSI),
 		"error", err.Error(),
 	)
-	c.JSON(http.StatusInternalServerError, backend.NewProblemDetail(
+	c.JSON(http.StatusInternalServerError, httputil.NewProblemDetail(
 		http.StatusInternalServerError,
 		"Internal Server Error",
 		"An unexpected error occurred",
