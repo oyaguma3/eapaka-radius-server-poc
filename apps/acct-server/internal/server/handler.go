@@ -44,7 +44,7 @@ func (h *Handler) ServeRADIUS(w radius.ResponseWriter, r *radius.Request) {
 
 // handleAccountingRequest はAccounting-Requestを処理する
 func (h *Handler) handleAccountingRequest(w radius.ResponseWriter, r *radius.Request, traceID, srcIP string) {
-	secret := r.Packet.Secret
+	secret := r.Secret
 
 	// 1. Request Authenticator検証
 	if !radiuspkg.VerifyAccountingAuthenticator(r.Packet, secret) {
@@ -110,7 +110,7 @@ func (h *Handler) handleAccountingRequest(w radius.ResponseWriter, r *radius.Req
 
 // handleStatusServer はStatus-Serverリクエストに応答する
 func (h *Handler) handleStatusServer(w radius.ResponseWriter, r *radius.Request, traceID, srcIP string) {
-	resp := radiuspkg.HandleStatusServer(r.Packet, r.Packet.Secret, srcIP, traceID)
+	resp := radiuspkg.HandleStatusServer(r.Packet, r.Secret, srcIP, traceID)
 	if resp == nil {
 		return
 	}
