@@ -1,0 +1,48 @@
+# golangci-lint v2 設定
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - govet
+    - errcheck
+    - staticcheck
+    - unused
+    - ineffassign
+
+  settings:
+    errcheck:
+      exclude-functions:
+        - (io.Closer).Close
+        - (*os.File).Close
+        - (*github.com/redis/go-redis/v9.Client).Close
+        - os.Setenv
+
+    staticcheck:
+      checks:
+        - "all"
+        - "-ST1000" # パッケージコメント要求はPoC規模では過剰
+        - "-ST1003" # RFC準拠の命名（K_encr, K_aut等）を許容
+
+  exclusions:
+    rules:
+      # テストファイルでのerrcheck/unused/staticcheckを除外
+      - path: _test\.go
+        linters:
+          - errcheck
+          - unused
+          - staticcheck
+      # main.goのdefer Close()パターン
+      - text: "Error return value of `valkeyClient.Close` is not checked"
+        linters:
+          - errcheck
+
+    paths:
+      - third_party$
+      - builtin$
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

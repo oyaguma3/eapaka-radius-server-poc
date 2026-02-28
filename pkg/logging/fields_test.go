@@ -96,7 +96,7 @@ func TestCommonFields(t *testing.T) {
 		if attr.Key != FieldIMSI {
 			t.Errorf("Key = %q, want %q", attr.Key, FieldIMSI)
 		}
-		want := "44010********90"
+		want := "440101********0"
 		if attr.Value.String() != want {
 			t.Errorf("Value = %q, want %q", attr.Value.String(), want)
 		}

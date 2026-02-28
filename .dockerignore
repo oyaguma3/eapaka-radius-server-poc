@@ -1,0 +1,14 @@
+.git
+.github
+.gitignore
+.claude/
+.golangci.yml
+Makefile
+CLAUDE.md
+docs/
+configs/
+deployments/
+*.exe
+.DS_Store
+.vscode/
+.idea/

@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/httputil"
 )
 
 const (
@@ -69,7 +71,7 @@ func (b *InternalBackend) GetVector(ctx context.Context, req *VectorRequest) (*V
 	// ステータスコードに応じたエラー処理
 	if resp.StatusCode >= 400 && resp.StatusCode < 500 {
 		// 4xxエラー: そのまま伝搬
-		var problem ProblemDetail
+		var problem httputil.ProblemDetail
 		if err := json.Unmarshal(respBody, &problem); err != nil {
 			return nil, &BackendCommunicationError{Err: fmt.Errorf("failed to parse error response: %w", err)}
 		}

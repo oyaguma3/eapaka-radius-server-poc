@@ -13,7 +13,7 @@ func TestMaskIMSI(t *testing.T) {
 			name:    "Standard IMSI with masking enabled",
 			imsi:    "440101234567890",
 			enabled: true,
-			want:    "44010********90",
+			want:    "440101********0",
 		},
 		{
 			name:    "Standard IMSI with masking disabled",
@@ -130,7 +130,7 @@ func TestMasker(t *testing.T) {
 			t.Error("IsEnabled() = false, want true")
 		}
 		got := m.IMSI("440101234567890")
-		want := "44010********90"
+		want := "440101********0"
 		if got != want {
 			t.Errorf("IMSI() = %q, want %q", got, want)
 		}

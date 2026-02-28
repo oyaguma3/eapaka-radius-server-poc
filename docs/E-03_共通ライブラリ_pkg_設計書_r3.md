@@ -1,4 +1,4 @@
-# E-03 共通ライブラリ(pkg)設計書 (r2)
+# E-03 共通ライブラリ(pkg)設計書 (r3)
 
 ## 1. 概要
 
@@ -27,8 +27,8 @@
 | ドキュメント | 参照内容 |
 |-------------|---------|
 | D-01 ミニPC版設計仕様書 (r9) | リポジトリ構成、パッケージ利用マップ |
-| D-02 Valkeyデータ設計仕様書 (r10) | Go構造体定義、ストア層変換方式 |
-| D-04 ログ仕様設計書 (r13) | IMSIマスキング仕様 |
+| D-02 Valkeyデータ設計仕様書 (r11) | Go構造体定義、ストア層変換方式 |
+| D-04 ログ仕様設計書 (r17) | IMSIマスキング仕様 |
 | D-06 エラーハンドリング詳細設計書 (r6) | エラー定義パターン |
 | D-11 Vector API詳細設計書 (r6) | RFC 7807 Problem Details |
 | E-02 コーディング規約（簡易版）(r1) | pkg配置方針、命名規則 |
@@ -688,12 +688,13 @@ D-04「ログ仕様設計書」で定義されたマスキング仕様を実装�
 ```go
 // MaskIMSI はIMSIをマスキングする
 //
-// マスキング仕様（D-04準拠）:
-//   - 先頭5桁（MCC 3桁 + MNC 2桁）を保持
-//   - 末尾2桁を保持
+// マスキング仕様（D-04 r17準拠）:
+//   - 先頭6桁を保持
+//   - 末尾1桁を保持
 //   - 中間部分をアスタリスク(*)でマスク
+//   - 内部的に MaskPartial(imsi, 6, 1, '*') を使用
 //
-// 例: 440101234567890 → 44010*******90
+// 例: 440101234567890 → 440101********0
 //
 // enabled=false の場合はマスキングせずそのまま返す
 func MaskIMSI(imsi string, enabled bool) string
@@ -1201,3 +1202,4 @@ func (h *GatewayHandler) handleBackendError(c *gin.Context, err error) {
 |------|------|------|
 | r1 | 2026-01-25 | 初版作成。pkg/apperr, pkg/valkey, pkg/logging, pkg/model, pkg/httputil の設計を定義。 |
 | r2 | 2026-02-18 | 実装との整合: apperr/httputil ファイル分割反映、PolicyRule構造変更（SSID/Action/TimeMin/TimeMax）、model構造体をjsonタグのみに修正（redisタグ除去・ストア層変換方式）、Stage型（`type Stage string`）と8定数追加、全コンストラクタシグネチャを実装に合わせて更新、valkey DefaultOptions/TUIOptionsのデフォルト値明記、logging フィールド定数8種・nilガード・AuthLogFields追記、httputil ContentType定数・BadGateway/NotImplemented/ServiceUnavailable追記、関連ドキュメント版数更新。 |
+| r3 | 2026-03-01 | 実装・現行ドキュメントとの整合: IMSIマスキング仕様をD-04 r17準拠に修正（先頭6桁+末尾1桁）、関連ドキュメント版数更新 |

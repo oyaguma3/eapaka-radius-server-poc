@@ -1,12 +1,26 @@
 # ビルドステージ
 FROM golang:1.25-bookworm AS builder
 
-WORKDIR /app
-COPY go.mod go.sum ./
-RUN go mod download
+WORKDIR /workspace
 
-COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o acct-server .
+# go.workと全モジュールのgo.mod/go.sumをコピー（go.workのuse解決に全モジュール必要）
+COPY go.work go.work.sum ./
+COPY apps/acct-server/go.mod apps/acct-server/go.sum ./apps/acct-server/
+COPY apps/admin-tui/go.mod apps/admin-tui/go.sum ./apps/admin-tui/
+COPY apps/auth-server/go.mod apps/auth-server/go.sum ./apps/auth-server/
+COPY apps/vector-api/go.mod apps/vector-api/go.sum ./apps/vector-api/
+COPY apps/vector-gateway/go.mod apps/vector-gateway/go.sum ./apps/vector-gateway/
+COPY pkg/go.mod pkg/go.sum ./pkg/
+
+# 依存関係のダウンロード（対象アプリ + pkg）
+RUN cd apps/acct-server && go mod download && \
+    cd /workspace/pkg && go mod download
+
+# ソースコードのコピー（対象アプリ + pkg のみ）
+COPY apps/acct-server/ ./apps/acct-server/
+COPY pkg/ ./pkg/
+
+RUN cd apps/acct-server && CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/acct-server .
 
 # ランタイムステージ
 FROM debian:bookworm-slim
@@ -17,7 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     procps \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /app/acct-server /usr/local/bin/acct-server
+COPY --from=builder /out/acct-server /usr/local/bin/acct-server
 
 EXPOSE 1813/udp
 

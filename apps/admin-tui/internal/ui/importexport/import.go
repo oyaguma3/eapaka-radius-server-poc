@@ -130,8 +130,8 @@ func (s *ImportScreen) handleValidate() {
 				result.WriteString("  - " + e.Error() + "\n")
 			}
 		} else {
-			result.WriteString(fmt.Sprintf("[green]Validation passed![-]\n\n"))
-			result.WriteString(fmt.Sprintf("Records to import: %d\n", len(subscribers)))
+			result.WriteString("[green]Validation passed![-]\n\n")
+			fmt.Fprintf(&result, "Records to import: %d\n", len(subscribers))
 		}
 
 	case "RADIUS Clients":
@@ -142,8 +142,8 @@ func (s *ImportScreen) handleValidate() {
 				result.WriteString("  - " + e.Error() + "\n")
 			}
 		} else {
-			result.WriteString(fmt.Sprintf("[green]Validation passed![-]\n\n"))
-			result.WriteString(fmt.Sprintf("Records to import: %d\n", len(clients)))
+			result.WriteString("[green]Validation passed![-]\n\n")
+			fmt.Fprintf(&result, "Records to import: %d\n", len(clients))
 		}
 
 	case "Policies":
@@ -154,8 +154,8 @@ func (s *ImportScreen) handleValidate() {
 				result.WriteString("  - " + e.Error() + "\n")
 			}
 		} else {
-			result.WriteString(fmt.Sprintf("[green]Validation passed![-]\n\n"))
-			result.WriteString(fmt.Sprintf("Records to import: %d\n", len(policies)))
+			result.WriteString("[green]Validation passed![-]\n\n")
+			fmt.Fprintf(&result, "Records to import: %d\n", len(policies))
 		}
 	}
 
@@ -201,8 +201,8 @@ func (s *ImportScreen) handleImport() {
 		}
 
 		s.auditLogger.LogImport(audit.TargetSubscriber, len(subscribers), filePath)
-		result.WriteString(fmt.Sprintf("[green]Import completed![-]\n\n"))
-		result.WriteString(fmt.Sprintf("Imported: %d subscribers\n", len(subscribers)))
+		result.WriteString("[green]Import completed![-]\n\n")
+		fmt.Fprintf(&result, "Imported: %d subscribers\n", len(subscribers))
 		s.app.GetStatusBar().ShowSuccess(fmt.Sprintf("Imported %d subscribers", len(subscribers)))
 
 	case "RADIUS Clients":
@@ -223,8 +223,8 @@ func (s *ImportScreen) handleImport() {
 		}
 
 		s.auditLogger.LogImport(audit.TargetClient, len(clients), filePath)
-		result.WriteString(fmt.Sprintf("[green]Import completed![-]\n\n"))
-		result.WriteString(fmt.Sprintf("Imported: %d clients\n", len(clients)))
+		result.WriteString("[green]Import completed![-]\n\n")
+		fmt.Fprintf(&result, "Imported: %d clients\n", len(clients))
 		s.app.GetStatusBar().ShowSuccess(fmt.Sprintf("Imported %d clients", len(clients)))
 
 	case "Policies":
@@ -245,8 +245,8 @@ func (s *ImportScreen) handleImport() {
 		}
 
 		s.auditLogger.LogImport(audit.TargetPolicy, len(policies), filePath)
-		result.WriteString(fmt.Sprintf("[green]Import completed![-]\n\n"))
-		result.WriteString(fmt.Sprintf("Imported: %d policies\n", len(policies)))
+		result.WriteString("[green]Import completed![-]\n\n")
+		fmt.Fprintf(&result, "Imported: %d policies\n", len(policies))
 		s.app.GetStatusBar().ShowSuccess(fmt.Sprintf("Imported %d policies", len(policies)))
 	}
 

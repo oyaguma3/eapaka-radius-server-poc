@@ -52,7 +52,7 @@ func (h *Handler) ServeRADIUS(w radius.ResponseWriter, r *radius.Request) {
 
 // handleAccessRequest はAccess-Requestを処理する
 func (h *Handler) handleAccessRequest(w radius.ResponseWriter, r *radius.Request, traceID, srcIP string) {
-	secret := r.Packet.Secret
+	secret := r.Secret
 
 	// Message-Authenticator検証
 	if !radiuspkg.VerifyMessageAuthenticator(r.Packet, secret) {
@@ -165,7 +165,7 @@ func (h *Handler) handleAccessRequest(w radius.ResponseWriter, r *radius.Request
 // handleStatusServer はStatus-Serverリクエストに応答する。
 // Message-Authenticator検証を行い、失敗時は無応答（破棄）とする。
 func (h *Handler) handleStatusServer(w radius.ResponseWriter, r *radius.Request, traceID, srcIP string) {
-	resp := radiuspkg.HandleStatusServer(r.Packet, r.Packet.Secret, srcIP, traceID)
+	resp := radiuspkg.HandleStatusServer(r.Packet, r.Secret, srcIP, traceID)
 	if resp == nil {
 		return // Message-Authenticator検証失敗 → 無応答
 	}

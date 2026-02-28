@@ -1,13 +1,14 @@
 {
-    "eap_aka_log": {
-        "title": "EAP-AKA System Logs",
-        "description": "Structured logs from Go RADIUS PoC",
+    "$schema": "https://lnav.org/schemas/format-v1.schema.json",
+    "aka_radius_log": {
+        "title": "EAP-AKA RADIUS System Logs",
+        "description": "Structured JSON logs from Go RADIUS PoC (slog JSONHandler)",
         "url": "http://localhost",
         "json": true,
+        "file-pattern": "(?:auth-server|acct-server|vector-api|vector-gateway)\\.log",
         "timestamp-field": "time",
         "level-field": "level",
         "body-field": "msg",
-        "timestamp-format": ["%Y-%m-%dT%H:%M:%S.%L%Z"],
         "value": {
             "app": { "kind": "string", "identifier": true },
             "imsi": { "kind": "string", "identifier": true },
@@ -24,12 +25,24 @@
             "resync_count": { "kind": "integer" },
             "http_status": { "kind": "integer" }
         },
+        "sample": [
+            {
+                "line": "{\"time\":\"2026-02-28T23:00:02.356730959+09:00\",\"level\":\"INFO\",\"msg\":\"starting vector-api\",\"app\":\"vector-api\",\"listen_addr\":\":8080\",\"log_level\":\"INFO\",\"test_mode\":false}"
+            },
+            {
+                "line": "{\"time\":\"2026-02-28T23:00:07.393000000+09:00\",\"level\":\"INFO\",\"msg\":\"request completed\",\"app\":\"vector-api\",\"trace_id\":\"no-trace-id\",\"method\":\"GET\",\"path\":\"/health\",\"http_status\":200,\"latency_ms\":0}"
+            },
+            {
+                "line": "{\"time\":\"2026-02-28T23:00:08.845000000+09:00\",\"level\":\"ERROR\",\"msg\":\"authentication failed\",\"app\":\"auth-server\",\"imsi\":\"440101********0\",\"trace_id\":\"abc-123\",\"event_id\":\"AUTH_FAIL\"}",
+                "level": "error"
+            }
+        ],
         "line-format": [
             { "field": "time" }, " ",
             { "field": "level" }, " ",
             { "field": "app" }, " ",
             { "field": "event_id", "default-value": "-" }, " ",
-            "[", { "field": "imsi", "default-value": "no-imsi" }, "] ",
+            "[", { "field": "imsi", "default-value": "-" }, "] ",
             { "field": "msg" }
         ]
     }
