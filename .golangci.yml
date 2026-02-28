@@ -1,0 +1,51 @@
+# golangci-lint v2 設定
+# 基本ルールから開始し、段階的に追加する
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - govet
+    - errcheck
+    - staticcheck
+    - unused
+    - ineffassign
+
+  settings:
+    errcheck:
+      exclude-functions:
+        - (io.Closer).Close
+        - (*os.File).Close
+        - (*github.com/redis/go-redis/v9.Client).Close
+        - os.Setenv
+
+    staticcheck:
+      checks:
+        - "all"
+        - "-QF*"   # Quick Fix提案はフェーズ3で対応
+        - "-ST*"   # スタイル系はフェーズ3で対応
+        - "-S1039" # fmt.Sprintf不要パターンはフェーズ3で対応
+
+  exclusions:
+    rules:
+      # テストファイルでのerrcheck/unused/staticcheckを除外
+      - path: _test\.go
+        linters:
+          - errcheck
+          - unused
+          - staticcheck
+      # main.goのdefer Close()パターン（deferでのClose戻り値は無視可能）
+      - text: "Error return value of `valkeyClient.Close` is not checked"
+        linters:
+          - errcheck
+
+    # main.goのdefer Close()パターンを除外
+    paths:
+      - third_party$
+      - builtin$
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
