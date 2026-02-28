@@ -136,9 +136,9 @@ func (s *ExportScreen) handleExport() {
 		}
 
 		s.auditLogger.LogExport(audit.TargetSubscriber, len(subscribers), filePath)
-		result.WriteString(fmt.Sprintf("[green]Export completed![-]\n\n"))
-		result.WriteString(fmt.Sprintf("Exported: %d subscribers\n", len(subscribers)))
-		result.WriteString(fmt.Sprintf("File: %s\n", filePath))
+		result.WriteString("[green]Export completed![-]\n\n")
+		fmt.Fprintf(&result, "Exported: %d subscribers\n", len(subscribers))
+		fmt.Fprintf(&result, "File: %s\n", filePath)
 		s.app.GetStatusBar().ShowSuccess(fmt.Sprintf("Exported %d subscribers to %s", len(subscribers), filePath))
 
 	case "RADIUS Clients":
@@ -164,9 +164,9 @@ func (s *ExportScreen) handleExport() {
 		}
 
 		s.auditLogger.LogExport(audit.TargetClient, len(clients), filePath)
-		result.WriteString(fmt.Sprintf("[green]Export completed![-]\n\n"))
-		result.WriteString(fmt.Sprintf("Exported: %d clients\n", len(clients)))
-		result.WriteString(fmt.Sprintf("File: %s\n", filePath))
+		result.WriteString("[green]Export completed![-]\n\n")
+		fmt.Fprintf(&result, "Exported: %d clients\n", len(clients))
+		fmt.Fprintf(&result, "File: %s\n", filePath)
 		s.app.GetStatusBar().ShowSuccess(fmt.Sprintf("Exported %d clients to %s", len(clients), filePath))
 
 	case "Policies":
@@ -192,9 +192,9 @@ func (s *ExportScreen) handleExport() {
 		}
 
 		s.auditLogger.LogExport(audit.TargetPolicy, len(policies), filePath)
-		result.WriteString(fmt.Sprintf("[green]Export completed![-]\n\n"))
-		result.WriteString(fmt.Sprintf("Exported: %d policies\n", len(policies)))
-		result.WriteString(fmt.Sprintf("File: %s\n", filePath))
+		result.WriteString("[green]Export completed![-]\n\n")
+		fmt.Fprintf(&result, "Exported: %d policies\n", len(policies))
+		fmt.Fprintf(&result, "File: %s\n", filePath)
 		s.app.GetStatusBar().ShowSuccess(fmt.Sprintf("Exported %d policies to %s", len(policies), filePath))
 	}
 
