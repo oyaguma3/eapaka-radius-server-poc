@@ -8,6 +8,7 @@ coverage.out
 
 # バイナリ
 *.exe
+apps/admin-tui/admin-tui-linux
 
 # IDE
 .vscode/

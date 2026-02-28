@@ -13,7 +13,9 @@ services:
   # Logic Layer
   # ==========================================================================
   auth-server:
-    build: ../apps/auth-server
+    build:
+      context: ..
+      dockerfile: apps/auth-server/Dockerfile
     ports:
       - "1812:1812/udp"
     environment:
@@ -45,7 +47,9 @@ services:
         tag: "app.auth-server"
 
   acct-server:
-    build: ../apps/acct-server
+    build:
+      context: ..
+      dockerfile: apps/acct-server/Dockerfile
     ports:
       - "1813:1813/udp"
     environment:
@@ -74,7 +78,9 @@ services:
         tag: "app.acct-server"
 
   vector-gateway:
-    build: ../apps/vector-gateway
+    build:
+      context: ..
+      dockerfile: apps/vector-gateway/Dockerfile
     expose:
       - "8080"
     environment:
@@ -103,7 +109,9 @@ services:
         tag: "app.vector-gateway"
 
   vector-api:
-    build: ../apps/vector-api
+    build:
+      context: ..
+      dockerfile: apps/vector-api/Dockerfile
     expose:
       - "8080"
     environment:

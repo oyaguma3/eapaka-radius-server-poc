@@ -44,5 +44,3 @@ require (
 	golang.org/x/tools v0.38.0 // indirect
 	google.golang.org/protobuf v1.36.9 // indirect
 )
-
-replace github.com/oyaguma3/eapaka-radius-server-poc/pkg => ../../pkg

@@ -39,4 +39,38 @@ RADIUS認証機能・課金機能と、AKA認証ベクター生成機能と、�
 ## Go開発ガイドライン
 - go.mod の依存関係を変更する前に、変更をリセットする可能性のある git フックやリンターがないか確認する。
 - 変更後は `git diff go.mod` で変更が保持されていることを確認する。
-- Goパッケージを再構築する際は、実装コードを書く前に `go build ./...` を実行して循環インポートを早期にチェックする。
+- Goパッケージを再構築する際は、実装コードを書く前に `make build` を実行して循環インポートを早期にチェックする（Go Workspace構成のため `go build ./...` は使用不可）。
+
+## ビルド・静的解析
+- Go Workspace (`go.work`) 構成のため `./...` は使用不可。Makefileで各モジュールパスを明示指定している。
+- 主要Makefileターゲット:
+  - `make build` — 全モジュールのビルド
+  - `make test` — 全モジュールのテスト実行
+  - `make test-cover` — カバレッジ付きテスト
+  - `make test-race` — レースコンディション検出テスト（`CGO_ENABLED=1` が必要。WSL環境ではデフォルト無効、GitHub Actions環境では有効）
+  - `make fmt` — コードフォーマット
+  - `make vet` — go vet 実行
+  - `make lint` — golangci-lint 実行
+  - `make clean` — ビルド成果物の削除
+- golangci-lint は **v2** 形式（`version: "2"` 必須）
+  - v2での注意: `gosimple` は staticcheck に統合済み、`typecheck` は linter ではない
+  - テストファイル除外は `linters.exclusions.rules` で `path: _test\.go`
+- 設定ファイル: `.golangci.yml`, `Makefile`
+
+## CI/CD（GitHub Actions）
+- 設定ファイル: `.github/workflows/ci.yml`
+- トリガー: `main` / `develop` への push および PR
+- パイプライン: Checkout → Setup Go → Build → Vet → Lint → Test(race)
+- `golangci/golangci-lint-action` は **v7** を使用（v6は golangci-lint v2非対応）
+- Go バージョンは `go.work` の `go` ディレクティブから自動取得
+
+## ブランチ戦略・PRワークフロー
+- `main`（安定版） ← `develop`（統合） ← `feature/*`（個別改善）
+- feature → develop: `gh pr merge <N> --squash --delete-branch`
+- develop → main: Create a merge commit（履歴保持）
+- コミットメッセージ prefix: `feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`
+
+## 共有パッケージ（pkg/）
+- `pkg/logging.MaskIMSI` — IMSIマスキング（D-04仕様: 先頭6桁+末尾1桁）
+- `pkg/httputil.ProblemDetail` — RFC 7807準拠エラーレスポンス
+- 各appで重複実装せず、pkgをimportして利用すること
