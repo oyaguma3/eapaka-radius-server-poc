@@ -13,6 +13,7 @@ import (
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-gateway/internal/backend"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-gateway/internal/config"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-gateway/internal/router"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/httputil"
 )
 
 func init() {
@@ -207,7 +208,7 @@ func TestHandleVector_Backend4xxError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(&backend.ProblemDetail{
+		json.NewEncoder(w).Encode(&httputil.ProblemDetail{
 			Type:   "about:blank",
 			Title:  "Not Found",
 			Detail: "subscriber not found",

@@ -3,10 +3,12 @@ package backend
 import (
 	"errors"
 	"testing"
+
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/httputil"
 )
 
 func TestNewProblemDetail(t *testing.T) {
-	pd := NewProblemDetail(400, "Bad Request", "invalid input")
+	pd := httputil.NewProblemDetail(400, "Bad Request", "invalid input")
 
 	if pd.Type != "about:blank" {
 		t.Errorf("Type = %q, want %q", pd.Type, "about:blank")
@@ -60,7 +62,7 @@ func TestBackendCommunicationError(t *testing.T) {
 }
 
 func TestBackendResponseError(t *testing.T) {
-	pd := &ProblemDetail{
+	pd := &httputil.ProblemDetail{
 		Type:   "about:blank",
 		Title:  "Not Found",
 		Detail: "subscriber not found",

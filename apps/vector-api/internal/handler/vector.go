@@ -11,6 +11,7 @@ import (
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-api/internal/config"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-api/internal/dto"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-api/internal/usecase"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/logging"
 )
 
 // TraceIDKey はコンテキストにTraceIDを格納するキー。
@@ -56,7 +57,7 @@ func (h *VectorHandler) HandleVector(c *gin.Context) {
 		slog.Warn("invalid IMSI format",
 			"trace_id", traceID,
 			"event_id", "CALC_ERR",
-			"imsi", h.maskIMSI(req.IMSI),
+			"imsi", logging.MaskIMSI(req.IMSI, h.cfg.LogMaskIMSI),
 			"error", err.Error(),
 		)
 		c.JSON(http.StatusBadRequest, dto.NewProblemDetail(
@@ -78,7 +79,7 @@ func (h *VectorHandler) HandleVector(c *gin.Context) {
 	slog.Info("vector generated",
 		"trace_id", traceID,
 		"event_id", "CALC_OK",
-		"imsi", h.maskIMSI(req.IMSI),
+		"imsi", logging.MaskIMSI(req.IMSI, h.cfg.LogMaskIMSI),
 		"http_status", http.StatusOK,
 	)
 	c.JSON(http.StatusOK, resp)
@@ -91,7 +92,7 @@ func (h *VectorHandler) handleError(c *gin.Context, traceID any, imsi string, er
 		slog.Log(c.Request.Context(), problemErr.LogLevel(), problemErr.Message,
 			"trace_id", traceID,
 			"event_id", problemErr.EventID,
-			"imsi", h.maskIMSI(imsi),
+			"imsi", logging.MaskIMSI(imsi, h.cfg.LogMaskIMSI),
 			"http_status", problemErr.Status,
 		)
 		c.JSON(problemErr.Status, problemErr.ToProblemDetail())
@@ -102,7 +103,7 @@ func (h *VectorHandler) handleError(c *gin.Context, traceID any, imsi string, er
 	slog.Error("unexpected error",
 		"trace_id", traceID,
 		"event_id", "CALC_ERR",
-		"imsi", h.maskIMSI(imsi),
+		"imsi", logging.MaskIMSI(imsi, h.cfg.LogMaskIMSI),
 		"error", err.Error(),
 	)
 	c.JSON(http.StatusInternalServerError, dto.NewProblemDetail(
@@ -125,13 +126,3 @@ func validateIMSI(imsi string) error {
 	return nil
 }
 
-// maskIMSI はログ出力用にIMSIをマスクする。
-func (h *VectorHandler) maskIMSI(imsi string) string {
-	if !h.cfg.LogMaskIMSI {
-		return imsi
-	}
-	if len(imsi) <= 7 {
-		return imsi
-	}
-	return imsi[:5] + "********" + imsi[len(imsi)-2:]
-}

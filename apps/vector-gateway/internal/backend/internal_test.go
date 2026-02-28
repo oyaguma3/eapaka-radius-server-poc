@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/httputil"
 )
 
 func TestInternalBackend_GetVector_Success(t *testing.T) {
@@ -99,7 +101,7 @@ func TestInternalBackend_GetVector_4xxError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(&ProblemDetail{
+		json.NewEncoder(w).Encode(&httputil.ProblemDetail{
 			Type:   "about:blank",
 			Title:  "Not Found",
 			Detail: "subscriber not found",
