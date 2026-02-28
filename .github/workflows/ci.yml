@@ -27,7 +27,7 @@ jobs:
         run: make vet
 
       - name: Lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
           version: v2.10
           args: ./pkg/... ./apps/auth-server/... ./apps/acct-server/... ./apps/vector-gateway/... ./apps/vector-api/... ./apps/admin-tui/...
