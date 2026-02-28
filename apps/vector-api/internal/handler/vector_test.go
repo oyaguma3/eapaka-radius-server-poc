@@ -12,6 +12,7 @@ import (
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-api/internal/config"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-api/internal/dto"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-api/internal/usecase"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/logging"
 )
 
 func init() {
@@ -56,12 +57,12 @@ func TestValidateIMSI(t *testing.T) {
 
 func TestMaskIMSI(t *testing.T) {
 	tests := []struct {
-		name     string
-		imsi     string
-		maskIMSI bool
-		want     string
+		name    string
+		imsi    string
+		enabled bool
+		want    string
 	}{
-		{"mask enabled", "440101234567890", true, "44010********90"},
+		{"mask enabled", "440101234567890", true, "440101********0"},
 		{"mask disabled", "440101234567890", false, "440101234567890"},
 		{"short IMSI", "1234567", true, "1234567"},
 		{"empty", "", true, ""},
@@ -69,11 +70,9 @@ func TestMaskIMSI(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.Config{LogMaskIMSI: tt.maskIMSI}
-			h := &VectorHandler{cfg: cfg}
-			got := h.maskIMSI(tt.imsi)
+			got := logging.MaskIMSI(tt.imsi, tt.enabled)
 			if got != tt.want {
-				t.Errorf("maskIMSI(%q) = %q, want %q", tt.imsi, got, tt.want)
+				t.Errorf("MaskIMSI(%q, %v) = %q, want %q", tt.imsi, tt.enabled, got, tt.want)
 			}
 		})
 	}
