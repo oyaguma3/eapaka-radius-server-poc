@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-gateway/internal/backend"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-gateway/internal/handler"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/httputil"
 )
 
 const traceIDHeader = "X-Trace-ID"
@@ -54,7 +54,7 @@ func RecoveryMiddleware() gin.HandlerFunc {
 					"trace_id", traceID,
 					"error", err,
 				)
-				c.AbortWithStatusJSON(http.StatusInternalServerError, backend.NewProblemDetail(
+				c.AbortWithStatusJSON(http.StatusInternalServerError, httputil.NewProblemDetail(
 					http.StatusInternalServerError,
 					"Internal Server Error",
 					"An unexpected error occurred",
