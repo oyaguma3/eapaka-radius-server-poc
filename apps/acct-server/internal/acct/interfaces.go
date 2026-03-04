@@ -14,6 +14,10 @@ type AccountingProcessor interface {
 	ProcessInterim(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error
 	// ProcessStop はAcct-Stop処理を行う
 	ProcessStop(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error
+	// ProcessOn はAccounting-On（NAS起動通知）を処理する
+	ProcessOn(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error
+	// ProcessOff はAccounting-Off（NASシャットダウン通知）を処理する
+	ProcessOff(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error
 }
 
 // DuplicateDetector は重複・順序異常検出のインターフェース

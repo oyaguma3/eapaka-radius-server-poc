@@ -1,4 +1,4 @@
-# D-10 Acct Server詳細設計書 (r5)
+# D-10 Acct Server詳細設計書 (r6)
 
 ## ■セクション1: 概要
 
@@ -17,6 +17,7 @@
 | 重複・順序異常検出 | Acct-Session-Idベースの検出ロジック |
 | Proxy-State処理 | RFC 2866準拠のエコーバック |
 | IMSIマスキング | ログ出力時のプライバシー保護 |
+| NAS起動/停止通知 | Accounting-On/Off処理、ログ出力 |
 
 ### 1.3 関連ドキュメント
 
@@ -40,7 +41,6 @@
 
 | 機能 | RFC | 説明 | 備考 |
 |------|-----|------|------|
-| Acct-On/Acct-Off | RFC 2866 | NAS起動/停止通知 | `RADIUS_UNKNOWN_CODE` でログ記録し破棄 |
 | Acct-Delay-Time考慮 | RFC 2866 | NASでのパケット滞留時間補正 | 精密なタイムスタンプ管理は将来検討 |
 | 複数Class属性 | RFC 2865 | 複数Class属性の処理 | 単一UUIDのみ対応 |
 
@@ -49,7 +49,7 @@
 | 規格 | 内容 | 対応範囲 |
 |------|------|---------|
 | RFC 2865 | RADIUS | Proxy-State処理 |
-| RFC 2866 | RADIUS Accounting | Accounting-Request/Response, Acct-Status-Type (Start/Interim/Stop) |
+| RFC 2866 | RADIUS Accounting | Accounting-Request/Response, Acct-Status-Type (Start/Interim/Stop/On/Off) |
 | RFC 5997 | Status-Server | ヘルスチェック応答 |
 
 ### 1.6 用語定義
@@ -57,7 +57,7 @@
 | 用語 | 説明 |
 |------|------|
 | Acct-Session-Id | NASが生成するセッション識別子（RADIUS属性） |
-| Acct-Status-Type | 課金イベント種別（1:Start, 2:Stop, 3:Interim-Update） |
+| Acct-Status-Type | 課金イベント種別（1:Start, 2:Stop, 3:Interim-Update, 7:Accounting-On, 8:Accounting-Off） |
 | Class | Auth Serverが設定したセッションUUID（RADIUS属性、36バイト） |
 | Session UUID | Auth Serverが生成したRFC 4122準拠UUID（ハイフン含む36文字） |
 | Proxy-State | プロキシ経由時に保持される属性（エコーバック必須） |
@@ -84,7 +84,9 @@ apps/acct-server/
     │   ├── start.go                  # Acct-Start処理
     │   ├── start_test.go             # start.goのテスト
     │   ├── stop.go                   # Acct-Stop処理
-    │   └── stop_test.go              # stop.goのテスト
+    │   ├── stop_test.go              # stop.goのテスト
+    │   ├── on_off.go                 # Acct-On/Off処理
+    │   └── on_off_test.go            # on_off.goのテスト
     ├── config/
     │   ├── config.go                 # 環境変数読み込み、設定構造体
     │   ├── config_test.go            # config.goのテスト
@@ -181,7 +183,7 @@ main.go
 | `config` | 環境変数読み込み、設定値管理、定数定義 | `Config`, `Load()` |
 | `server` | PacketServer管理、SecretSource実装、radius.Handler実装 | `Server`, `SecretSource`, `Handler` |
 | `radius` | RADIUSパケット処理（属性抽出、応答生成、Proxy-State、Message-Authenticator、Status-Server） | `ResponseBuilder`, `AttributeExtractor`, `StatusHandler` |
-| `acct` | Accounting処理ロジック（Start/Interim/Stop）、インターフェース定義 | `Processor`, `DuplicateDetector` |
+| `acct` | Accounting処理ロジック（Start/Interim/Stop/On/Off）、インターフェース定義 | `Processor`, `DuplicateDetector` |
 | `session` | セッション状態管理、IMSI取得、インターフェース定義 | `Manager`, `IdentifierResolver` |
 | `store` | Valkeyアクセス抽象化（クライアント、セッション、重複検出、変換） | `ValkeyClient`, `ClientStore`, `SessionStore` |
 | `logging` | IMSIマスキング処理 | `MaskIMSI()` |
@@ -344,20 +346,28 @@ D-01で定義された値を使用する。
                     │ 振り分け      │
                     └───────┬───────┘
                             │
-            ┌───────────────┼───────────────┐
-            │               │               │
-            ▼               ▼               ▼
-    ┌───────────┐   ┌───────────┐   ┌───────────┐
-    │ Start(1)  │   │ Stop(2)   │   │ Interim(3)│
-    └─────┬─────┘   └─────┬─────┘   └─────┬─────┘
-          │               │               │
-          ▼               ▼               ▼
-    ┌─────────────────────────────────────────┐
-    │        セッション状態更新               │
-    │        ログ出力                         │
-    └───────────────────┬─────────────────────┘
-                        │
-                        ▼
+        ┌───────────┬───────┼───────┬───────────┐
+        │           │       │       │           │
+        ▼           ▼       ▼       ▼           ▼
+    ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐
+    │Start(1)│ │Stop(2) │ │Intr.(3)│ │ On(7)  │ │Off(8)  │
+    └───┬────┘ └───┬────┘ └───┬────┘ └───┬────┘ └───┬────┘
+        │          │          │          │          │
+        ▼          ▼          ▼          │          │
+    ┌─────────────────────────────┐      │          │
+    │  セッション状態更新         │      │          │
+    │  ログ出力                   │      │          │
+    └──────────────┬──────────────┘      │          │
+                   │          ┌──────────┘          │
+                   │          │     ┌───────────────┘
+                   │          ▼     ▼
+                   │    ┌─────────────────┐
+                   │    │ ログ出力のみ    │
+                   │    │（セッション操作 │
+                   │    │ なし）          │
+                   │    └────────┬────────┘
+                   │             │
+                   ▼             ▼
                 ┌───────────────┐
                 │ Accounting-   │
                 │ Response生成  │ ← Proxy-Stateエコーバック
@@ -442,76 +452,141 @@ func calculateAccountingAuthenticator(packet *radius.Packet, secret []byte) []by
 ### 4.4 属性抽出
 
 ```go
+// internal/radius/types.go
+package radius
+
+// AccountingAttributes はAccounting-Requestから抽出された属性を表す
+type AccountingAttributes struct {
+    AcctStatusType  uint32   // Acct-Status-Type（1:Start, 2:Stop, 3:Interim, 7:On, 8:Off）
+    AcctSessionID   string   // Acct-Session-Id（Start/Stop/Interimでは必須、On/Offではオプション）
+    ClassUUID       string   // Class属性からパースしたUUID（空文字列の場合あり）
+    UserName        string   // User-Name（オプション）
+    NasIdentifier   string   // NAS-Identifier（オプション）
+    NasIPAddress    string   // NAS-IP-Address
+    FramedIPAddress string   // Framed-IP-Address
+    InputOctets     uint32   // Acct-Input-Octets
+    OutputOctets    uint32   // Acct-Output-Octets
+    SessionTime     uint32   // Acct-Session-Time
+    ProxyStates     [][]byte // Proxy-State属性（複数可）
+}
+
+// Acct-Status-Type値（RFC 2866）
+const (
+    AcctStatusTypeStart   uint32 = 1
+    AcctStatusTypeStop    uint32 = 2
+    AcctStatusTypeInterim uint32 = 3
+    AcctStatusTypeOn      uint32 = 7
+    AcctStatusTypeOff     uint32 = 8
+)
+```
+
+```go
 // internal/radius/attributes.go
 package radius
 
 import (
+    "encoding/binary"
+    "errors"
+    "net"
+
     "github.com/google/uuid"
-    radiuspkg "layeh.com/radius"
-    "layeh.com/radius/rfc2866"
+    "layeh.com/radius"
 )
 
-type AccountingAttributes struct {
-    AcctStatusType  rfc2866.AcctStatusType
-    AcctSessionID   string
-    ClassUUID       string      // パース済みUUID（空文字列の場合あり）
-    UserName        string
-    NasIPAddress    string
-    FramedIPAddress string
-    InputOctets     uint32
-    OutputOctets    uint32
-    SessionTime     uint32
-    ProxyStates     [][]byte
-}
+// RADIUS属性タイプ定数（RFC 2865/2866）
+const (
+    AttrTypeUserName        = 1
+    AttrTypeNASIPAddress    = 4
+    AttrTypeFramedIPAddr    = 8
+    AttrTypeClass           = 25
+    AttrTypeNASIdentifier   = 32
+    AttrTypeProxyState      = 33
+    AttrTypeAcctStatusType  = 40
+    AttrTypeAcctInputOct    = 42
+    AttrTypeAcctOutputOct   = 43
+    AttrTypeAcctSessionID   = 44
+    AttrTypeAcctSessionTime = 46
+)
 
-func ExtractAccountingAttributes(packet *radiuspkg.Packet) (*AccountingAttributes, error) {
+var (
+    ErrMissingStatusType = errors.New("missing Acct-Status-Type")
+    ErrMissingSessionID  = errors.New("missing Acct-Session-Id")
+)
+
+func ExtractAccountingAttributes(packet *radius.Packet) (*AccountingAttributes, error) {
     attrs := &AccountingAttributes{}
-    
-    // Acct-Status-Type (必須)
-    statusType := rfc2866.AcctStatusType_Get(packet)
-    if statusType == 0 {
+
+    // Acct-Status-Type（必須）
+    statusTypeAttr := packet.Get(radius.Type(AttrTypeAcctStatusType))
+    if len(statusTypeAttr) < 4 {
         return nil, ErrMissingStatusType
     }
-    attrs.AcctStatusType = statusType
-    
-    // Acct-Session-Id (必須)
-    attrs.AcctSessionID = rfc2866.AcctSessionID_GetString(packet)
-    if attrs.AcctSessionID == "" {
-        return nil, ErrMissingSessionID
+    attrs.AcctStatusType = binary.BigEndian.Uint32(statusTypeAttr)
+
+    // Acct-Session-Id（Start/Stop/Interimでは必須、On/Offではオプション）
+    sessionIDAttr := packet.Get(radius.Type(AttrTypeAcctSessionID))
+    if len(sessionIDAttr) == 0 {
+        if attrs.AcctStatusType != AcctStatusTypeOn && attrs.AcctStatusType != AcctStatusTypeOff {
+            return nil, ErrMissingSessionID
+        }
+    } else {
+        attrs.AcctSessionID = string(sessionIDAttr)
     }
-    
-    // Class (オプション - UUID抽出試行)
-    if classAttr := packet.Get(rfc2865.Class_Type); classAttr != nil {
+
+    // Class（オプション - UUID抽出試行）
+    classAttr := packet.Get(radius.Type(AttrTypeClass))
+    if len(classAttr) > 0 {
         classValue := string(classAttr)
-        // RFC 4122 UUID形式の検証
         if _, err := uuid.Parse(classValue); err == nil {
             attrs.ClassUUID = classValue
         }
     }
-    
-    // User-Name (オプション)
-    attrs.UserName = rfc2865.UserName_GetString(packet)
-    
+
+    // User-Name（オプション）
+    userNameAttr := packet.Get(radius.Type(AttrTypeUserName))
+    if len(userNameAttr) > 0 {
+        attrs.UserName = string(userNameAttr)
+    }
+
     // NAS-IP-Address
-    if nasIP := rfc2865.NASIPAddress_Get(packet); nasIP != nil {
-        attrs.NasIPAddress = nasIP.String()
+    nasIPAttr := packet.Get(radius.Type(AttrTypeNASIPAddress))
+    if len(nasIPAttr) == 4 {
+        attrs.NasIPAddress = net.IP(nasIPAttr).String()
     }
-    
+
+    // NAS-Identifier（オプション）
+    nasIdentAttr := packet.Get(radius.Type(AttrTypeNASIdentifier))
+    if len(nasIdentAttr) > 0 {
+        attrs.NasIdentifier = string(nasIdentAttr)
+    }
+
     // Framed-IP-Address
-    if framedIP := rfc2865.FramedIPAddress_Get(packet); framedIP != nil {
-        attrs.FramedIPAddress = framedIP.String()
+    framedIPAttr := packet.Get(radius.Type(AttrTypeFramedIPAddr))
+    if len(framedIPAttr) == 4 {
+        attrs.FramedIPAddress = net.IP(framedIPAttr).String()
     }
-    
-    // 通信量 (Interim/Stop)
-    attrs.InputOctets = rfc2866.AcctInputOctets_Get(packet)
-    attrs.OutputOctets = rfc2866.AcctOutputOctets_Get(packet)
-    
-    // セッション時間 (Stop)
-    attrs.SessionTime = rfc2866.AcctSessionTime_Get(packet)
-    
-    // Proxy-State (複数可)
-    attrs.ProxyStates = ExtractProxyStates(packet)
-    
+
+    // Acct-Input-Octets
+    inputAttr := packet.Get(radius.Type(AttrTypeAcctInputOct))
+    if len(inputAttr) >= 4 {
+        attrs.InputOctets = binary.BigEndian.Uint32(inputAttr)
+    }
+
+    // Acct-Output-Octets
+    outputAttr := packet.Get(radius.Type(AttrTypeAcctOutputOct))
+    if len(outputAttr) >= 4 {
+        attrs.OutputOctets = binary.BigEndian.Uint32(outputAttr)
+    }
+
+    // Acct-Session-Time
+    timeAttr := packet.Get(radius.Type(AttrTypeAcctSessionTime))
+    if len(timeAttr) >= 4 {
+        attrs.SessionTime = binary.BigEndian.Uint32(timeAttr)
+    }
+
+    // Proxy-State（複数可）
+    attrs.ProxyStates = extractProxyStatesRaw(packet)
+
     return attrs, nil
 }
 ```
@@ -940,7 +1015,50 @@ func (p *Processor) ProcessStop(ctx context.Context, attrs *AccountingAttributes
 }
 ```
 
-### 5.6 重複・順序異常検出
+### 5.6 Acct-On処理
+
+NAS起動通知（Accounting-On, Acct-Status-Type=7）を処理する。
+
+**設計方針:**
+- ログ出力のみ（セッション操作・重複検出なし）
+- 常にnil返却（エラーにならない）
+- NAS-Identifier / NAS-IP-Address でNASを識別
+
+```go
+// internal/acct/on_off.go
+func (p *Processor) ProcessOn(_ context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error {
+    slog.Info("accounting on",
+        "event_id", "ACCT_ON",
+        "trace_id", traceID,
+        "src_ip", srcIP,
+        "nas_ip_address", attrs.NasIPAddress,
+        "nas_identifier", attrs.NasIdentifier,
+    )
+    return nil
+}
+```
+
+### 5.7 Acct-Off処理
+
+NASシャットダウン通知（Accounting-Off, Acct-Status-Type=8）を処理する。
+
+**設計方針:** Acct-On処理と同一（ログ出力のみ、セッション操作なし）。
+
+```go
+// internal/acct/on_off.go
+func (p *Processor) ProcessOff(_ context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error {
+    slog.Info("accounting off",
+        "event_id", "ACCT_OFF",
+        "trace_id", traceID,
+        "src_ip", srcIP,
+        "nas_ip_address", attrs.NasIPAddress,
+        "nas_identifier", attrs.NasIdentifier,
+    )
+    return nil
+}
+```
+
+### 5.8 重複・順序異常検出
 
 Acct-Session-Idをキーとして、重複および順序異常を検出する。
 
@@ -1326,7 +1444,7 @@ D-06で定義されたエラーハンドリングに基づく。
 | Authenticator検証失敗 | 計算値不一致 | パケット破棄 | なし | WARN: `RADIUS_AUTH_ERR` |
 | Message-Authenticator検証失敗 | Status-ServerのMAC検証失敗 | パケット破棄 | なし | WARN: `RADIUS_AUTH_ERR` |
 | Shared Secret不明 | client:{IP}不在かつ環境変数未設定 | パケット破棄 | なし | WARN: `RADIUS_NO_SECRET` |
-| 未知のAcct-Status-Type | 1,2,3以外（7,8含む） | パケット破棄 | なし | WARN: `RADIUS_UNKNOWN_CODE` |
+| 未知のAcct-Status-Type | 1,2,3,7,8以外 | パケット破棄 | なし | WARN: `RADIUS_UNKNOWN_CODE` |
 
 #### 7.1.3 データエラー
 
@@ -1424,6 +1542,8 @@ D-04で定義されたevent_idを使用する。
 | `ACCT_START` | INFO | Accounting-Start受信 |
 | `ACCT_INTERIM` | INFO | Accounting-Interim受信 |
 | `ACCT_STOP` | INFO | Accounting-Stop受信 |
+| `ACCT_ON` | INFO | Accounting-On受信（NAS起動通知） |
+| `ACCT_OFF` | INFO | Accounting-Off受信（NASシャットダウン通知） |
 
 ### 8.2 ログ出力例
 
@@ -1491,6 +1611,32 @@ D-04で定義されたevent_idを使用する。
   "src_ip": "192.168.1.100",
   "acct_session_id": "sess-abc123"
 }
+
+// ACCT_ON（NAS起動通知）
+{
+  "time": "2026-01-20T09:00:00.100Z",
+  "level": "INFO",
+  "app": "acct-server",
+  "event_id": "ACCT_ON",
+  "msg": "accounting on",
+  "trace_id": "550e8400-e29b-41d4-a716-446655440000",
+  "src_ip": "192.168.1.100",
+  "nas_ip_address": "192.168.1.100",
+  "nas_identifier": "AP-Floor3"
+}
+
+// ACCT_OFF（NASシャットダウン通知）
+{
+  "time": "2026-01-20T18:00:00.200Z",
+  "level": "INFO",
+  "app": "acct-server",
+  "event_id": "ACCT_OFF",
+  "msg": "accounting off",
+  "trace_id": "660e8400-e29b-41d4-a716-446655440001",
+  "src_ip": "192.168.1.100",
+  "nas_ip_address": "192.168.1.100",
+  "nas_identifier": "AP-Floor3"
+}
 ```
 
 ---
@@ -1531,6 +1677,19 @@ type SessionInterimData struct {
 ### 9.2 インターフェース定義
 
 ```go
+// internal/acct/interfaces.go
+package acct
+
+import "context"
+
+type AccountingProcessor interface {
+    ProcessStart(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error
+    ProcessInterim(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error
+    ProcessStop(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error
+    ProcessOn(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error
+    ProcessOff(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error
+}
+
 // internal/session/interfaces.go
 package session
 
@@ -1568,93 +1727,92 @@ package server
 import (
     "context"
     "log/slog"
-    "net"
-    
-    radiuspkg "layeh.com/radius"
-    "layeh.com/radius/rfc2866"
+
+    "github.com/google/uuid"
+    "github.com/oyaguma3/eapaka-radius-server-poc/apps/acct-server/internal/acct"
+    radiuspkg "github.com/oyaguma3/eapaka-radius-server-poc/apps/acct-server/internal/radius"
+    "layeh.com/radius"
 )
 
 type Handler struct {
-    processor *acct.Processor
-    secretSrc *SecretSource
+    processor acct.AccountingProcessor
 }
 
-func (h *Handler) ServeRADIUS(w radiuspkg.ResponseWriter, r *radiuspkg.Request) {
-    ctx := context.Background()
+func (h *Handler) ServeRADIUS(w radius.ResponseWriter, r *radius.Request) {
+    traceID := uuid.New().String()
     srcIP := extractIP(r.RemoteAddr)
-    
-    // Code判定
+
     switch r.Code {
-    case radiuspkg.CodeAccountingRequest:
-        // Accounting処理
-        h.handleAccountingRequest(ctx, w, r, srcIP)
-        
-    case radiuspkg.CodeStatusServer:
-        // Status-Server処理
-        response := radius.HandleStatusServer(r.Packet, r.Secret, srcIP)
-        if response != nil {
-            w.Write(response)
-        }
-        
+    case radius.CodeAccountingRequest:
+        h.handleAccountingRequest(w, r, traceID, srcIP)
+
+    case radius.CodeStatusServer:
+        h.handleStatusServer(w, r, traceID, srcIP)
+
     default:
-        slog.Warn("unknown radius code",
+        slog.Warn("未対応のRADIUS Code",
             "event_id", "RADIUS_UNKNOWN_CODE",
+            "trace_id", traceID,
             "src_ip", srcIP,
             "code", r.Code)
-        return
     }
 }
 
-func (h *Handler) handleAccountingRequest(ctx context.Context, w radiuspkg.ResponseWriter, r *radiuspkg.Request, srcIP string) {
-    // 1. 属性抽出
-    attrs, err := radius.ExtractAccountingAttributes(r.Packet)
+func (h *Handler) handleAccountingRequest(w radius.ResponseWriter, r *radius.Request, traceID, srcIP string) {
+    // 1. Request Authenticator検証
+    if !radiuspkg.VerifyAccountingAuthenticator(r.Packet, r.Secret) {
+        slog.Warn("Authenticator検証失敗",
+            "event_id", "RADIUS_AUTH_ERR",
+            "trace_id", traceID,
+            "src_ip", srcIP)
+        return
+    }
+
+    // 2. 属性抽出
+    attrs, err := radiuspkg.ExtractAccountingAttributes(r.Packet)
     if err != nil {
-        slog.Warn("attribute extraction failed",
+        slog.Warn("属性抽出失敗",
             "event_id", "RADIUS_PARSE_ERR",
+            "trace_id", traceID,
             "src_ip", srcIP,
             "reason", err.Error())
         return
     }
-    
-    // 2. Status-Type別処理
+
+    // 3. Status-Type別処理
+    ctx := context.Background()
     var procErr error
     switch attrs.AcctStatusType {
-    case rfc2866.AcctStatusType_Value_Start:
-        procErr = h.processor.ProcessStart(ctx, attrs, srcIP)
-    case rfc2866.AcctStatusType_Value_Stop:
-        procErr = h.processor.ProcessStop(ctx, attrs, srcIP)
-    case rfc2866.AcctStatusType_Value_InterimUpdate:
-        procErr = h.processor.ProcessInterim(ctx, attrs, srcIP)
+    case radiuspkg.AcctStatusTypeStart:
+        procErr = h.processor.ProcessStart(ctx, attrs, srcIP, traceID)
+    case radiuspkg.AcctStatusTypeStop:
+        procErr = h.processor.ProcessStop(ctx, attrs, srcIP, traceID)
+    case radiuspkg.AcctStatusTypeInterim:
+        procErr = h.processor.ProcessInterim(ctx, attrs, srcIP, traceID)
+    case radiuspkg.AcctStatusTypeOn:
+        procErr = h.processor.ProcessOn(ctx, attrs, srcIP, traceID)
+    case radiuspkg.AcctStatusTypeOff:
+        procErr = h.processor.ProcessOff(ctx, attrs, srcIP, traceID)
     default:
-        // Acct-On(7), Acct-Off(8)等は未対応
-        slog.Warn("unsupported acct-status-type",
+        slog.Warn("未対応のAcct-Status-Type",
             "event_id", "RADIUS_UNKNOWN_CODE",
+            "trace_id", traceID,
             "src_ip", srcIP,
-            "code", attrs.AcctStatusType)
-        return
+            "acct_status_type", attrs.AcctStatusType)
+        return // パケット破棄
     }
-    
-    // 3. 処理エラーがあってもAccounting-Responseは返す
+
+    // 4. 処理エラーがあってもAccounting-Responseは返す
     if procErr != nil {
-        slog.Error("processing error",
+        slog.Error("処理エラー",
             "event_id", "SYS_ERR",
+            "trace_id", traceID,
             "error", procErr.Error())
     }
-    
-    // 4. Accounting-Response生成・送信
-    response := radius.BuildAccountingResponse(r.Packet, r.Secret, attrs.ProxyStates)
-    w.Write(response)
-}
 
-func extractIP(addr net.Addr) string {
-    switch a := addr.(type) {
-    case *net.UDPAddr:
-        return a.IP.String()
-    case *net.TCPAddr:
-        return a.IP.String()
-    default:
-        return addr.String()
-    }
+    // 5. Accounting-Response生成・送信
+    response := radiuspkg.BuildAccountingResponse(r.Packet, attrs.ProxyStates)
+    w.Write(response)
 }
 ```
 
@@ -1769,11 +1927,10 @@ func main() {
 
 | No. | 項目 | 内容 | 判断時期 |
 |-----|------|------|---------|
-| 1 | Acct-On/Acct-Off対応 | NAS起動/停止通知の処理 | PoC完了後 |
-| 2 | Acct-Delay-Time考慮 | タイムスタンプ補正 | PoC完了後 |
-| 3 | 複数Class属性対応 | 複数UUIDの処理 | PoC完了後 |
-| 4 | Event-Timestamp記録 | RFC 2869属性の参照記録 | PoC完了後 |
-| 5 | 大量トラフィック対応 | 並行処理の最適化 | PoC完了後 |
+| 1 | Acct-Delay-Time考慮 | タイムスタンプ補正 | PoC完了後 |
+| 2 | 複数Class属性対応 | 複数UUIDの処理 | PoC完了後 |
+| 3 | Event-Timestamp記録 | RFC 2869属性の参照記録 | PoC完了後 |
+| 4 | 大量トラフィック対応 | 並行処理の最適化 | PoC完了後 |
 
 ---
 
@@ -1786,3 +1943,4 @@ func main() {
 | r3 | 2026-01-26 | インフラ基盤統一: セクション2.5新設（Dockerfile方針 - ベースイメージdebian:bookworm-slim、curl/ca-certificates導入）、環境変数RADIUS_SECRETの統一に関する注記追加 |
 | r4 | 2026-01-27 | ヘルスチェック整合性修正: セクション2.5.1 Dockerfileに`procps`パッケージ追加、セクション2.5.3必須パッケージに`procps`追記（pgrep用） |
 | r5 | 2026-02-18 | ディレクトリ構造全面更新、関連ドキュメント版数更新 |
+| r6 | 2026-03-05 | Accounting-On/Off対応: §1.2スコープ追加、§1.4対象外から削除、§1.5/§1.6更新、§2.1/§2.3更新、§4.1処理フロー拡張、§4.4属性抽出更新（NAS-Identifier追加・Acct-Session-Id On/Off省略許容・実装コード整合）、§5.6/§5.7新設（ProcessOn/ProcessOff）、§7.1.2/§8.1/§8.2更新、§9.2インターフェース更新、§10.1ハンドラー更新、§11から削除 |

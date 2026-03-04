@@ -55,6 +55,34 @@ func (mr *MockAccountingProcessorMockRecorder) ProcessInterim(ctx, attrs, srcIP,
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ProcessInterim", reflect.TypeOf((*MockAccountingProcessor)(nil).ProcessInterim), ctx, attrs, srcIP, traceID)
 }
 
+// ProcessOff mocks base method.
+func (m *MockAccountingProcessor) ProcessOff(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ProcessOff", ctx, attrs, srcIP, traceID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ProcessOff indicates an expected call of ProcessOff.
+func (mr *MockAccountingProcessorMockRecorder) ProcessOff(ctx, attrs, srcIP, traceID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ProcessOff", reflect.TypeOf((*MockAccountingProcessor)(nil).ProcessOff), ctx, attrs, srcIP, traceID)
+}
+
+// ProcessOn mocks base method.
+func (m *MockAccountingProcessor) ProcessOn(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ProcessOn", ctx, attrs, srcIP, traceID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ProcessOn indicates an expected call of ProcessOn.
+func (mr *MockAccountingProcessorMockRecorder) ProcessOn(ctx, attrs, srcIP, traceID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ProcessOn", reflect.TypeOf((*MockAccountingProcessor)(nil).ProcessOn), ctx, attrs, srcIP, traceID)
+}
+
 // ProcessStart mocks base method.
 func (m *MockAccountingProcessor) ProcessStart(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error {
 	m.ctrl.T.Helper()

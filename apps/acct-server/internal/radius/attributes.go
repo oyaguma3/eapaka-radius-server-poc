@@ -15,6 +15,7 @@ const (
 	AttrTypeNASIPAddress    = 4
 	AttrTypeFramedIPAddr    = 8
 	AttrTypeClass           = 25
+	AttrTypeNASIdentifier   = 32
 	AttrTypeProxyState      = 33
 	AttrTypeAcctStatusType  = 40
 	AttrTypeAcctInputOct    = 42
@@ -40,12 +41,15 @@ func ExtractAccountingAttributes(packet *radius.Packet) (*AccountingAttributes, 
 	}
 	attrs.AcctStatusType = binary.BigEndian.Uint32(statusTypeAttr)
 
-	// Acct-Session-Id（必須）
+	// Acct-Session-Id（Start/Stop/Interimでは必須、On/Offではオプション）
 	sessionIDAttr := packet.Get(radius.Type(AttrTypeAcctSessionID))
 	if len(sessionIDAttr) == 0 {
-		return nil, ErrMissingSessionID
+		if attrs.AcctStatusType != AcctStatusTypeOn && attrs.AcctStatusType != AcctStatusTypeOff {
+			return nil, ErrMissingSessionID
+		}
+	} else {
+		attrs.AcctSessionID = string(sessionIDAttr)
 	}
-	attrs.AcctSessionID = string(sessionIDAttr)
 
 	// Class（オプション - UUID抽出試行）
 	classAttr := packet.Get(radius.Type(AttrTypeClass))
@@ -66,6 +70,12 @@ func ExtractAccountingAttributes(packet *radius.Packet) (*AccountingAttributes, 
 	nasIPAttr := packet.Get(radius.Type(AttrTypeNASIPAddress))
 	if len(nasIPAttr) == 4 {
 		attrs.NasIPAddress = net.IP(nasIPAttr).String()
+	}
+
+	// NAS-Identifier（オプション）
+	nasIdentAttr := packet.Get(radius.Type(AttrTypeNASIdentifier))
+	if len(nasIdentAttr) > 0 {
+		attrs.NasIdentifier = string(nasIdentAttr)
 	}
 
 	// Framed-IP-Address

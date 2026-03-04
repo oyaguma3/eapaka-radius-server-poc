@@ -78,6 +78,10 @@ func (h *Handler) handleAccountingRequest(w radius.ResponseWriter, r *radius.Req
 		procErr = h.processor.ProcessStop(ctx, attrs, srcIP, traceID)
 	case radiuspkg.AcctStatusTypeInterim:
 		procErr = h.processor.ProcessInterim(ctx, attrs, srcIP, traceID)
+	case radiuspkg.AcctStatusTypeOn:
+		procErr = h.processor.ProcessOn(ctx, attrs, srcIP, traceID)
+	case radiuspkg.AcctStatusTypeOff:
+		procErr = h.processor.ProcessOff(ctx, attrs, srcIP, traceID)
 	default:
 		slog.Warn("未対応のAcct-Status-Type",
 			"event_id", "RADIUS_UNKNOWN_CODE",

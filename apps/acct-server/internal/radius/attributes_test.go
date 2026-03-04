@@ -118,6 +118,60 @@ func TestExtractAccountingAttributes_InvalidClassUUID(t *testing.T) {
 	}
 }
 
+func TestExtractAccountingAttributes_OnWithoutSessionID(t *testing.T) {
+	packet := &radiuspkg.Packet{
+		Code:   radiuspkg.CodeAccountingRequest,
+		Secret: []byte("secret"),
+	}
+	addUint32Attr(packet, AttrTypeAcctStatusType, AcctStatusTypeOn)
+	packet.Add(radiuspkg.Type(AttrTypeNASIdentifier), []byte("ap-001.example.com"))
+
+	attrs, err := ExtractAccountingAttributes(packet)
+	if err != nil {
+		t.Fatalf("On without Session-Id should not error, got: %v", err)
+	}
+	if attrs.AcctSessionID != "" {
+		t.Errorf("AcctSessionID = %q, want empty", attrs.AcctSessionID)
+	}
+	if attrs.NasIdentifier != "ap-001.example.com" {
+		t.Errorf("NasIdentifier = %q, want %q", attrs.NasIdentifier, "ap-001.example.com")
+	}
+}
+
+func TestExtractAccountingAttributes_OffWithoutSessionID(t *testing.T) {
+	packet := &radiuspkg.Packet{
+		Code:   radiuspkg.CodeAccountingRequest,
+		Secret: []byte("secret"),
+	}
+	addUint32Attr(packet, AttrTypeAcctStatusType, AcctStatusTypeOff)
+
+	attrs, err := ExtractAccountingAttributes(packet)
+	if err != nil {
+		t.Fatalf("Off without Session-Id should not error, got: %v", err)
+	}
+	if attrs.AcctSessionID != "" {
+		t.Errorf("AcctSessionID = %q, want empty", attrs.AcctSessionID)
+	}
+}
+
+func TestExtractAccountingAttributes_NASIdentifier(t *testing.T) {
+	packet := &radiuspkg.Packet{
+		Code:   radiuspkg.CodeAccountingRequest,
+		Secret: []byte("secret"),
+	}
+	addUint32Attr(packet, AttrTypeAcctStatusType, 1)
+	packet.Add(radiuspkg.Type(AttrTypeAcctSessionID), []byte("sess-123"))
+	packet.Add(radiuspkg.Type(AttrTypeNASIdentifier), []byte("nas01"))
+
+	attrs, err := ExtractAccountingAttributes(packet)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if attrs.NasIdentifier != "nas01" {
+		t.Errorf("NasIdentifier = %q, want %q", attrs.NasIdentifier, "nas01")
+	}
+}
+
 func TestExtractProxyStates(t *testing.T) {
 	packet := &radiuspkg.Packet{
 		Code:   radiuspkg.CodeAccountingRequest,
