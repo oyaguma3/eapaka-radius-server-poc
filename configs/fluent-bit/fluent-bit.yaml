@@ -22,6 +22,17 @@ pipeline:
       parser: json
       reserve_data: false
 
+    # ヘルスチェックログをリタグしてアプリ専用ログから除外
+    - name: rewrite_tag
+      match: "app.vector-api"
+      rule: $path ^/health$ healthcheck.vector-api false
+      emitter_name: re_emitted_vector_api
+
+    - name: rewrite_tag
+      match: "app.vector-gateway"
+      rule: $path ^/health$ healthcheck.vector-gateway false
+      emitter_name: re_emitted_vector_gw
+
   outputs:
     - name: file
       match: app.auth-server
@@ -53,8 +64,10 @@ pipeline:
       file: valkey.log
       format: plain
 
+    # ヘルスチェックログ → others.log
+    # （rewrite_tagでapp.*からhealthcheck.*にリタグされたログを収集）
     - name: file
-      match: "*"
+      match: "healthcheck.*"
       path: /output_logs
       file: others.log
       format: plain

@@ -19,6 +19,8 @@ type mockProcessor struct {
 	startCalled   bool
 	interimCalled bool
 	stopCalled    bool
+	onCalled      bool
+	offCalled     bool
 	lastTraceID   string
 	returnErr     error
 }
@@ -37,6 +39,18 @@ func (m *mockProcessor) ProcessInterim(_ context.Context, _ *radius.AccountingAt
 
 func (m *mockProcessor) ProcessStop(_ context.Context, _ *radius.AccountingAttributes, _, traceID string) error {
 	m.stopCalled = true
+	m.lastTraceID = traceID
+	return m.returnErr
+}
+
+func (m *mockProcessor) ProcessOn(_ context.Context, _ *radius.AccountingAttributes, _, traceID string) error {
+	m.onCalled = true
+	m.lastTraceID = traceID
+	return m.returnErr
+}
+
+func (m *mockProcessor) ProcessOff(_ context.Context, _ *radius.AccountingAttributes, _, traceID string) error {
+	m.offCalled = true
 	m.lastTraceID = traceID
 	return m.returnErr
 }
@@ -250,11 +264,11 @@ func TestServeRADIUS_UnknownStatusType(t *testing.T) {
 	proc := &mockProcessor{}
 	h := NewHandler(proc)
 	w := &mockResponseWriter{}
-	r := createAccountingRequest(t, secret, 7) // 未知のStatusType
+	r := createAccountingRequest(t, secret, 99) // 未知のStatusType
 
 	h.ServeRADIUS(w, r)
 
-	if proc.startCalled || proc.interimCalled || proc.stopCalled {
+	if proc.startCalled || proc.interimCalled || proc.stopCalled || proc.onCalled || proc.offCalled {
 		t.Error("No processor method should be called for unknown status type")
 	}
 	if w.written != nil {
@@ -359,6 +373,80 @@ func TestServeRADIUS_StatusServer_WriteError(t *testing.T) {
 
 	// パニックしないことを確認
 	h.ServeRADIUS(w, r)
+}
+
+// createAccountingOnOffRequest はAcct-Session-Idなしのテスト用リクエストを作成する（On/Off用）
+func createAccountingOnOffRequest(t *testing.T, secret []byte, statusType uint32) *radiuspkg.Request {
+	t.Helper()
+	packet := &radiuspkg.Packet{
+		Code:       radiuspkg.CodeAccountingRequest,
+		Identifier: 1,
+		Secret:     secret,
+	}
+
+	// Acct-Status-Type
+	statusData := make([]byte, 4)
+	binary.BigEndian.PutUint32(statusData, statusType)
+	packet.Add(radiuspkg.Type(radius.AttrTypeAcctStatusType), statusData)
+
+	// NAS-Identifier
+	packet.Add(radiuspkg.Type(radius.AttrTypeNASIdentifier), []byte("ap-001.example.com"))
+
+	// 正しいAuthenticatorを計算
+	data, err := packet.MarshalBinary()
+	if err != nil {
+		t.Fatalf("MarshalBinary failed: %v", err)
+	}
+	copy(data[4:20], make([]byte, 16))
+	h := md5.New()
+	h.Write(data)
+	h.Write(secret)
+	copy(packet.Authenticator[:], h.Sum(nil))
+
+	return &radiuspkg.Request{
+		Packet:     packet,
+		RemoteAddr: &mockAddr{addr: "192.168.1.1:12345"},
+	}
+}
+
+func TestServeRADIUS_AccountingRequest_On(t *testing.T) {
+	secret := []byte("testing123")
+	proc := &mockProcessor{}
+	h := NewHandler(proc)
+	w := &mockResponseWriter{}
+	r := createAccountingOnOffRequest(t, secret, radius.AcctStatusTypeOn)
+
+	h.ServeRADIUS(w, r)
+
+	if !proc.onCalled {
+		t.Error("ProcessOn should be called")
+	}
+	if w.written == nil {
+		t.Error("Response should be written")
+	}
+	if w.written != nil && w.written.Code != radiuspkg.CodeAccountingResponse {
+		t.Errorf("Response Code = %v, want %v", w.written.Code, radiuspkg.CodeAccountingResponse)
+	}
+}
+
+func TestServeRADIUS_AccountingRequest_Off(t *testing.T) {
+	secret := []byte("testing123")
+	proc := &mockProcessor{}
+	h := NewHandler(proc)
+	w := &mockResponseWriter{}
+	r := createAccountingOnOffRequest(t, secret, radius.AcctStatusTypeOff)
+
+	h.ServeRADIUS(w, r)
+
+	if !proc.offCalled {
+		t.Error("ProcessOff should be called")
+	}
+	if w.written == nil {
+		t.Error("Response should be written")
+	}
+	if w.written != nil && w.written.Code != radiuspkg.CodeAccountingResponse {
+		t.Errorf("Response Code = %v, want %v", w.written.Code, radiuspkg.CodeAccountingResponse)
+	}
 }
 
 func TestHandlerWithUDPAddress(t *testing.T) {
