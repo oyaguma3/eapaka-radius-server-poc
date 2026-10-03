@@ -1,4 +1,4 @@
-# D-10 Acct Server詳細設計書 (r6)
+# D-10 Acct Server詳細設計書 (r7)
 
 ## ■セクション1: 概要
 
@@ -23,17 +23,16 @@
 
 | No. | ドキュメント | 参照内容 |
 |-----|-------------|---------|
-| D-01 | ミニPC版設計仕様書 (r9) | システム構成、パッケージ利用マップ |
-| D-02 | Valkeyデータ設計仕様書 (r10) | データ構造、キー設計、Go構造体 |
-| D-03 | RADIUS認証フロー設計書 (r5) | 認証フロー |
-| D-04 | ログ仕様設計書 (r13) | event_id定義、ログフォーマット、IMSIマスキング |
-| D-05 | Valkeyキー・TTL設計書 (r5) | キー設計、TTL管理 |
-| D-06 | エラーハンドリング詳細設計書 (r6) | エラー分類、タイムアウト、リトライ戦略 |
-| D-07 | AKA Vector Server詳細設計書 (r3) | AKA認証ベクター生成 |
-| D-08 | インフラ設定・運用設計書 (r10) | Docker Compose設定、環境変数 |
-| D-09 | Auth Server詳細設計書 (r4) | セッション作成処理（Class属性設定） |
-| E-02 | コーディング規約（簡易版） | コーディング規約 |
-| E-03 | ドキュメント管理規約 (r2) | ドキュメント管理 |
+| D-01 | ミニPC版設計仕様書 (r10) | システム構成、パッケージ利用マップ |
+| D-02 | Valkeyデータ設計仕様書 (r12) | データ構造、キー設計、Go構造体 |
+| D-03 | Vector-APIインターフェース定義書およびEAP-AKAステートマシン設計書 (r6) | 認証フロー |
+| D-04 | ログ仕様設計書 (r19) | event_id定義、ログフォーマット、IMSIマスキング |
+| D-06 | エラーハンドリング詳細設計書 (r7) | エラー分類、タイムアウト、リトライ戦略 |
+| D-11 | Vector API詳細設計書 (r7) | AKA認証ベクター生成 |
+| D-08 | インフラ設定・運用設計書 (r14) | Docker Compose設定、環境変数 |
+| D-09 | Auth Server詳細設計書 (r10) | セッション作成処理（Class属性設定） |
+| E-02 | コーディング規約（簡易版） (r3) | コーディング規約 |
+| E-03 | 共通ライブラリ(pkg)設計書 (r3) | 共通ライブラリ（pkg） |
 
 ### 1.4 PoC対象外機能
 
@@ -382,26 +381,43 @@ D-01で定義された値を使用する。
 Auth Serverと同一のロジックを使用する。
 
 ```go
-// internal/server/secret.go
-func (s *SecretSource) RADIUSSecret(ctx context.Context, remoteAddr net.Addr, raw []byte) ([]byte, error) {
+// internal/server/secret.go（実装）
+// RADIUSSecret はリモートアドレスに対応するRADIUS Secretを返す。
+func (s *DynamicSecretSource) RADIUSSecret(ctx context.Context, remoteAddr net.Addr) ([]byte, error) {
     ip := extractIP(remoteAddr)
-    
-    // 1. Valkey client:{IP} を検索
+    if ip == "" {
+        if len(s.fallbackSecret) > 0 {
+            return s.fallbackSecret, nil
+        }
+        return nil, nil
+    }
+
     secret, err := s.clientStore.GetClientSecret(ctx, ip)
-    if err == nil && secret != "" {
+    if err != nil {
+        slog.Warn("Valkeyクライアント検索エラー",
+            "event_id", "RADIUS_SECRET_ERR",
+            "src_ip", ip,
+            "error", err,
+        )
+        if len(s.fallbackSecret) > 0 {
+            return s.fallbackSecret, nil
+        }
+        return nil, nil
+    }
+
+    if secret != "" {
         return []byte(secret), nil
     }
-    
-    // 2. 環境変数フォールバック
-    if s.defaultSecret != "" {
-        return []byte(s.defaultSecret), nil
+
+    if len(s.fallbackSecret) > 0 {
+        return s.fallbackSecret, nil
     }
-    
-    // 3. Secret不明
-    slog.Warn("shared secret not found",
+
+    slog.Warn("RADIUS Secret不明",
         "event_id", "RADIUS_NO_SECRET",
-        "src_ip", ip)
-    return nil, ErrSecretNotFound
+        "src_ip", ip,
+    )
+    return nil, nil
 }
 ```
 
@@ -702,11 +718,12 @@ import (
 )
 
 // HandleStatusServer はStatus-Server (Code=12) を処理する
-func HandleStatusServer(request *radiuspkg.Packet, secret []byte, srcIP string) *radiuspkg.Packet {
+func HandleStatusServer(request *radiuspkg.Packet, secret []byte, srcIP, traceID string) *radiuspkg.Packet {
     // 1. Message-Authenticator検証
     if !VerifyMessageAuthenticator(request, secret) {
-        slog.Warn("message authenticator verification failed",
+        slog.Warn("Status-Server: Message-Authenticator検証失敗",
             "event_id", "RADIUS_AUTH_ERR",
+            "trace_id", traceID,
             "src_ip", srcIP)
         return nil
     }
@@ -724,10 +741,10 @@ func HandleStatusServer(request *radiuspkg.Packet, secret []byte, srcIP string) 
     // 5. Response Authenticator計算
     response.Authenticator = calculateResponseAuthenticator(response, request.Authenticator, secret)
     
-    slog.Info("status-server response",
+    slog.Info("Status-Server: 応答送信",
         "event_id", "PKT_RECV",
-        "src_ip", srcIP,
-        "packet_code", "Status-Server")
+        "trace_id", traceID,
+        "src_ip", srcIP)
     
     return response
 }
@@ -822,68 +839,93 @@ Acct ServerはValkeyのセッションデータ（`sess:{UUID}`）を管理す�
 ### 5.3 Acct-Start処理
 
 ```go
-// internal/acct/start.go
-func (p *Processor) ProcessStart(ctx context.Context, attrs *AccountingAttributes, srcIP string) error {
+// internal/acct/start.go（実装）
+// ProcessStart はAcct-Start処理を行う。
+func (p *Processor) ProcessStart(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error {
     // 1. 重複検出
-    isDuplicate, err := p.duplicateDetector.CheckAndMark(ctx, attrs.AcctSessionID, StatusStart)
+    isDuplicate, err := p.duplicateDetector.CheckAndMarkStart(ctx, attrs.AcctSessionID)
     if err != nil {
-        return err
+        // SequenceError（Stop後Start）はログに出力して処理継続
+        if seqErr, ok := err.(*SequenceError); ok {
+            slog.Warn("sequence error",
+                "event_id", "ACCT_SEQUENCE_ERR",
+                "trace_id", traceID,
+                "src_ip", srcIP,
+                "acct_session_id", attrs.AcctSessionID,
+                "reason", seqErr.Reason,
+            )
+        } else {
+            slog.Error("duplicate check failed",
+                "event_id", "VALKEY_CONN_ERR",
+                "trace_id", traceID,
+                "error", err.Error(),
+            )
+        }
     }
     if isDuplicate {
         slog.Warn("duplicate accounting start",
             "event_id", "ACCT_DUPLICATE_START",
+            "trace_id", traceID,
             "src_ip", srcIP,
-            "acct_session_id", attrs.AcctSessionID)
-        return nil // 既存セッション維持、応答は返す
+            "acct_session_id", attrs.AcctSessionID,
+        )
+        return nil
     }
-    
+
     // 2. Class属性からセッションUUID取得
     sessionUUID := attrs.ClassUUID
     if sessionUUID == "" {
         slog.Warn("class attribute missing or invalid",
             "event_id", "ACCT_SESSION_NOT_FOUND",
+            "trace_id", traceID,
             "src_ip", srcIP,
-            "acct_session_id", attrs.AcctSessionID)
-        // セッション不在でも処理継続
+            "acct_session_id", attrs.AcctSessionID,
+        )
     }
-    
+
     // 3. セッション存在確認・更新
     if sessionUUID != "" {
         exists, err := p.sessionManager.Exists(ctx, sessionUUID)
         if err != nil {
             slog.Error("valkey error",
                 "event_id", "VALKEY_CONN_ERR",
-                "error", err.Error())
-            // Valkey障害時も処理継続
+                "trace_id", traceID,
+                "error", err.Error(),
+            )
         } else if !exists {
             slog.Warn("session not found",
                 "event_id", "ACCT_SESSION_NOT_FOUND",
+                "trace_id", traceID,
                 "src_ip", srcIP,
-                "class_uuid", sessionUUID)
+                "class_uuid", sessionUUID,
+            )
         } else {
-            // セッション更新
-            err = p.sessionManager.UpdateOnStart(ctx, sessionUUID, &SessionStartData{
-                StartTime:  time.Now().Unix(),
-                NasIP:      srcIP,
-                AcctID:     attrs.AcctSessionID,
-                ClientIP:   attrs.FramedIPAddress,
+            err = p.sessionManager.UpdateOnStart(ctx, sessionUUID, &session.SessionStartData{
+                StartTime: time.Now().Unix(),
+                NasIP:     srcIP,
+                AcctID:    attrs.AcctSessionID,
+                ClientIP:  attrs.FramedIPAddress,
             })
             if err != nil {
                 slog.Error("session update failed",
                     "event_id", "DB_WRITE_ERR",
-                    "error", err.Error())
+                    "trace_id", traceID,
+                    "error", err.Error(),
+                )
             }
         }
     }
-    
+
     // 4. ログ出力
-    imsi := p.resolveIMSI(ctx, sessionUUID, attrs)
+    imsi := p.identifierResolver.ResolveIMSI(ctx, sessionUUID, attrs.UserName, attrs.ClassUUID)
     slog.Info("accounting start",
         "event_id", "ACCT_START",
+        "trace_id", traceID,
         "src_ip", srcIP,
-        "imsi", p.maskIMSI(imsi),
-        "acct_session_id", attrs.AcctSessionID)
-    
+        "imsi", imsi,
+        "acct_session_id", attrs.AcctSessionID,
+    )
+
     return nil
 }
 ```
@@ -891,42 +933,52 @@ func (p *Processor) ProcessStart(ctx context.Context, attrs *AccountingAttribute
 ### 5.4 Acct-Interim処理
 
 ```go
-// internal/acct/interim.go
-func (p *Processor) ProcessInterim(ctx context.Context, attrs *AccountingAttributes, srcIP string) error {
-    // 1. 重複検出（Interim重複もDUPLICATE_STARTとしてログ）
+// internal/acct/interim.go（実装）
+// ProcessInterim はAcct-Interim処理を行う。
+func (p *Processor) ProcessInterim(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error {
+    // 1. 重複検出
     isDuplicate, err := p.duplicateDetector.CheckInterimDuplicate(ctx, attrs.AcctSessionID, attrs.InputOctets, attrs.OutputOctets)
     if err != nil {
-        return err
+        slog.Error("duplicate check failed",
+            "event_id", "VALKEY_CONN_ERR",
+            "trace_id", traceID,
+            "error", err.Error(),
+        )
     }
     if isDuplicate {
         slog.Warn("duplicate accounting interim",
             "event_id", "ACCT_DUPLICATE_START",
+            "trace_id", traceID,
             "src_ip", srcIP,
-            "acct_session_id", attrs.AcctSessionID)
+            "acct_session_id", attrs.AcctSessionID,
+        )
         return nil
     }
-    
+
     // 2. Startなしチェック
     seenStart, err := p.duplicateDetector.HasSeenStart(ctx, attrs.AcctSessionID)
     if err != nil {
-        // Valkey障害時は処理継続
         slog.Error("valkey error",
             "event_id", "VALKEY_CONN_ERR",
-            "error", err.Error())
+            "trace_id", traceID,
+            "error", err.Error(),
+        )
     } else if !seenStart {
         slog.Warn("interim without start",
             "event_id", "ACCT_SEQUENCE_ERR",
+            "trace_id", traceID,
             "src_ip", srcIP,
             "acct_session_id", attrs.AcctSessionID,
-            "reason", "no_start_received")
-        // セッション新規作成（Start相当の処理）
-        p.duplicateDetector.MarkAsStart(ctx, attrs.AcctSessionID)
+            "reason", "no_start_received",
+        )
+        // Start相当の処理としてマーク
+        _ = p.duplicateDetector.MarkAsStart(ctx, attrs.AcctSessionID)
     }
-    
+
     // 3. セッション更新
     sessionUUID := attrs.ClassUUID
     if sessionUUID != "" {
-        err = p.sessionManager.UpdateOnInterim(ctx, sessionUUID, &SessionInterimData{
+        err = p.sessionManager.UpdateOnInterim(ctx, sessionUUID, &session.SessionInterimData{
             NasIP:        srcIP,
             ClientIP:     attrs.FramedIPAddress,
             InputOctets:  int64(attrs.InputOctets),
@@ -935,20 +987,24 @@ func (p *Processor) ProcessInterim(ctx context.Context, attrs *AccountingAttribu
         if err != nil {
             slog.Error("session update failed",
                 "event_id", "DB_WRITE_ERR",
-                "error", err.Error())
+                "trace_id", traceID,
+                "error", err.Error(),
+            )
         }
     }
-    
+
     // 4. ログ出力
-    imsi := p.resolveIMSI(ctx, sessionUUID, attrs)
+    imsi := p.identifierResolver.ResolveIMSI(ctx, sessionUUID, attrs.UserName, attrs.ClassUUID)
     slog.Info("accounting interim",
         "event_id", "ACCT_INTERIM",
+        "trace_id", traceID,
         "src_ip", srcIP,
-        "imsi", p.maskIMSI(imsi),
+        "imsi", imsi,
         "acct_session_id", attrs.AcctSessionID,
         "input_octets", attrs.InputOctets,
-        "output_octets", attrs.OutputOctets)
-    
+        "output_octets", attrs.OutputOctets,
+    )
+
     return nil
 }
 ```
@@ -956,61 +1012,77 @@ func (p *Processor) ProcessInterim(ctx context.Context, attrs *AccountingAttribu
 ### 5.5 Acct-Stop処理
 
 ```go
-// internal/acct/stop.go
-func (p *Processor) ProcessStop(ctx context.Context, attrs *AccountingAttributes, srcIP string) error {
-    // 1. Stop重複チェック（重複の場合はログなしで処理継続）
+// internal/acct/stop.go（実装）
+// ProcessStop はAcct-Stop処理を行う。
+func (p *Processor) ProcessStop(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error {
+    // 1. Stop重複チェック
     isDuplicate, err := p.duplicateDetector.CheckStopDuplicate(ctx, attrs.AcctSessionID)
     if err != nil {
         // Valkey障害時は処理継続
+        slog.Error("duplicate check failed",
+            "event_id", "VALKEY_CONN_ERR",
+            "trace_id", traceID,
+            "error", err.Error(),
+        )
     }
     if isDuplicate {
-        // Stop重複時はエラーログ出力なし
+        // Stop重複時はログ出力なしで処理終了
         return nil
     }
-    
-    // 2. Stop後Start チェック用にマーク
-    p.duplicateDetector.MarkAsStopped(ctx, attrs.AcctSessionID)
-    
+
+    // 2. Stopとしてマーク
+    if err := p.duplicateDetector.MarkAsStopped(ctx, attrs.AcctSessionID); err != nil {
+        slog.Error("duplicate mark failed",
+            "event_id", "DB_WRITE_ERR",
+            "trace_id", traceID,
+            "error", err.Error(),
+        )
+    }
+
     // 3. セッション削除
     sessionUUID := attrs.ClassUUID
+    var imsiFromSession string
     if sessionUUID != "" {
         // IMSI取得（削除前に）
-        session, err := p.sessionManager.Get(ctx, sessionUUID)
-        var imsi string
-        if err == nil && session != nil {
-            imsi = session.IMSI
+        sess, err := p.sessionManager.Get(ctx, sessionUUID)
+        if err == nil && sess != nil {
+            imsiFromSession = sess.IMSI
         }
-        
+
         // セッション削除
-        err = p.sessionManager.Delete(ctx, sessionUUID)
-        if err != nil {
+        if err := p.sessionManager.Delete(ctx, sessionUUID); err != nil {
             slog.Error("session delete failed",
                 "event_id", "DB_WRITE_ERR",
-                "error", err.Error())
+                "trace_id", traceID,
+                "error", err.Error(),
+            )
         }
-        
+
         // インデックス削除
-        if imsi != "" {
-            err = p.sessionManager.RemoveUserIndex(ctx, imsi, sessionUUID)
-            if err != nil {
+        if imsiFromSession != "" {
+            if err := p.sessionManager.RemoveUserIndex(ctx, imsiFromSession, sessionUUID); err != nil {
                 slog.Error("index delete failed",
                     "event_id", "DB_WRITE_ERR",
-                    "error", err.Error())
+                    "trace_id", traceID,
+                    "error", err.Error(),
+                )
             }
         }
     }
-    
+
     // 4. ログ出力
-    imsi := p.resolveIMSI(ctx, sessionUUID, attrs)
+    imsi := p.identifierResolver.ResolveIMSI(ctx, sessionUUID, attrs.UserName, attrs.ClassUUID)
     slog.Info("accounting stop",
         "event_id", "ACCT_STOP",
+        "trace_id", traceID,
         "src_ip", srcIP,
-        "imsi", p.maskIMSI(imsi),
+        "imsi", imsi,
         "acct_session_id", attrs.AcctSessionID,
         "input_octets", attrs.InputOctets,
         "output_octets", attrs.OutputOctets,
-        "session_time", attrs.SessionTime)
-    
+        "session_time", attrs.SessionTime,
+    )
+
     return nil
 }
 ```
@@ -1431,26 +1503,31 @@ D-06で定義されたエラーハンドリングに基づく。
 
 | エラー種別 | 検出条件 | 対処 | RADIUS応答 | ログ |
 |-----------|---------|------|-----------|------|
-| Valkey接続失敗 | TCP接続エラー | リトライ（3回） | Accounting-Response | ERROR: `VALKEY_CONN_ERR` |
-| Valkeyコマンドタイムアウト | 応答なし（2秒超過） | リトライ | Accounting-Response | ERROR: `VALKEY_CONN_ERR` |
+| Valkey接続失敗（起動時） | TCP接続エラー・AUTH失敗 | 起動時エラー終了 | - | ERROR: `VALKEY_CONN_ERR`（`error`） |
+| Valkey接続失敗 | TCP接続エラー | リトライ（3回） | Accounting-Response | ERROR: `VALKEY_CONN_ERR`（読み取り系）/ `DB_WRITE_ERR`（書き込み系） |
+| Valkeyコマンドタイムアウト | 応答なし（2秒超過） | リトライ | Accounting-Response | ERROR: `VALKEY_CONN_ERR`（読み取り系）/ `DB_WRITE_ERR`（書き込み系） |
+| Shared Secret解決時のValkeyエラー | client:{IP}検索失敗 | 環境変数 `RADIUS_SECRET` があればその値で継続 | （Secret解決できない場合）なし | WARN: `RADIUS_SECRET_ERR` |
 
-**重要:** Valkey障害時も課金パケットにはAccounting-Responseを返す（クライアントの再送を防ぐため）。データ欠損はログから追跡可能とする。
+**重要:** Valkey障害時も課金パケットにはAccounting-Responseを返す（クライアントの再送を防ぐため）。データ欠損はログから追跡可能とする。実行時の `VALKEY_CONN_ERR` は `trace_id`, `error` を持つ（`retry_count` はない）。Valkey接続の復旧検知ログは出力しない（§10.2）。
 
 #### 7.1.2 プロトコルエラー
 
 | エラー種別 | 検出条件 | 対処 | RADIUS応答 | ログ |
 |-----------|---------|------|-----------|------|
-| パケットパース失敗 | 不正なRADIUS形式 | パケット破棄 | なし | WARN: `RADIUS_PARSE_ERR` |
+| パケットパース失敗 | 不正なRADIUS形式 | パケット破棄 | なし | なし（デコードは `layeh.com/radius` が行い、失敗時のログは出力しない） |
+| 属性抽出失敗 | Acct-Status-Typeなし、Accounting-On/Off以外でAcct-Session-Idなし | パケット破棄 | なし | WARN: `RADIUS_PARSE_ERR`（`reason`） |
 | Authenticator検証失敗 | 計算値不一致 | パケット破棄 | なし | WARN: `RADIUS_AUTH_ERR` |
 | Message-Authenticator検証失敗 | Status-ServerのMAC検証失敗 | パケット破棄 | なし | WARN: `RADIUS_AUTH_ERR` |
 | Shared Secret不明 | client:{IP}不在かつ環境変数未設定 | パケット破棄 | なし | WARN: `RADIUS_NO_SECRET` |
-| 未知のAcct-Status-Type | 1,2,3,7,8以外 | パケット破棄 | なし | WARN: `RADIUS_UNKNOWN_CODE` |
+| 未知のRADIUS Code | Accounting-Request / Status-Server以外 | パケット破棄 | なし | WARN: `RADIUS_UNKNOWN_CODE`（`code`） |
+| 未知のAcct-Status-Type | 1,2,3,7,8以外 | パケット破棄 | なし | WARN: `RADIUS_UNKNOWN_CODE`（`acct_status_type`） |
+| 応答送信失敗 | Accounting-Response / Status-Server応答の送信エラー | - | - | ERROR: `PKT_SEND_ERR` |
 
 #### 7.1.3 データエラー
 
 | エラー種別 | 検出条件 | 対処 | RADIUS応答 | ログ |
 |-----------|---------|------|-----------|------|
-| セッション不在 | sess:{UUID}不在 | 処理継続 | Accounting-Response | WARN: `ACCT_SESSION_NOT_FOUND` |
+| セッション不在 | Start時にClass属性なし・不正、または sess:{UUID}不在（TTL超過による削除済みを含む。区別しない） | セッション更新せず処理継続 | Accounting-Response | WARN: `ACCT_SESSION_NOT_FOUND` |
 | Start重複 | 同一Acct-Session-Idで再Start | 既存維持 | Accounting-Response | WARN: `ACCT_DUPLICATE_START` |
 | Interim重複 | 同一Acct-Session-Idで同一値Interim | 既存維持 | Accounting-Response | WARN: `ACCT_DUPLICATE_START` |
 | StartなしでInterim | Acct-Session-Id未登録でInterim | 新規作成 | Accounting-Response | WARN: `ACCT_SEQUENCE_ERR` |
@@ -1527,16 +1604,17 @@ D-04で定義されたevent_idを使用する。
 
 | event_id | レベル | 説明 |
 |----------|--------|------|
-| `PKT_RECV` | INFO | パケット受信（Status-Server） |
-| `VALKEY_CONN_ERR` | ERROR | Valkey接続失敗 |
-| `VALKEY_CONN_RESTORED` | INFO | Valkey接続復旧 |
-| `DB_WRITE_ERR` | ERROR | Valkey書き込み失敗 |
-| `RADIUS_PARSE_ERR` | WARN | RADIUSパケットパース失敗 |
-| `RADIUS_AUTH_ERR` | WARN | Authenticator検証失敗 |
+| `PKT_RECV` | INFO | Status-Server応答送信（Accounting-Request受信時は出力しない） |
+| `VALKEY_CONN_ERR` | ERROR | 起動時のValkey接続失敗、実行時の読み取り系Valkeyエラー（重複チェック・セッション存在確認・Start受信有無確認） |
+| `DB_WRITE_ERR` | ERROR | Valkey書き込み失敗（セッション更新・停止マーク・セッション削除・インデックス削除） |
+| `SYS_ERR` | ERROR | Accounting処理がエラーを返した（現行は常にnilのため通常出力されない） |
+| `PKT_SEND_ERR` | ERROR | Accounting-Response / Status-Server応答の送信失敗 |
+| `RADIUS_PARSE_ERR` | WARN | Accounting-Requestの属性抽出失敗 |
+| `RADIUS_AUTH_ERR` | WARN | Request Authenticator検証失敗、Status-ServerのMessage-Authenticator検証失敗 |
+| `RADIUS_SECRET_ERR` | WARN | Shared Secret解決時のValkey検索エラー |
 | `RADIUS_NO_SECRET` | WARN | Shared Secret不明 |
-| `RADIUS_UNKNOWN_CODE` | WARN | 未知のAcct-Status-Type |
-| `ACCT_SESSION_NOT_FOUND` | WARN | セッション不在 |
-| `ACCT_SESSION_EXPIRED` | WARN | セッションTTL超過 |
+| `RADIUS_UNKNOWN_CODE` | WARN | 未知のRADIUS Code / 未知のAcct-Status-Type |
+| `ACCT_SESSION_NOT_FOUND` | WARN | Start時のClass属性なし・セッション不在（TTL超過を含む） |
 | `ACCT_DUPLICATE_START` | WARN | 重複Start/Interim |
 | `ACCT_SEQUENCE_ERR` | WARN | 順序異常 |
 | `ACCT_START` | INFO | Accounting-Start受信 |
@@ -1544,6 +1622,8 @@ D-04で定義されたevent_idを使用する。
 | `ACCT_STOP` | INFO | Accounting-Stop受信 |
 | `ACCT_ON` | INFO | Accounting-On受信（NAS起動通知） |
 | `ACCT_OFF` | INFO | Accounting-Off受信（NASシャットダウン通知） |
+
+> **注記:** 各event_idの `msg`・属性はD-04 §3.2を参照。Valkey接続の復旧検知ログ、セッションTTL超過専用のevent_idはない。
 
 ### 8.2 ログ出力例
 
@@ -1555,6 +1635,7 @@ D-04で定義されたevent_idを使用する。
   "app": "acct-server",
   "event_id": "ACCT_START",
   "msg": "accounting start",
+  "trace_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
   "src_ip": "192.168.1.100",
   "imsi": "440101********0",
   "acct_session_id": "sess-abc123"
@@ -1567,6 +1648,7 @@ D-04で定義されたevent_idを使用する。
   "app": "acct-server",
   "event_id": "ACCT_INTERIM",
   "msg": "accounting interim",
+  "trace_id": "8d0f7780-8536-41ef-a55c-f18fd2fa1bf8",
   "src_ip": "192.168.1.100",
   "imsi": "440101********0",
   "acct_session_id": "sess-abc123",
@@ -1581,6 +1663,7 @@ D-04で定義されたevent_idを使用する。
   "app": "acct-server",
   "event_id": "ACCT_STOP",
   "msg": "accounting stop",
+  "trace_id": "9e1a8891-9647-42f0-b66d-a29ae3ab2c09",
   "src_ip": "192.168.1.100",
   "imsi": "440101********0",
   "acct_session_id": "sess-abc123",
@@ -1595,7 +1678,8 @@ D-04で定義されたevent_idを使用する。
   "level": "WARN",
   "app": "acct-server",
   "event_id": "ACCT_SEQUENCE_ERR",
-  "msg": "sequence error",
+  "msg": "interim without start",
+  "trace_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
   "src_ip": "192.168.1.100",
   "acct_session_id": "sess-xyz789",
   "reason": "no_start_received"
@@ -1608,6 +1692,7 @@ D-04で定義されたevent_idを使用する。
   "app": "acct-server",
   "event_id": "ACCT_DUPLICATE_START",
   "msg": "duplicate accounting start",
+  "trace_id": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e",
   "src_ip": "192.168.1.100",
   "acct_session_id": "sess-abc123"
 }
@@ -1818,47 +1903,7 @@ func (h *Handler) handleAccountingRequest(w radius.ResponseWriter, r *radius.Req
 
 ### 10.2 Valkey接続復旧検知
 
-D-04で定義された復旧検知ロジックを実装する。
-
-```go
-// internal/store/valkey.go
-var (
-    lastConnError time.Time
-    connMu        sync.Mutex
-)
-
-func executeWithConnTracking(ctx context.Context, rdb *redis.Client, fn func() error) error {
-    err := fn()
-    
-    connMu.Lock()
-    defer connMu.Unlock()
-    
-    if err != nil {
-        if isConnectionError(err) {
-            lastConnError = time.Now()
-        }
-        return err
-    }
-    
-    // 接続復旧を検知
-    if !lastConnError.IsZero() {
-        downtime := time.Since(lastConnError)
-        slog.Info("valkey connection restored",
-            "event_id", "VALKEY_CONN_RESTORED",
-            "downtime_ms", downtime.Milliseconds())
-        lastConnError = time.Time{}
-    }
-    return nil
-}
-
-func isConnectionError(err error) bool {
-    // ネットワークエラー、タイムアウトエラーを判定
-    return errors.Is(err, context.DeadlineExceeded) ||
-           errors.Is(err, redis.ErrClosed) ||
-           strings.Contains(err.Error(), "connection refused") ||
-           strings.Contains(err.Error(), "i/o timeout")
-}
-```
+Valkey接続の復旧検知（`downtime_ms` の記録）は実装しない（D-04 §4.3）。go-redisのコネクションプールが次のコマンド実行時に接続を張り直すため、復旧は `VALKEY_CONN_ERR` / `DB_WRITE_ERR` の出力が止まったことで判断する。
 
 ### 10.3 起動・シャットダウン
 
@@ -1944,3 +1989,4 @@ func main() {
 | r4 | 2026-01-27 | ヘルスチェック整合性修正: セクション2.5.1 Dockerfileに`procps`パッケージ追加、セクション2.5.3必須パッケージに`procps`追記（pgrep用） |
 | r5 | 2026-02-18 | ディレクトリ構造全面更新、関連ドキュメント版数更新 |
 | r6 | 2026-03-05 | Accounting-On/Off対応: §1.2スコープ追加、§1.4対象外から削除、§1.5/§1.6更新、§2.1/§2.3更新、§4.1処理フロー拡張、§4.4属性抽出更新（NAS-Identifier追加・Acct-Session-Id On/Off省略許容・実装コード整合）、§5.6/§5.7新設（ProcessOn/ProcessOff）、§7.1.2/§8.1/§8.2更新、§9.2インターフェース更新、§10.1ハンドラー更新、§11から削除 |
+| r7 | 2026-10-04 | D-04 r19 の event_id 全面整合に合わせて修正: §8.1 event_id一覧から実装に存在しない `VALKEY_CONN_RESTORED` / `ACCT_SESSION_EXPIRED` を削除し、`SYS_ERR` / `PKT_SEND_ERR` / `RADIUS_SECRET_ERR` を追加、各説明を実装の出力条件に修正。§7.1.1〜§7.1.3 のエラー表を修正（起動時 `VALKEY_CONN_ERR`、書き込み系 `DB_WRITE_ERR`、`RADIUS_SECRET_ERR`、`RADIUS_PARSE_ERR` は属性抽出失敗でありパケットデコード失敗はログなし、未知のRADIUS Code、`PKT_SEND_ERR` を追加。セッションTTL超過は `ACCT_SESSION_NOT_FOUND` と区別しない旨を明記）。§10.2 Valkey接続復旧検知を「実装しない」に改め実装例を削除。§4.2 Shared Secret解決、§5.3〜§5.5 Start/Interim/Stop処理のコード例を実装（`trace_id` 付与、`RADIUS_SECRET_ERR`、重複チェック時の `VALKEY_CONN_ERR`、Stop後Startの `ACCT_SEQUENCE_ERR`、停止マーク失敗の `DB_WRITE_ERR`）に合わせて更新。§4.7 Status-Server処理のログ（msg・`trace_id`、`packet_code` 削除）を実装に合わせて修正。§8.2 ログ出力例に `trace_id` を追加し、StartなしInterimの msg を `interim without start` に修正。§1.3 関連ドキュメントの版数を現行版に更新（D-01 r10、D-02 r12、D-03 r6（文書名も現行名に修正）、D-04 r19、D-06 r7、D-08 r14、D-09 r10、E-02 r3）。関連ドキュメント表の文書名を実在の文書に修正（存在しない D-05「Valkeyキー・TTL設計書」を削除、D-07「AKA Vector Server」→ D-11 Vector API詳細設計書、E-03 → 共通ライブラリ(pkg)設計書） |

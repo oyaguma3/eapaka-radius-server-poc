@@ -13,16 +13,16 @@
 | No. | ドキュメント名 | 版数 | 最終更新 | 内容 |
 |-----|---------------|------|---------|------|
 | D-01 | ミニPC版 EAP-AKA RADIUS PoC環境 設計仕様書 | r10 | 2026-10-04 | システム概要、アーキテクチャ、ノード構成、パッケージマップ、Vector Gateway追加、Valkeyバージョン9.0統一、Fluent Bit統一、環境変数名統一、実装コードとの不整合20件修正（データモデル注記・Valkeyキースキーマ・パッケージマップ・docker-compose.yml完全同期・healthcheck・テストベクターモード）、外部aka-only-server（接続方式01）を構成図・環境変数に追加 |
-| D-02 | Valkeyデータ設計仕様書 | r11 | 2026-02-27 | データ構造、キー設計、TTL、Go構造体、CK/IK非保存方針、UUID仕様明記、Acct重複検出キャッシュ、stageフィールド値明記、SQN競合制御（WATCH/MULTI CAS）、idx:userクリーンアップ方針、PolicyRule構造を実装コードに整合（NasID/AllowedSSIDs/VlanID/SessionTimeout） |
+| D-02 | Valkeyデータ設計仕様書 | r12 | 2026-10-04 | データ構造、キー設計、TTL、Go構造体、CK/IK非保存方針、UUID仕様明記、Acct重複検出キャッシュ、stageフィールド値明記、SQN競合制御（WATCH/MULTI CAS）、idx:userクリーンアップ方針、PolicyRule構造を実装コードに整合（NasID/AllowedSSIDs/VlanID/SessionTimeout）、実装との突き合わせによる修正（nas_idは完全一致、SQN競合制御は設計のみで現行未実装、セッション/インデックス/重複検出/EAPコンテキストの実態） |
 | D-03 | Vector-APIインターフェース定義書およびEAP-AKAステートマシン設計書 | r6 | 2026-10-04 | API仕様、8状態定義、Policy評価Post-Authのみ、接続先をVector Gatewayに変更、接続方式01経由時の403応答 |
 | D-04 | ログ仕様設計書 | r19 | 2026-10-04 | ログフォーマット、event_id定義、Vector Gateway対応、EAP_INVALID_STATE追加、IMSIマスキング（4コンポーネント対応、Admin TUI除外明記）、Acct Server PKT_RECV追加、SQN_CONFLICT_ERR追加、lnavフォーマット全面改訂（bunyan競合回避・timestamp-format削除・file-pattern・sample追加）、ACCT_ON/ACCT_OFF追加、ヘルスチェックログ分離記述追加、BACKEND_EXTERNAL_CALL/BACKEND_EXTERNAL_ERR実装済み化・causeフィールド追加 |
 | D-05 | Admin TUI詳細設計書【前半】 | r9 | 2026-02-23 | 画面設計、バリデーション、インポート/エクスポート、IMSI表示方針（常に生値）、全マスタデータHash形式統一、実装スクリーンショットとのASCIIレイアウト整合性修正（12画面） |
 | D-06 | エラーハンドリング詳細設計書 | r7 | 2026-10-04 | 異常系処理、タイムアウト、リトライ、Circuit Breaker、Vector Gateway追加、SQN競合エラー（409）追加、Vector Gateway経由フロー明記、接続方式01（aka-only-server）のエラー変換 |
-| D-07 | Admin TUI詳細設計書【後半】 | r7 | 2026-02-23 | モニタリング画面、ヘルプダイアログ、IMSI記録方針（監査ログに生値）、idx:userクリーンアップ処理、実装スクリーンショットとのASCIIレイアウト整合性修正（5画面） |
+| D-07 | Admin TUI詳細設計書【後半】 | r8 | 2026-10-04 | モニタリング画面、ヘルプダイアログ、IMSI記録方針（監査ログに生値）、idx:userクリーンアップ処理、実装スクリーンショットとのASCIIレイアウト整合性修正（5画面）、event_idを実装に整合 |
 | D-08 | インフラ設定・運用設計書 | r14 | 2026-10-04 | Docker Compose設定、Valkey設定、Fluent Bit設定（fluent/fluent-bit:4.2、YAML形式、rewrite_tagによるヘルスチェックログ分離、キャッチオール廃止による重複出力解消）、UFW設定、運用手順、IMSIマスキング環境変数（4コンポーネント限定）、Valkeyバージョン9.0、ヘルスチェック方針（curl -fsS）、テストベクターモード環境変数、B-02スコープ修正（B-01境界整合）、aka-only-server接続（compose環境変数・証明書マウント・共有ネットワークaka-av用オーバーレイ） |
 | D-09 | Auth Server詳細設計書 | r10 | 2026-10-04 | パッケージ構成、RADIUS受信処理、EAP制御フロー、Vector Gateway連携、セッション管理、IMSIマスキング、UUID仕様明記、互換性エイリアス削除、ベースイメージ方針、Vector関連event_id（VECTOR_IMSI_NOT_FOUND等）を実装に整合 |
-| D-10 | Acct Server詳細設計書 | r6 | 2026-03-05 | パッケージ構成、Accounting処理フロー、セッション更新ロジック、重複検出、IMSIマスキング、Status-Server対応、ベースイメージ方針、Accounting-On/Off対応（ProcessOn/ProcessOff、NAS-Identifier処理） |
-| D-11 | Vector API詳細設計書 | r6 | 2026-02-18 | パッケージ構成、HTTPサーバー設定、Milenage計算、SQN管理、SQN競合制御（WATCH/MULTI CAS）、エラーハンドリング、ベースイメージ方針、テストベクターモード本番無効化注記 |
+| D-10 | Acct Server詳細設計書 | r7 | 2026-10-04 | パッケージ構成、Accounting処理フロー、セッション更新ロジック、重複検出、IMSIマスキング、Status-Server対応、ベースイメージ方針、Accounting-On/Off対応（ProcessOn/ProcessOff、NAS-Identifier処理）、event_idを実装に整合 |
+| D-11 | Vector API詳細設計書 | r7 | 2026-10-04 | パッケージ構成、HTTPサーバー設定、Milenage計算、SQN管理、SQN競合制御（WATCH/MULTI CAS）、エラーハンドリング、ベースイメージ方針、テストベクターモード本番無効化注記、event_idを実装に整合、SQN競合制御（CAS）は設計済み・現行未実装と明記 |
 | D-12 | Vector Gateway詳細設計書 | r5 | 2026-10-04 | 外部API連携設計、PLMNルーティング、接続方式管理、トレーサビリティ、IMSIマスキング、ベースイメージ方針（debian:bookworm-slim）、接続方式01（aka-only-server、mTLS/平文HTTP、GenerateAv変換）実装 |
 
 ### 1.2 未作成
@@ -47,7 +47,7 @@
 
 | No. | ドキュメント名 | 版数 | 最終更新 | 内容 |
 |-----|---------------|------|---------|------|
-| E-01 | 開発環境セットアップガイド | r3 | 2026-03-01 | Go環境構築、Go Workspace設定、依存パッケージ、ローカル開発手順、デバッグ方法、環境変数名統一（RADIUS_SECRET）、Makefileセクション追加、golangci-lint/CIセクション追加、テストベクターモード環境変数追加 |
+| E-01 | 開発環境セットアップガイド | r4 | 2026-10-04 | Go環境構築、Go Workspace設定、依存パッケージ、ローカル開発手順、デバッグ方法、環境変数名統一（RADIUS_SECRET）、Makefileセクション追加、golangci-lint/CIセクション追加、テストベクターモード環境変数追加、event_idを実装に整合 |
 | E-02 | コーディング規約（簡易版） | r3 | 2026-10-04 | 命名規則、パッケージ構成、エラーハンドリングパターン、構造体タグ（jsonのみ）、ログ出力規約、IMSIマスキングD-04 r17準拠、golangci-lint導入済み反映、ログ出力例のevent_idを実装に整合 |
 | E-03 | 共通ライブラリ(pkg)設計書 | r3 | 2026-03-01 | pkg配置方針、apperr/valkey/logging/model/httputil各パッケージ設計、IMSIマスキングD-04 r17準拠 |
 
@@ -128,22 +128,22 @@
 [設計ドキュメント] ─────────────────────────────────────────────────────┐
     │                                                                   │
     ├─ D-01: ミニPC版設計仕様書 (r10) ✓                                  │
-    ├─ D-02: Valkeyデータ設計仕様書 (r11) ✓                              │
+    ├─ D-02: Valkeyデータ設計仕様書 (r12) ✓                              │
     ├─ D-03: Vector-API/ステートマシン設計書 (r6) ✓                     │
     ├─ D-04: ログ仕様設計書 (r19) ✓                                     │
     ├─ D-05: Admin TUI詳細設計書【前半】(r9) ✓                          │
     ├─ D-06: エラーハンドリング詳細設計書 (r7) ✓                        │
-    ├─ D-07: Admin TUI詳細設計書【後半】(r7) ✓                          │
+    ├─ D-07: Admin TUI詳細設計書【後半】(r8) ✓                          │
     ├─ D-08: インフラ設定・運用設計書 (r14) ✓                            │
     ├─ D-09: Auth Server詳細設計書 (r10) ✓                               │
-    ├─ D-10: Acct Server詳細設計書 (r6) ✓                               │
-    ├─ D-11: Vector API詳細設計書 (r6) ✓                                │
+    ├─ D-10: Acct Server詳細設計書 (r7) ✓                               │
+    ├─ D-11: Vector API詳細設計書 (r7) ✓                                │
     └─ D-12: Vector Gateway詳細設計書 (r5) ✓                            │
                     │                                                   │
                     ▼                                                   │
 [開発ドキュメント] ─────────────────────────────────────────────────────┤
     │                                                                   │
-    ├─ E-01: 開発環境セットアップガイド (r3) ✓                          │
+    ├─ E-01: 開発環境セットアップガイド (r4) ✓                          │
     ├─ E-02: コーディング規約・簡易版 (r3) ✓                            │
     └─ E-03: 共通ライブラリ設計書 (r3) ✓                                │
                     │                                                   │
@@ -190,7 +190,7 @@
 
 | 順序 | ドキュメントID | ドキュメント名 | ステータス |
 |-----|---------------|---------------|-----------|
-| 7 | E-01 | 開発環境セットアップガイド | **完了 (r3)** |
+| 7 | E-01 | 開発環境セットアップガイド | **完了 (r4)** |
 | 8 | E-02 | コーディング規約（簡易版） | **完了 (r3)** |
 | 9 | E-03 | 共通ライブラリ(pkg)設計書 | **完了 (r3)** |
 | 10 | T-01 | テスト戦略書 | **完了 (r3)** |
@@ -276,4 +276,4 @@
 | r32 | 2026-03-01 | 開発ドキュメント版数更新: E-01(r2→r3)、E-02(r1→r2)、E-03(r2→r3)。実装・現行ドキュメントとの整合（IMSIマスキングD-04 r17準拠、pkg構成更新、golangci-lint/CI反映、Makefile/テストベクターモード追加、構造体タグjsonのみ化）。 |
 | r33 | 2026-03-04 | ヘルスチェックログ分離＋全ログ重複解消: D-08(r12→r13)。rewrite_tagフィルタによるヘルスチェックログのアプリ専用ログ除外、match: "*"キャッチオール廃止→match: "healthcheck.*"に変更しapp.*タグの重複出力解消。 |
 | r34 | 2026-03-05 | Accounting-On/Off対応＋ヘルスチェックログ分離のドキュメント反映: D-04(r17→r18)、D-10(r5→r6)、T-03(r6→r7)、O-05(r5→r6)。 |
-| r35 | 2026-10-04 | Vector Gatewayに接続方式01（aka-only-server）を追加したことに伴う版数更新: D-01(r9→r10)、D-03(r5→r6)、D-04(r18→r19)、D-06(r6→r7)、D-08(r13→r14)、D-12(r4→r5)、T-02(r1→r2)、T-03(r7→r8)、T-04(r4→r5)、B-02(r9→r10)、O-01(r1→r2)、O-03(r1→r2)、S-01(r1→r2)。README.md も更新（アーキテクチャ表・環境変数表）。 あわせて既存記載の実装との不一致を修正: Vector Gateway/Auth Server の event_id（GW_ROUTE/GW_OK/GW_ERR、VECTOR_IMSI_NOT_FOUND 等）、エラー応答の detail 文言、docker-compose.yml 掲載内容（vector-api に TEST_VECTOR_* を渡すよう compose も修正）、T-02 の件数（削除済み logging テストの除去、全1,196件）、lnav クエリ（aka_radius_log テーブル等）。追加の版数更新: D-09(r9→r10)、E-02(r2→r3)、O-05(r6→r7)、T-01(r2→r3)。 |
+| r35 | 2026-10-04 | Vector Gatewayに接続方式01（aka-only-server）を追加したことに伴う版数更新: D-01(r9→r10)、D-03(r5→r6)、D-04(r18→r19)、D-06(r6→r7)、D-08(r13→r14)、D-12(r4→r5)、T-02(r1→r2)、T-03(r7→r8)、T-04(r4→r5)、B-02(r9→r10)、O-01(r1→r2)、O-03(r1→r2)、S-01(r1→r2)。README.md も更新（アーキテクチャ表・環境変数表）。 あわせて既存記載の実装との不一致を修正: Vector Gateway/Auth Server の event_id（GW_ROUTE/GW_OK/GW_ERR、VECTOR_IMSI_NOT_FOUND 等）、エラー応答の detail 文言、docker-compose.yml 掲載内容（vector-api に TEST_VECTOR_* を渡すよう compose も修正）、T-02 の件数（削除済み logging テストの除去、全1,196件）、lnav クエリ（aka_radius_log テーブル等）。追加の版数更新: D-09(r9→r10)、E-02(r2→r3)、O-05(r6→r7)、T-01(r2→r3)。 さらに、D-04 の event_id を実装と全件突き合わせて整合し、参照文書（D-03/D-06/D-07/D-08/D-09/D-10/D-11/E-01/E-02/O-03/O-05/T-03）に反映。D-02 を実装に整合（nas_id は完全一致、SQN 競合制御は設計のみで現行未実装）。T-03/S-01 をテストベクターモードの実動作に整合（2026-10-04 実機確認）。追加の版数更新: D-02(r11→r12)、D-07(r7→r8)、D-10(r6→r7)、D-11(r6→r7)、E-01(r3→r4)。 |

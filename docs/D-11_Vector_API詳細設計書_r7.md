@@ -1,4 +1,4 @@
-# D-11 Vector API詳細設計書 (r6)
+# D-11 Vector API詳細設計書 (r7)
 
 ## ■セクション1: 概要
 
@@ -30,17 +30,17 @@
 
 | No. | ドキュメント | 参照内容 |
 |-----|-------------|---------|
-| D-01 | ミニPC版設計仕様書 (r9) | システム構成、パッケージ利用マップ |
-| D-02 | Valkeyデータ設計仕様書 (r10) | 加入者データ構造、キー設計、Go構造体、SQN競合制御 |
-| D-03 | Vector-API/ステートマシン設計書 (r5) | API仕様、リクエスト/レスポンス定義 |
-| D-04 | ログ仕様設計書 (r13) | event_id定義、ログフォーマット、SQN_CONFLICT_ERR |
-| D-05 | Auth Server詳細設計書 (r5) | Auth Server連携仕様 |
-| D-06 | エラーハンドリング詳細設計書 (r6) | エラー分類、タイムアウト設定、SQN競合エラー |
-| D-07 | Admin TUI詳細設計書 (r3) | 管理用TUIアプリケーション仕様 |
-| D-08 | インフラ設定・運用設計書 (r10) | 環境変数設定、テストベクターモード |
-| D-12 | Vector Gateway詳細設計書 (r3) | X-Trace-ID伝搬、呼び出し元仕様 |
-| E-02 | コーディング規約（簡易版） | コーディング規約 |
-| E-03 | CI/CD設計書 (r2) | CI/CD設計 |
+| D-01 | ミニPC版設計仕様書 (r10) | システム構成、パッケージ利用マップ |
+| D-02 | Valkeyデータ設計仕様書 (r12) | 加入者データ構造、キー設計、Go構造体、SQN更新方式（現行実装） |
+| D-03 | Vector-API/ステートマシン設計書 (r6) | API仕様、リクエスト/レスポンス定義 |
+| D-04 | ログ仕様設計書 (r19) | event_id定義、ログフォーマット |
+| D-09 | Auth Server詳細設計書 (r10) | Auth Server連携仕様 |
+| D-06 | エラーハンドリング詳細設計書 (r7) | エラー分類、タイムアウト設定、SQN競合エラー（設計済み・未実装） |
+| D-07 | Admin TUI詳細設計書【後半】 (r8) | 管理用TUIアプリケーション仕様 |
+| D-08 | インフラ設定・運用設計書 (r14) | 環境変数設定、テストベクターモード |
+| D-12 | Vector Gateway詳細設計書 (r5) | X-Trace-ID伝搬、呼び出し元仕様 |
+| E-02 | コーディング規約（簡易版） (r3) | コーディング規約 |
+| E-03 | 共通ライブラリ(pkg)設計書 (r3) | 共通ライブラリ（pkg） |
 
 ### 1.4 準拠規格
 
@@ -301,7 +301,7 @@ ENTRYPOINT ["/usr/local/bin/vector-api"]
 |---------|------|-------------|
 | `vector.go` | ベクター生成・再同期ユースケース（統合） | `VectorUseCase`, `GenerateVector()`, `processResync()` |
 | `interfaces.go` | ユースケース層インターフェース定義 | `MilenageCalculator`, `ResyncProcessor`, `SQNManager`, `SubscriberRepository`, `TestVectorProvider` |
-| `error.go` | ユースケースエラー型定義 | `ProblemError`, `ErrSubscriberNotFound`, `ErrSQNConflict` 等 |
+| `error.go` | ユースケースエラー型定義 | `ProblemError`, `ErrSubscriberNotFound`, `ErrResyncMACFailed` 等（`ErrSQNConflict` はSQN競合制御が未実装のため定義なし） |
 | `mock_interfaces.go` | テスト用モックインターフェース | 各インターフェースのモック実装 |
 
 #### `internal/milenage/`
@@ -1156,13 +1156,13 @@ func (v *Validator) ComputeResyncSQN(sqnMS uint64) (uint64, error) {
 
 ### 7.5 SQN競合制御の検討
 
-以下の3方式を検討していたが、1. の **WATCH/MULTIによるCAS（Compare-And-Swap）方式** を採用する。
+以下の3方式を検討していたが、1. の **WATCH/MULTIによるCAS（Compare-And-Swap）方式** を採用する（**設計済み・未実装**。現行実装は `internal/store/subscriber.go` の `UpdateSQN` による単純な HSET で、後勝ちとなる。D-02 §2.A 参照）。
 
 1. **楽観的ロック**: WATCHコマンドによるCAS操作
 2. **分散ロック**: Redlock等による排他制御
 3. **INDベース完全分離**: リクエストソース毎にINDを割り当て、カウンタを完全に独立管理
 
-方式1の詳細については、セクション13.6: SQN競合制御 を参照すること。
+方式1の詳細については、セクション13.6: SQN競合制御 を参照すること。現行実装では競合制御を行わないため、同一IMSIへの並行リクエストでは SQN が同値になる・飛ぶ可能性がある（PoCの制約）。
 
 ---
 
@@ -1230,6 +1230,8 @@ func (s *SubscriberStore) UpdateSQN(ctx context.Context, imsi string, sqn string
 ```
 
 ### 8.3 リトライ処理
+
+> **注記（実装状況）:** `GetWithRetry` は実装されているが、現行コードから呼び出されていない（ユースケースは `Get` を使用）。このため下記の `VALKEY_CONN_ERR`（WARN、`Valkey connection failed, retrying`）は出力されない（D-04 §3.4.1）。
 
 ```go
 // internal/store/subscriber.go (リトライ付き)
@@ -1470,8 +1472,8 @@ D-06に基づく障害時動作:
 
 | 障害種別 | 検出条件 | 対処 | HTTP応答 |
 |---------|---------|------|---------|
-| 接続失敗 | TCP接続エラー | リトライ（2回） | 500 Internal Server Error |
-| コマンドタイムアウト | 応答なし（2秒超過） | リトライ | 500 Internal Server Error |
+| 接続失敗 | TCP接続エラー | アプリ独自のリトライなし（§8.3 の `GetWithRetry` は未使用） | 500 Internal Server Error（ERROR: `VALKEY_CONN_ERR`） |
+| コマンドタイムアウト | 応答なし（2秒超過） | 同上 | 500 Internal Server Error（ERROR: `VALKEY_CONN_ERR`） |
 
 ---
 
@@ -1652,16 +1654,19 @@ D-04で定義されたVector API用event_id:
 
 | event_id | レベル | 説明 |
 |----------|--------|------|
-| `CALC_OK` | INFO | ベクター生成成功 |
-| `CALC_ERR` | INFO/WARN/ERROR | 計算・データエラー |
-| `SQN_RESYNC` | INFO | SQN再同期成功 |
-| `SQN_RESYNC_MAC_ERR` | WARN | AUTS MAC検証失敗 |
-| `SQN_RESYNC_FORMAT_ERR` | WARN | AUTS形式不正 |
-| `SQN_RESYNC_DELTA_ERR` | WARN | SQNデルタ超過 |
-| `SQN_RESYNC_DECODE_ERR` | WARN | SQN抽出失敗 |
+| `CALC_OK` | INFO | ベクター生成成功（テストベクターモードではユースケース層の `test vector generated` も出力） |
+| `CALC_ERR` | INFO/WARN/ERROR | 計算・データエラー（リクエスト不正・IMSI形式不正=WARN、IMSI不在=INFO、Milenage計算エラー・予期しないエラー=ERROR） |
+| `SQN_RESYNC` | INFO | SQN再同期成功（ユースケース層。`trace_id`・`imsi` なし） |
+| `SQN_RESYNC_MAC_ERR` | WARN | AUTS MAC検証失敗（AUTSからのSQN抽出失敗を含む） |
+| `SQN_RESYNC_FORMAT_ERR` | WARN | AUTS形式不正（RAND/AUTSのHexデコード失敗を含む） |
+| `SQN_RESYNC_DELTA_ERR` | WARN | SQNデルタ超過（ユースケース層・ハンドラー層の2行） |
 | `SQN_OVERFLOW_ERR` | ERROR | SQNオーバーフロー |
-| `VALKEY_CONN_ERR` | ERROR | Valkey接続失敗 |
-| `VALKEY_CONN_RESTORED` | INFO | Valkey接続復旧 |
+| `VALKEY_CONN_ERR` | ERROR | 加入者取得・SQN更新時のValkeyエラー（500返却） |
+| `TEST_SQN_FALLBACK` | INFO | テストベクターモードでSQN取得不可のためデフォルトSQNを使用 |
+| `TEST_SQN_PARSE_ERR` | WARN | テストベクターモードでSQN解析失敗 |
+| `TEST_SQN_PERSIST_ERR` | WARN | テストベクターモードでSQN書き戻し失敗 |
+
+> **注記:** 各event_idの `msg`・属性はD-04 §3.4を参照。起動時のValkey接続失敗は event_id なしの `failed to connect to Valkey` で出力する。Valkey接続の復旧検知ログは出力しない。`SQN_CONFLICT_RETRY` / `SQN_CONFLICT_ERR` は §13.6 で設計済みだが**未実装**のため出力されない。
 
 ### 11.2 ログ出力例
 
@@ -1676,12 +1681,11 @@ D-04で定義されたVector API用event_id:
   "trace_id": "550e8400-e29b-41d4-a716-446655440000",
   "event_id": "CALC_OK",
   "imsi": "440101********0",
-  "method": "POST",
-  "path": "/api/v1/vector",
-  "latency_ms": 15,
   "http_status": 200
 }
 ```
+
+> **注記:** `CALC_OK` は `method`・`path`・`latency_ms` を持たない。リクエスト全体の処理時間はミドルウェアの `request completed`（event_id なし）の `latency_ms` で確認する。
 
 #### IMSI未登録時
 
@@ -1694,8 +1698,6 @@ D-04で定義されたVector API用event_id:
   "trace_id": "550e8400-e29b-41d4-a716-446655440001",
   "event_id": "CALC_ERR",
   "imsi": "440109********0",
-  "method": "POST",
-  "path": "/api/v1/vector",
   "http_status": 404
 }
 ```
@@ -1708,7 +1710,6 @@ D-04で定義されたVector API用event_id:
   "level": "INFO",
   "app": "vector-api",
   "msg": "SQN resync successful",
-  "trace_id": "550e8400-e29b-41d4-a716-446655440002",
   "event_id": "SQN_RESYNC",
   "sqn_old": "000000000020",
   "sqn_ms": "000000000060",
@@ -1718,13 +1719,14 @@ D-04で定義されたVector API用event_id:
 
 #### デルタ超過時
 
+ユースケース層のログ（`trace_id`・`imsi` なし。再同期成功時の `SQN_RESYNC` も同様）。続いてハンドラー層から `SQN_RESYNC_DELTA_ERR`（msg `SQN delta exceeded`、`trace_id`, `imsi`, `http_status`=400）が出力される。
+
 ```json
 {
   "time": "2026-01-14T10:00:01.123Z",
   "level": "WARN",
   "app": "vector-api",
   "msg": "SQN delta validation failed",
-  "trace_id": "550e8400-e29b-41d4-a716-446655440003",
   "event_id": "SQN_RESYNC_DELTA_ERR",
   "sqn_ms": "100000000000",
   "sqn_he": "000000000020",
@@ -1876,6 +1878,7 @@ type VectorUseCase interface {
 |------|------|---------|
 | 認証ベクター長 | XRES固定長（8バイト） | 可変長対応 |
 | インクリメントパターン | IND固定・SEQのみインクリメント | IMSI単位でパターン指定可能 |
+| SQN競合制御 | 未実装（単純な HSET による後勝ち。同一IMSIへの並行リクエストで SQN が同値になる・飛ぶ可能性がある） | §13.6 のCAS方式（設計済み） |
 
 ### 13.4 テスト戦略
 
@@ -2053,9 +2056,11 @@ docker compose logs vector-api | grep TEST_VECTOR
 
 ### 13.6 SQN競合制御
 
+> **実装状況: 設計済み・未実装。** 本節（§13.6.1〜§13.6.8）は設計であり、現行実装には反映されていない。現行実装は `internal/store/subscriber.go` の `UpdateSQN` による単純な HSET（`HSET sub:{IMSI} sqn {新SQN}`）で SQN を書き戻し、WATCH/MULTI による CAS・リトライ・HTTP 409 Conflict・`SQN_CONFLICT_RETRY` / `SQN_CONFLICT_ERR` ログはいずれも実装していない（後勝ち）。同一IMSIへの並行リクエストでは SQN が同値になる・飛ぶ可能性がある（PoCの制約。D-02 §2.A、D-04 §3.4.4 参照）。現行の処理は §10.1 を参照。
+
 #### 13.6.1 概要
 
-同一IMSIへの並行Access-Request（リトライ/再送含む）でSQNが巻き戻る/飛ぶリスクを回避するため、WATCH/MULTIによるCAS（Compare-And-Swap）方式を採用する。
+同一IMSIへの並行Access-Request（リトライ/再送含む）でSQNが巻き戻る/飛ぶリスクを回避するため、WATCH/MULTIによるCAS（Compare-And-Swap）方式を採用する（設計済み・未実装）。
 
 #### 13.6.2 方式詳細
 
@@ -2081,7 +2086,7 @@ docker compose logs vector-api | grep TEST_VECTOR
         ├─ リトライ < 上限 → 手順1へ
         └─ リトライ >= 上限 → 409 Conflict
 
-#### 13.6.4 エラー応答（競合上限超過時）
+#### 13.6.4 エラー応答（競合上限超過時。未実装）
 
 ```json
 {
@@ -2092,7 +2097,7 @@ docker compose logs vector-api | grep TEST_VECTOR
 }
 ```
 
-#### 13.6.5 実装例
+#### 13.6.5 実装例（設計。未実装）
 
 ```go
 // internal/store/subscriber.go
@@ -2188,7 +2193,7 @@ func formatSQNHex(v uint64) string {
 }
 ```
 
-#### 13.6.6 ユースケース層の変更
+#### 13.6.6 ユースケース層の変更（設計。未実装）
 
 ```go
 // internal/usecase/vector.go
@@ -2239,7 +2244,7 @@ func (u *VectorUseCase) GenerateVector(ctx context.Context, req *dto.VectorReque
 }
 ```
 
-#### 13.6.7 エラー定義追加
+#### 13.6.7 エラー定義追加（設計。未実装）
 
 ```go
 // internal/usecase/errors.go
@@ -2250,7 +2255,7 @@ var (
 )
 ```
 
-#### 13.6.8 ハンドラー層のエラーマッピング
+#### 13.6.8 ハンドラー層のエラーマッピング（設計。未実装）
 
 ```go
 // internal/handler/vector.go
@@ -2286,3 +2291,4 @@ func (h *VectorHandler) HandleVector(c *gin.Context) {
 | r4 | 2026-01-26 | インフラ基盤統一: セクション2.6新設（Dockerfile方針 - ベースイメージdebian:bookworm-slim、curl/ca-certificates導入、ヘルスチェックcurl -fsS）。これに伴い、旧 2.6 ファイル別責務詳細 のセクション番号を 2.7 に移行 |
 | r5 | 2026-01-27 | 本番環境注記追加: セクション13.5.1にテストベクターモードの本番無効化要件を新設、関連ドキュメント参照バージョン更新、D-08への参照追加 |
 | r6 | 2026-02-18 | ディレクトリ構造全面更新、usecase統合反映、関連ドキュメント版数更新 |
+| r7 | 2026-10-04 | D-04 r19 の event_id 全面整合に合わせて修正: §11.1 event_id一覧から実装に存在しない `SQN_RESYNC_DECODE_ERR`（AUTSからのSQN抽出失敗は `SQN_RESYNC_MAC_ERR`）と `VALKEY_CONN_RESTORED` を削除し、`TEST_SQN_FALLBACK` / `TEST_SQN_PARSE_ERR` / `TEST_SQN_PERSIST_ERR` を追加、各説明を実装に合わせて修正。§11.2 ログ出力例を実装の属性に修正（`CALC_OK` / `CALC_ERR` から `method`・`path`・`latency_ms` を削除、ユースケース層の `SQN_RESYNC` / `SQN_RESYNC_DELTA_ERR` から `trace_id` を削除）。SQN競合制御（WATCH/MULTI による CAS、リトライ上限3回、HTTP 409、`SQN_CONFLICT_RETRY` / `SQN_CONFLICT_ERR`）は設計を残したまま「設計済み・未実装（現行は単純な HSET による後勝ち）」と明記（§7.5、§13.3、§13.6 冒頭・各見出し、§2.7 の `ErrSQNConflict` 記載、§1.3）。§8.3 `GetWithRetry` が未使用でリトライログが出力されない旨を注記し、§9.4 のリトライ記載を修正。§1.3 関連ドキュメントの版数を現行版に更新（D-01 r10、D-02 r12、D-03 r6、D-04 r19、D-06 r7、D-07 r8、D-08 r14、D-12 r5、E-02 r3。Auth Server詳細設計書の文書番号を D-09 に修正）。関連ドキュメント表の E-03 を実在の文書名（共通ライブラリ(pkg)設計書）に修正 |

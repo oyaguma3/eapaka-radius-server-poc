@@ -1,8 +1,13 @@
 # INT-AUTH-AKA-006対応: IMSI未登録による拒否
 # Valkeyに登録されていないIMSIで認証を試行
 # config: config_testvector.yaml（identityをケース側で上書き）
+# IMSI: 001029999999999（PLMN 00102。TEST_VECTOR_IMSI_PREFIX=00101 に一致しないためテストベクター対象外）
+# 動作: PLMNマップ未登録 → BackendID 00（内部Vector API）→ sub:001029999999999 なし → 404
+#       → Auth Server VECTOR_IMSI_NOT_FOUND → Access-Reject
+# 備考: 以前の IMSI 001019999999999 はテストベクター対象のため、テストベクターモードでは未登録でもベクターが
+#       生成され、ポリシー未登録（AUTH_POLICY_NOT_FOUND）で Reject されていた（理由が違うため変更）
 version: 1
 name: reject_imsi_not_found
-identity: "0001019999999999@wlan.mnc001.mcc001.3gppnetwork.org"
+identity: "0001029999999999@wlan.mnc002.mcc001.3gppnetwork.org"
 expect:
   result: reject

@@ -605,7 +605,7 @@ func main() {
     // 3. Valkeyクライアント初期化
     valkeyClient, err := store.NewValkeyClient(cfg)
     if err != nil {
-        slog.Error("failed to connect to valkey",
+        slog.Error("Valkey接続失敗",
             "event_id", "VALKEY_CONN_ERR",
             "error", err)
         os.Exit(1)
@@ -705,26 +705,29 @@ Auth Serverにおいて、以下のevent_idを含むログ出力時にマスキ�
 
 | event_id | 出力箇所 | imsiフィールド |
 |----------|---------|---------------|
-| `AUTH_OK` | 認証成功時 | マスキング対象 |
-| `AUTH_RES_MISMATCH` | AT_RES不一致時 | マスキング対象 |
-| `AUTH_MAC_INVALID` | AT_MAC検証失敗時 | マスキング対象 |
+| `AUTH_SUCCESS` | 認証成功時 | マスキング対象 |
+| `AUTH_RES_MISMATCH` / `AUTH_MAC_INVALID` / `AUTH_VERIFY_FAIL` | Challenge応答検証失敗時 | マスキング対象 |
+| `EAP_CHALLENGE_SENT` / `EAP_RESYNC_CHALLENGE` | Challenge送信時 / 再同期Challenge送信時 | マスキング対象 |
+| `EAP_AUTH_REJECT` / `EAP_CLIENT_ERROR` | Authentication-Reject / Client-Error受信時 | マスキング対象 |
+| `EAP_PARSE_ERR`（`AT_AUTSが見つからない`） | Synchronization-FailureにAT_AUTSなし | マスキング対象 |
+| `EAP_CTX_CREATE_ERR`（永続ID受信時） / `EAP_KEY_DERIVE_ERR` | EAPコンテキスト作成失敗 / AKA'鍵導出失敗時 | マスキング対象 |
 | `VECTOR_IMSI_NOT_FOUND` | IMSI未登録時（Vector Gatewayが404を返却） | マスキング対象 |
 | `VECTOR_API_ERR` / `VECTOR_CONN_ERR` / `VECTOR_CB_OPEN` / `VECTOR_UNKNOWN_ERR` | Vector Gateway呼び出しエラー時（認証エンジン出力分。§7.8.3参照） | マスキング対象 |
 | `AUTH_POLICY_NOT_FOUND` | ポリシー未設定時 | マスキング対象 |
 | `AUTH_POLICY_DENIED` | ポリシー拒否時 | マスキング対象 |
 | `AUTH_RESYNC_LIMIT` | 再同期上限超過時 | マスキング対象 |
-| `SESSION_CREATED` | セッション作成時 | マスキング対象 |
+
+> **注記:** `EAP_UNSUPPORTED_TYPE` / `EAP_IDENTITY_INVALID` は IMSI を抽出できない Identity を `user_name` 属性に**マスクせず**出力する（D-04 §4.5）。セッション作成成功時の専用ログはない（`AUTH_SUCCESS` の `session_id` で確認する）。
 
 **実装例:**
 
 ```go
-// 認証成功時のログ出力
-slog.Info("authentication successful",
-    "event_id", "AUTH_OK",
+// 認証成功時のログ出力（internal/engine/engine.go）
+slog.Info("認証成功",
+    "event_id", "AUTH_SUCCESS",
     "trace_id", traceID,
     "imsi", logging.MaskIMSI(imsi, cfg.LogMaskIMSI),
-    "session_uuid", sessionID,
-    "latency_ms", latency.Milliseconds())
+    "session_id", sessionID)
 ```
 
 #### 3.5.5 注意事項
@@ -830,7 +833,7 @@ func NewClient(cfg *config.Config) *Client {
 
 - リクエスト単位で `trace_id` を付与
 - `context.WithValue` でTrace IDを伝搬
-- 各処理層でロガーを生成する際に `slog.With("trace_id", traceID)` を使用
+- `slog.With` によるロガー生成は行わず、各ログ呼び出しで `"trace_id", traceID` を明示的に渡す（D-04 §4.1）
 
 ### 3.9 シャットダウン処理
 
@@ -972,7 +975,7 @@ PacketServer
 | サーバー起動   | -                  | INFO            | リッスンアドレス       |
 | Secret解決失敗 | `RADIUS_NO_SECRET` | WARN            | 送信元IP               |
 | パケット受信   | `PKT_RECV`         | INFO            | 送信元IP、RADIUSコード |
-| 処理完了       | `AUTH_OK` 等       | INFO/WARN/ERROR | 結果に応じたevent_id   |
+| 処理完了       | `AUTH_SUCCESS` 等  | INFO/WARN/ERROR | 結果に応じたevent_id   |
 
 ### 4.7 依存関係
 
@@ -1028,9 +1031,11 @@ server/
 
 | 条件                  | event_id           | レベル              |
 | --------------------- | ------------------ | ------------------- |
-| Valkey検索成功        | -                  | DEBUG（出力しない） |
-| フォールバック使用    | -                  | DEBUG               |
-| Secret不明（nil返却） | `RADIUS_NO_SECRET` | WARN                |
+| Valkey検索成功        | -                  | なし                |
+| フォールバック使用    | -                  | なし                |
+| 送信元IP抽出不可      | `RADIUS_IP_EXTRACT_ERR` | WARN（`remote_addr`） |
+| Valkey検索エラー      | `RADIUS_SECRET_ERR` | WARN（`src_ip`, `error`） |
+| Secret不明（nil返却） | `RADIUS_NO_SECRET` | WARN（`src_ip`）    |
 
 ### 5.3 Handler実装
 
@@ -1065,7 +1070,7 @@ type Handler interface {
 - `google/uuid` で UUIDv4 を生成
 - `context.WithValue` でコンテキストに格納
 - 以降の全処理でこのコンテキストを使用
-- ログ出力時は `slog.With("trace_id", traceID)` を使用
+- ログ出力時は `slog.With` を使わず、各ログ呼び出しで `"trace_id", traceID` を明示的に渡す（D-04 §4.1）
 
 **注意点：**
 
@@ -1248,7 +1253,7 @@ func (ps *ProxyStates) Apply(p *radius.Packet)
 **注意点：**
 
 - Status-Server は認証処理ではなく死活監視用
-- ログ出力は INFO レベル（`PKT_RECV` 相当）
+- ログ出力は受信時の `PKT_RECV`（INFO）に加え、応答時に `RADIUS_STATUS_OK`（INFO）、Message-Authenticator検証失敗時に `RADIUS_STATUS_AUTH_FAIL`（WARN。応答なし）
 - Valkey/Vector Gateway の状態確認は行わない（シンプルな応答）
 
 ### 5.9 処理フロー図
@@ -1297,11 +1302,20 @@ PacketServer
 
 | 処理                          | event_id              | レベル | 追加フィールド          |
 | ----------------------------- | --------------------- | ------ | ----------------------- |
-| Access-Request受信            | `PKT_RECV`            | INFO   | `src_ip`, `packet_code` |
-| Status-Server受信             | `PKT_RECV`            | INFO   | `src_ip`, `packet_code` |
-| Message-Authenticator検証失敗 | `RADIUS_AUTH_ERR`     | WARN   | `src_ip`                |
+| RADIUSパケット受信（全Code）  | `PKT_RECV`            | INFO   | `trace_id`, `src_ip`, `code` |
+| Message-Authenticator検証失敗 | `PKT_MA_INVALID`      | WARN   | `trace_id`, `src_ip`    |
+| EAP-Message属性なし           | `PKT_NO_EAP`          | WARN   | `trace_id`, `src_ip`    |
+| 未知のCode                    | `PKT_UNKNOWN_CODE`    | WARN   | `trace_id`, `code`      |
+| EAPエンジンエラー             | `EAP_ENGINE_ERR`      | ERROR  | `trace_id`, `error`     |
+| パケットドロップ              | `PKT_DROP`            | INFO   | `trace_id`              |
+| 応答送信失敗                  | `PKT_SEND_ERR`        | ERROR  | `trace_id`, `error`     |
+| Status-Server応答             | `RADIUS_STATUS_OK`    | INFO   | `trace_id`, `src_ip`    |
+| Status-Server MA検証失敗      | `RADIUS_STATUS_AUTH_FAIL` | WARN | `trace_id`, `src_ip`  |
+| 送信元IP抽出不可              | `RADIUS_IP_EXTRACT_ERR` | WARN | `remote_addr`           |
+| Secret解決時のValkeyエラー    | `RADIUS_SECRET_ERR`   | WARN   | `src_ip`, `error`       |
 | Secret不明                    | `RADIUS_NO_SECRET`    | WARN   | `src_ip`                |
-| 未知のCode                    | `RADIUS_UNKNOWN_CODE` | WARN   | `src_ip`, `code`        |
+
+> **注記:** RADIUSパケットのデコード失敗は `layeh.com/radius` が処理し、ログは出力しない。
 
 ### 5.11 実装時の注意点まとめ
 
@@ -1634,7 +1648,8 @@ D-03 r3準拠の状態遷移図。
 
 - 状態遷移はEAPコンテキスト（Valkey）の`stage`フィールドで管理
 - 各ハンドラは現在の状態を検証してから処理
-- 不正な状態遷移は`EAP_INVALID_STATE`ログ出力後、Failure
+- 不正な状態での受信は WARN ログ出力後、Failure（`CHALLENGE_SENT` 以外での Challenge応答／Synchronization-Failure受信は `EAP_STATE_ERR`、`WAITING_IDENTITY` 以外での AKA-Identity受信は `EAP_UNEXPECTED_IDENTITY`。属性は `trace_id`, `stage`）
+- 状態遷移表（`ValidateTransition`）による検証失敗は `EAP_STATE_ERR`（ERROR、`trace_id`, `error`）を出力後、Failure
 
 ### 6.6 EAPコンテキスト管理
 
@@ -2071,11 +2086,10 @@ func extractAUTS(pkt *eapaka.Packet) ([]byte, error) {
 
 **処理フロー：**
 
-1. Identity種別判定で仮名/再認証IDと判定
-2. `EAP_PSEUDONYM_FALLBACK` ログ出力
-3. EAPコンテキスト作成（`permanent_id_requested=true`）
-4. EAP-Request/AKA-Identity送信（AT_PERMANENT_ID_REQ含む）
-5. 永続ID応答を待機
+1. Identity種別判定で仮名/再認証IDと判定（フル認証誘導の専用ログは出力しない）
+2. EAPコンテキスト作成（`permanent_id_requested=true`）
+3. EAP-Request/AKA-Identity送信（AT_PERMANENT_ID_REQ含む）
+4. 永続ID応答を待機
 
 **AKA-Identity構築：**
 
@@ -2848,17 +2862,18 @@ func generateMPPEKeys(
 **処理：**
 
 1. ポリシー取得で `ErrPolicyNotFound`
-2. `AUTH_POLICY_NOT_FOUND` ログ出力
+2. `AUTH_POLICY_NOT_FOUND`（WARN）ログ出力
 3. Access-Reject（EAP-Failure含む）送信
 
 ### 8.8 エラーハンドリング
 
 | エラー種別          | 検出条件                        | 対処        | ログ                          |
 | ------------------- | ------------------------------- | ----------- | ----------------------------- |
-| ポリシー未設定      | `policy:{IMSI}` 不在            | Reject      | INFO: `AUTH_POLICY_NOT_FOUND` |
-| ポリシー不正        | JSONパース失敗                  | Reject      | WARN: `POLICY_PARSE_ERR`      |
-| ルール不一致        | 全ルール評価後マッチなし + deny | Reject      | INFO: `AUTH_POLICY_DENIED`    |
-| NAS-ID/SSID取得失敗 | AVP不在                         | default判定 | DEBUG                         |
+| ポリシー未設定      | `policy:{IMSI}` 不在            | Reject      | WARN: `AUTH_POLICY_NOT_FOUND` |
+| ポリシー不正        | JSONパース失敗                  | Reject      | WARN: `AUTH_POLICY_NOT_FOUND`（`error` 属性で区別） |
+| Valkeyエラー        | ポリシー取得時のValkeyエラー    | Reject      | WARN: `AUTH_POLICY_NOT_FOUND`（`error` 属性で区別） |
+| ルール不一致        | 全ルール評価後マッチなし + deny | Reject      | WARN: `AUTH_POLICY_DENIED`    |
+| NAS-ID/SSID取得失敗 | AVP不在                         | default判定 | なし                          |
 
 ### 8.9 処理フロー図
 
@@ -2874,7 +2889,7 @@ Challenge応答検証成功
     │       │
     │       ├── [ErrPolicyInvalid]
     │       │       │
-    │       │       ├── ログ: POLICY_PARSE_ERR
+    │       │       ├── ログ: AUTH_POLICY_NOT_FOUND
     │       │       └── → Access-Reject
     │       │
     │       └── [成功] → Policy取得
@@ -2908,11 +2923,12 @@ Challenge応答検証成功
 
 | 処理                  | event_id                | レベル | 追加フィールド                      |
 | --------------------- | ----------------------- | ------ | ----------------------------------- |
-| ポリシー未設定        | `AUTH_POLICY_NOT_FOUND` | INFO   | `imsi`                              |
-| ポリシーパースエラー  | `POLICY_PARSE_ERR`      | WARN   | `imsi`, `error`                     |
-| ルール不一致でDeny    | `AUTH_POLICY_DENIED`    | INFO   | `imsi`, `nas_id`, `ssid`            |
-| ルール一致でAccept    | -                       | DEBUG  | `imsi`, `nas_id`, `ssid`, `vlan_id` |
-| default=allowでAccept | -                       | DEBUG  | `imsi`, `nas_id`, `ssid`            |
+| ポリシー未設定・パースエラー・Valkeyエラー | `AUTH_POLICY_NOT_FOUND` | WARN   | `trace_id`, `imsi`, `error`         |
+| ルール不一致でDeny    | `AUTH_POLICY_DENIED`    | WARN   | `trace_id`, `imsi`, `reason`        |
+| ルール一致でAccept    | -（`AUTH_SUCCESS` のみ）| -      | -                                   |
+| default=allowでAccept | -（`AUTH_SUCCESS` のみ）| -      | -                                   |
+
+> **注記:** ポリシーのJSONパース失敗専用のevent_idはなく、`AUTH_POLICY_NOT_FOUND` の `error` 属性で区別する。`AUTH_POLICY_DENIED` は `nas_id` / `ssid` を出力しない。Accept時のポリシー評価結果のログ（DEBUGを含む）は出力しない。
 
 ### 8.11 実装時の注意点まとめ
 
@@ -3356,12 +3372,12 @@ func (s *sessionStore) RefreshTTL(ctx context.Context, sessionID string) error {
 **EAPコンテキスト（TTL=60秒）：**
 
 - 自動削除される
-- Challenge応答受信時にコンテキスト不在 → `EAP_CONTEXT_NOT_FOUND`ログ、EAP-Failure
+- Challenge応答受信時にコンテキスト不在 → `EAP_CTX_NOT_FOUND`ログ（WARN。不在とTTL超過は区別できない）、EAP-Failure
 
 **セッション（TTL=24時間）：**
 
 - 自動削除される
-- Acct Interim/Stop受信時にセッション不在 → `ACCT_SESSION_EXPIRED`ログ、Accounting-Response返却（D-02準拠）
+- Acct Start受信時にセッション不在 → `ACCT_SESSION_NOT_FOUND`ログ（WARN。不在とTTL超過は区別できない）、Accounting-Response返却。Interim/Stop時は不在のログを出力しない（D-02 §2.E、D-04 §3.2.3準拠）
 
 ### 9.6 Valkey操作ユーティリティ
 
@@ -3560,9 +3576,9 @@ var (
 
 | エラー                 | 検出タイミング       | 対処        | ログ                    |
 | ---------------------- | -------------------- | ----------- | ----------------------- |
-| `ErrContextNotFound`   | Challenge応答受信時  | EAP-Failure | `EAP_CONTEXT_NOT_FOUND` |
-| `ErrContextInvalid`    | コンテキストパース時 | EAP-Failure | `EAP_CONTEXT_INVALID`   |
-| `ErrValkeyUnavailable` | 全Valkey操作時       | EAP-Failure | `VALKEY_CONN_ERR`       |
+| `ErrContextNotFound`   | Challenge応答受信時  | EAP-Failure | `EAP_CTX_NOT_FOUND`     |
+| `ErrContextInvalid`    | コンテキストパース時 | EAP-Failure | `EAP_CTX_NOT_FOUND`（`error` 属性で区別） |
+| `ErrValkeyUnavailable` | 全Valkey操作時       | EAP-Failure | 処理箇所に応じたevent_id（`EAP_CTX_NOT_FOUND` / `EAP_CTX_CREATE_ERR` / `EAP_CTX_UPDATE_ERR` / `AUTH_POLICY_NOT_FOUND` / `SESSION_CREATE_ERR` / `SESSION_INDEX_ERR` / `RADIUS_SECRET_ERR`）。実行時の `VALKEY_CONN_ERR` は出力しない |
 
 #### 9.8.3 Valkey接続エラー時の再試行
 
@@ -3601,11 +3617,17 @@ func isRetryableError(err error) bool {
 
 | 処理                    | event_id                | レベル | 追加フィールド       |
 | ----------------------- | ----------------------- | ------ | -------------------- |
-| EAPコンテキスト作成     | -                       | DEBUG  | `trace_id`, `imsi`   |
-| EAPコンテキスト取得失敗 | `EAP_CONTEXT_NOT_FOUND` | WARN   | `trace_id`           |
-| セッション作成          | `SESSION_CREATED`       | INFO   | `session_id`, `imsi` |
-| Valkey接続エラー        | `VALKEY_CONN_ERR`       | ERROR  | `error`              |
-| Valkey接続復旧          | `VALKEY_CONN_RESTORED`  | INFO   | -                    |
+| EAPコンテキスト作成     | -                       | -      | -（成功時のログなし）|
+| EAPコンテキスト作成失敗 | `EAP_CTX_CREATE_ERR`    | ERROR  | `trace_id`, `error`（永続ID受信時は `imsi` も） |
+| EAPコンテキスト更新失敗 | `EAP_CTX_UPDATE_ERR`    | ERROR  | `trace_id`, `error`  |
+| EAPコンテキスト取得失敗 | `EAP_CTX_NOT_FOUND`     | WARN   | `trace_id`, `error`  |
+| EAPコンテキスト値の復元失敗 | `EAP_CTX_DECODE_ERR` | ERROR | `trace_id`, `error`  |
+| セッション作成          | -                       | -      | -（成功時の専用ログなし。`AUTH_SUCCESS` の `session_id` で確認） |
+| セッション作成失敗      | `SESSION_CREATE_ERR`    | ERROR  | `trace_id`, `error`  |
+| ユーザーインデックス追加失敗 | `SESSION_INDEX_ERR` | WARN  | `trace_id`, `error`（認証は継続） |
+| Valkey接続エラー（起動時） | `VALKEY_CONN_ERR`    | ERROR  | `error`（プロセス終了） |
+
+> **注記:** Valkey接続の復旧検知ログは出力しない（D-04 §4.3）。
 
 ### 9.10 実装時の注意点まとめ
 
@@ -4523,4 +4545,4 @@ Auth Server内で直接参照する外部パッケージの型：
 | r7 | 2026-01-27 | API接続設計統一: VECTOR_API_URL環境変数の説明にD-03参照と設定例を追加、関連ドキュメント版数更新（D-03 r3→r4） |
 | r8 | 2026-01-27 | ヘルスチェック整合性修正: セクション2.6.1 Dockerfileに`procps`パッケージ追加、セクション2.6.3必須パッケージに`procps`追記（pgrep用） |
 | r9 | 2026-02-18 | ディレクトリ構造全面更新、ポリシー評価ロジック更新、関連ドキュメント版数更新 |
-| r10 | 2026-10-04 | 既存記載の実装との不一致を修正: Vector Gateway 404時のevent_idを `AUTH_IMSI_NOT_FOUND` → `VECTOR_IMSI_NOT_FOUND` に修正（§3.5.4、§7.8.3）、§7.8.3の呼び出し元でのevent_id表を実装（engine.go `logVectorError`）に合わせて更新（`VECTOR_CONN_ERR` / `VECTOR_CB_OPEN` / `VECTOR_UNKNOWN_ERR` 追加、HTTPクライアント層との2行出力を注記）、§7.8.1に403/409を追加、§7.10のCBログ属性を実装に合わせて修正（`CB_CLOSE` の `recovery_time_ms` 削除、`failure_count` は常に0）、§7.4.2のエラー応答例（404）のdetailを実装の文言に修正、関連ドキュメント版数更新（D-01 r10、D-03 r6、D-04 r19、D-06 r7、D-08 r14、D-12 r5、E-02 r3） |
+| r10 | 2026-10-04 | 既存記載の実装との不一致を修正: Vector Gateway 404時のevent_idを `AUTH_IMSI_NOT_FOUND` → `VECTOR_IMSI_NOT_FOUND` に修正（§3.5.4、§7.8.3）、§7.8.3の呼び出し元でのevent_id表を実装（engine.go `logVectorError`）に合わせて更新（`VECTOR_CONN_ERR` / `VECTOR_CB_OPEN` / `VECTOR_UNKNOWN_ERR` 追加、HTTPクライアント層との2行出力を注記）、§7.8.1に403/409を追加、§7.10のCBログ属性を実装に合わせて修正（`CB_CLOSE` の `recovery_time_ms` 削除、`failure_count` は常に0）、§7.4.2のエラー応答例（404）のdetailを実装の文言に修正、関連ドキュメント版数更新（D-01 r10、D-03 r6、D-04 r19、D-06 r7、D-08 r14、D-12 r5、E-02 r3）。D-04 r19 の event_id 全面整合に合わせて修正（§3.5.4 マスキング適用表・実装例の `AUTH_OK` を `AUTH_SUCCESS`（属性 `trace_id`, `imsi`, `session_id`）に修正し実装にない `SESSION_CREATED` を削除、imsi を出力する event_id を追加、§4.6 の `AUTH_OK` を `AUTH_SUCCESS` に修正、§5.2 Secret解決ログに `RADIUS_IP_EXTRACT_ERR` / `RADIUS_SECRET_ERR` を追加、§5.10 の `RADIUS_AUTH_ERR` / `RADIUS_UNKNOWN_CODE` を `PKT_MA_INVALID` / `PKT_UNKNOWN_CODE` に修正し `PKT_RECV` の属性を `code` に修正、`PKT_NO_EAP` / `PKT_DROP` / `PKT_SEND_ERR` / `EAP_ENGINE_ERR` / `RADIUS_STATUS_OK` / `RADIUS_STATUS_AUTH_FAIL` を追加、§6.5.3 の `EAP_INVALID_STATE` を `EAP_STATE_ERR` / `EAP_UNEXPECTED_IDENTITY` に修正、§6.10 の `EAP_PSEUDONYM_FALLBACK` を削除（専用ログなし）、§8.7〜§8.10 の `POLICY_PARSE_ERR` を `AUTH_POLICY_NOT_FOUND` に統合し `AUTH_POLICY_NOT_FOUND` / `AUTH_POLICY_DENIED` を WARN・実装の属性に修正、§9.5.3 の `EAP_CONTEXT_NOT_FOUND` / `ACCT_SESSION_EXPIRED` を `EAP_CTX_NOT_FOUND` / `ACCT_SESSION_NOT_FOUND` に修正、§9.8.2/§9.9 の `EAP_CONTEXT_NOT_FOUND` / `EAP_CONTEXT_INVALID` / 実行時 `VALKEY_CONN_ERR` / `SESSION_CREATED` / `VALKEY_CONN_RESTORED` を実装の event_id に修正、起動時 `VALKEY_CONN_ERR` の msg を実装に合わせ、`slog.With` による trace_id 付与の記述を D-04 §4.1 に合わせて修正） |

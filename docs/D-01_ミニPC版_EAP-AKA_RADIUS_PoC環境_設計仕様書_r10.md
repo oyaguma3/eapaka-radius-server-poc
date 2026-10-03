@@ -115,7 +115,7 @@
 | 接続方式 | go-redis クライアントの接続プール機能を利用 |
 | 再接続 | go-redis の自動再接続機能に依存 |
 | ヘルスチェック | go-redis の自動ヘルスチェックに依存 |
-| 復旧検知 | アプリケーション側でコマンド成功時に復旧をログ出力（`VALKEY_CONN_RESTORED`） |
+| 復旧検知 | 復旧を検知するログは出力しない（実装なし）。Valkey 障害中は各処理のエラーログ（D-04 r19 参照）が出力され、復旧後は通常のログに戻る |
 
 > **注記：** Valkey接続断時の各コンポーネントの動作詳細は「エラーハンドリング詳細設計書」を参照。
 
@@ -532,4 +532,4 @@ VECTOR_GATEWAY_PLMN_MAP=""
 | r7 | 2026-01-27 | docker-compose.yml相対パス修正: セクション7のbuildパスを`./apps/...`→`../apps/...`に修正（D-08との整合性確保） |
 | r8 | 2026-01-27 | Fluent Bit設定ファイルの相対パス修正（`./configs/...`→`../configs/...`、deployments基準でD-08と整合） |
 | r9 | 2026-02-16 | 実装コードとの不整合20件を修正: データモデル注記追加（RadiusClient/Subscriber/Policy）、パッケージ利用マップ更新（envconfig/resty/tcell/mock/miniredis）、Valkeyキースキーマ概要追加、コンテナ構成詳細更新（healthcheck/fluent-bitポート/テストベクターモード/healthエンドポイント）、docker-compose.ymlを実装ファイルと完全同期、セットアップ手順のenvconfig記述修正 |
-| r10 | 2026-10-04 | Vector Gateway 接続方式ID `01`（外部の aka-only-server、mTLS、任意）対応: 2章構成図に aka-only-server を追加し注記追加、3.1 Vector Gateway の処理フロー更新、3.5に aka-only-server への接続設定追加、4章に Outbound 接続と証明書管理を追記、5章に vector-gateway の証明書マウントと docker-compose.aka-av.yml の注記追加、6章リポジトリ構成に docker-compose.aka-av.yml と certs/ を追加、7章 docker-compose.yml の vector-gateway に `VECTOR_GATEWAY_AKAONLY_*` と certs ボリュームを追加しオーバーレイを掲載、8章に `VECTOR_GATEWAY_AKAONLY_*`・`AKA_SHARED_NETWORK` と接続方式ID `01` を追加。既存記載の実装との不一致を修正（7章 docker-compose.yml を実ファイル全文と一致させた: build を `context: ..`＋`dockerfile: apps/<アプリ名>/Dockerfile` に、logging をアンカーのマージ＋サービスごとの `tag: "app.<サービス名>"` に、fluent-bit を `fluent/fluent-bit:4.2`・`command` 指定・`fluent-bit.yaml` マウントに修正し、vector-api に `TEST_VECTOR_ENABLED`／`TEST_VECTOR_IMSI_PREFIX` を追加。オーバーレイもコメント込みの全文に。5章の vector-api・fluent-bit 行と6章 configs/fluent-bit の構成を実装に合わせた） |
+| r10 | 2026-10-04 | Vector Gateway 接続方式ID `01`（外部の aka-only-server、mTLS、任意）対応: 2章構成図に aka-only-server を追加し注記追加、3.1 Vector Gateway の処理フロー更新、3.5に aka-only-server への接続設定追加、4章に Outbound 接続と証明書管理を追記、5章に vector-gateway の証明書マウントと docker-compose.aka-av.yml の注記追加、6章リポジトリ構成に docker-compose.aka-av.yml と certs/ を追加、7章 docker-compose.yml の vector-gateway に `VECTOR_GATEWAY_AKAONLY_*` と certs ボリュームを追加しオーバーレイを掲載、8章に `VECTOR_GATEWAY_AKAONLY_*`・`AKA_SHARED_NETWORK` と接続方式ID `01` を追加。既存記載の実装との不一致を修正（7章 docker-compose.yml を実ファイル全文と一致させた: build を `context: ..`＋`dockerfile: apps/<アプリ名>/Dockerfile` に、logging をアンカーのマージ＋サービスごとの `tag: "app.<サービス名>"` に、fluent-bit を `fluent/fluent-bit:4.2`・`command` 指定・`fluent-bit.yaml` マウントに修正し、vector-api に `TEST_VECTOR_ENABLED`／`TEST_VECTOR_IMSI_PREFIX` を追加。オーバーレイもコメント込みの全文に。5章の vector-api・fluent-bit 行と6章 configs/fluent-bit の構成を実装に合わせた）。Valkey 復旧検知ログ（`VALKEY_CONN_RESTORED`）は実装にないため記載を修正 |

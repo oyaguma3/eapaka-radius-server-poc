@@ -36,8 +36,8 @@ docs/supplement/eapaka_test/
 ├── S-01_eapaka_test利用ノウハウ_r2.md    # 本ドキュメント
 ├── configs/                               # 設定ファイル（5件）
 │   ├── example.yaml                       # サンプル設定ファイル
-│   ├── config_testvector.yaml             # テストベクターモード用（AMF=B9B9）
-│   ├── config_testvector_imsi003.yaml     # テストベクターIMSI 003専用（AMF=8000）
+│   ├── config_testvector.yaml             # テストベクターモード用（AMF=B9B9。IMSI 003 を含む全ケース）
+│   ├── config_testvector_imsi003.yaml     # 実計算モードで IMSI 003（AMF=8000）を使う場合専用
 │   ├── config_testsim.yaml                # テストSIM用
 │   └── config_commercial.yaml             # 商用確認済みテストSIM用
 └── testdata/
@@ -111,7 +111,9 @@ eapaka_test の設定ファイルは以下のセクションで構成される:
 
 ### 3.2 config_testvector.yaml
 
-テストベクターモード用の設定ファイル。3GPP TS 35.208 Test Set 1 のパラメータを使用する。
+テストベクターモード用の設定ファイル。3GPP TS 35.208 Test Set 1 のパラメータを使用する。テストベクターモード（`TEST_VECTOR_ENABLED=true`）では、IMSI 003 を使うケースを含め T-03 の全ケースでこの config を使う（セクション7.1）。
+
+> **テストベクターモードの動作（r2追記。実装: `apps/vector-api/internal/usecase/vector.go`）**: IMSI が `TEST_VECTOR_IMSI_PREFIX`（既定 `00101`）で始まると、Vector API は Ki / OPc / AMF を固定値（Test Set 1、AMF `B9B9`）にして計算し、`sub:{IMSI}` の `ki` / `opc` / `amf` は使わない。`sub:{IMSI}` は SQN の管理にだけ使い、キーがなければ既定 SQN `FF9BB4D0B607` から計算して（`TEST_SQN_FALLBACK`）`sqn` だけを書き込む。そのため、テストベクター対象の IMSI は Valkey に未登録でも 404 にならない。
 
 | パラメータ | 値 | 備考 |
 |:---------|:----|:-----|
@@ -124,7 +126,7 @@ eapaka_test の設定ファイルは以下のセクションで構成される:
 
 ### 3.3 config_testvector_imsi003.yaml
 
-IMSI 003 専用の設定ファイル。AMF が `8000` である点が `config_testvector.yaml` との主な違い。
+**実計算モード（`TEST_VECTOR_ENABLED=false`）専用**の IMSI 003 用設定ファイル。AMF が `8000` である点が `config_testvector.yaml` との主な違い。実計算モードでは Vector API が `sub:001010000000003` の Ki / OPc / AMF（`8000`）で計算するため、この config が必要になる。T-03 の結合テスト（テストベクターモード）では使わない。
 
 | パラメータ | config_testvector.yaml | config_testvector_imsi003.yaml |
 |:---------|:----------------------|:-------------------------------|
@@ -133,7 +135,7 @@ IMSI 003 専用の設定ファイル。AMF が `8000` である点が `config_te
 | sqn_initial_hex | `FF9BB4D0B607` | `000000000001` |
 | SQNストアパス | `/tmp/eapaka_test-sqn-testvector.json` | `/tmp/eapaka_test-sqn-testvector-imsi003.json` |
 
-> **AMF不一致に関する重要な注意**: IMSI 003（サーバー側AMF=8000）に対して `config_testvector.yaml`（AMF=B9B9）を使用すると、eapaka_test が AUTN 検証時に AMF ミスマッチを検出し認証フローが中断する。IMSI 003 を使用するシナリオでは必ず `config_testvector_imsi003.yaml` を使用すること。
+> **AMF不一致に関する重要な注意（r2改訂）**: テストベクターモードでは IMSI 003 も AMF が固定値 `B9B9` になるため、`config_testvector_imsi003.yaml`（AMF=8000）を使うと eapaka_test が AUTN 検証時に AMF ミスマッチ（`amf mismatch`）を検出し、ERROR（終了コード2）で中断する（2026-10-04 に確認）。テストベクターモードでは IMSI 003 のケースも `config_testvector.yaml` を使うこと。逆に実計算モードで IMSI 003 に `config_testvector.yaml`（AMF=B9B9）を使うと、同じく AMF ミスマッチで中断する。r1 で「IMSI 003 は必ず imsi003 用 config」としていたのは、当時 compose が vector-api に `TEST_VECTOR_ENABLED` を渡しておらず、テストベクターモードが実際には無効（実計算モード）だったためである。
 
 ### 3.4 その他の設定ファイル
 
@@ -208,8 +210,8 @@ EAP-AKA / AKA' 認証の基本フローを検証する。`identity` フィール
 #### 異常系（2件）
 
 認証失敗パターンを検証する:
-- `mismatch_strict_fail.yaml`: `method_mismatch_policy: "strict"` でEAP方式ミスマッチ時にRejectを期待
-- `reject_imsi_not_found.yaml`: Valkey 未登録 IMSI での認証試行
+- `mismatch_strict_fail.yaml`: `method_mismatch_policy: "strict"` でEAP方式ミスマッチ時にRejectを期待するケース。ただし Auth Server は identity の先頭文字（`0` = EAP-AKA、`6` = EAP-AKA'）で方式を選ぶため、現実装ではこの経路で方式ミスマッチは起きない。実際には identity の IMSI `440100123456789`（テストベクター対象外、Valkey 未登録）が 404 になり `VECTOR_IMSI_NOT_FOUND` で Reject される。ケースは `reject_hint_check_presence: false` で Reject 理由の文言を検証しないため PASS するが、**方式ミスマッチ拒否は検証できていない**（r2追記）
+- `reject_imsi_not_found.yaml`: Valkey 未登録 IMSI での認証試行。テストベクター対象外の IMSI `001029999999999`（identity `0001029999999999@wlan.mnc002.mcc001.3gppnetwork.org`）を使い、Vector API の 404 → `VECTOR_IMSI_NOT_FOUND` で Reject されることを確認する。r1 の IMSI `001019999999999` はテストベクター対象（`00101` 始まり）のため、テストベクターモードでは未登録でもベクターが生成され、`AUTH_POLICY_NOT_FOUND` で Reject されていた（理由が違う。r2で変更）
 
 #### ポリシー（7件）
 
@@ -219,7 +221,7 @@ EAP-AKA / AKA' 認証の基本フローを検証する。`identity` フィール
 - ワイルドカード SSID（`["*"]`）
 - ポリシー未登録
 
-> **注意**: IMSI 003 を使用するポリシーテストケース（`reject_policy_denied_ssid.yaml`、`reject_policy_denied_nas.yaml`、`policy_nas_ssid_match_testvector.yaml`）では `config_testvector_imsi003.yaml` を使用すること。
+> **注意（r2改訂）**: IMSI 003 を使用するポリシーテストケース（`reject_policy_denied_ssid.yaml`、`reject_policy_denied_nas.yaml`、`policy_nas_ssid_match_testvector.yaml`）も、テストベクターモードでは `config_testvector.yaml` を使用すること（セクション3.3）。`config_testvector_imsi003.yaml` は実計算モードで実行する場合に使う。
 
 #### SQN 再同期（2件）
 
@@ -270,13 +272,16 @@ $EAPAKA_TEST/eapaka_test -c $CONFIG run $CASES/success_aka_testvector.yaml
 # テストベクターモード（T-03）
 EAPAKA_TEST="/path/to/devtools/eapaka_test"
 CONFIG="$PROJ_ROOT/docs/supplement/eapaka_test/configs/config_testvector.yaml"
-CONFIG_IMSI003="$PROJ_ROOT/docs/supplement/eapaka_test/configs/config_testvector_imsi003.yaml"
 CASES="$PROJ_ROOT/docs/supplement/eapaka_test/testdata/cases"
 
 # EAP-AKA 正常認証
 $EAPAKA_TEST/eapaka_test -c $CONFIG run $CASES/success_aka_testvector.yaml
 
-# IMSI 003 使用シナリオ（AMF=8000）
+# IMSI 003 使用シナリオ（テストベクターモードでは AMF=B9B9 になるため同じ config を使う）
+$EAPAKA_TEST/eapaka_test -c $CONFIG run $CASES/reject_policy_denied_ssid.yaml
+
+# 参考: 実計算モード（TEST_VECTOR_ENABLED=false）で IMSI 003（AMF=8000）を使う場合のみ
+CONFIG_IMSI003="$PROJ_ROOT/docs/supplement/eapaka_test/configs/config_testvector_imsi003.yaml"
 $EAPAKA_TEST/eapaka_test -c $CONFIG_IMSI003 run $CASES/reject_policy_denied_ssid.yaml
 ```
 
@@ -309,20 +314,21 @@ eapaka_test は SQN（Sequence Number）をファイルに永続化し、連続�
 ```bash
 # 1. eapaka_test の SQN ストアファイル削除
 rm -f /tmp/eapaka_test-sqn-testvector.json
-rm -f /tmp/eapaka_test-sqn-testvector-imsi003.json
+rm -f /tmp/eapaka_test-sqn-testvector-imsi003.json   # 実計算モードで imsi003 config を使った場合
 
-# 2. Valkey 側 SQN リセット
+# 2. Valkey 側 SQN リセット（deployments/ で set -a; . ./.env; set +a を実行して VALKEY_PASSWORD を読み込んでおく）
 # プライマリ IMSI（IMSI 000）: config の IMSI と一致 → 低値でOK
-docker compose exec valkey redis-cli -a "$VALKEY_PASSWORD" HSET sub:001010000000000 sqn "000000000001"
+docker compose exec valkey valkey-cli -a "$VALKEY_PASSWORD" --no-auth-warning HSET sub:001010000000000 sqn "000000000001"
 
 # identity オーバーライド IMSI: sqn_initial_hex に合わせる
-docker compose exec valkey redis-cli -a "$VALKEY_PASSWORD" HSET sub:001010000000001 sqn "FF9BB4D0B607"
-docker compose exec valkey redis-cli -a "$VALKEY_PASSWORD" HSET sub:001010000000002 sqn "FF9BB4D0B607"
-docker compose exec valkey redis-cli -a "$VALKEY_PASSWORD" HSET sub:001010000000006 sqn "FF9BB4D0B607"
-docker compose exec valkey redis-cli -a "$VALKEY_PASSWORD" HSET sub:001010000000007 sqn "FF9BB4D0B607"
+docker compose exec valkey valkey-cli -a "$VALKEY_PASSWORD" --no-auth-warning HSET sub:001010000000001 sqn "FF9BB4D0B607"
+docker compose exec valkey valkey-cli -a "$VALKEY_PASSWORD" --no-auth-warning HSET sub:001010000000002 sqn "FF9BB4D0B607"
+docker compose exec valkey valkey-cli -a "$VALKEY_PASSWORD" --no-auth-warning HSET sub:001010000000006 sqn "FF9BB4D0B607"
+docker compose exec valkey valkey-cli -a "$VALKEY_PASSWORD" --no-auth-warning HSET sub:001010000000007 sqn "FF9BB4D0B607"
 
-# IMSI 003: config_testvector_imsi003.yaml の sqn_initial_hex に合わせる
-docker compose exec valkey redis-cli -a "$VALKEY_PASSWORD" HSET sub:001010000000003 sqn "000000000001"
+# IMSI 003: テストベクターモードでは config_testvector.yaml の identity オーバーライドで使うため sqn_initial_hex に合わせる
+docker compose exec valkey valkey-cli -a "$VALKEY_PASSWORD" --no-auth-warning HSET sub:001010000000003 sqn "FF9BB4D0B607"
+#   （実計算モードで config_testvector_imsi003.yaml を使う場合は、その sqn_initial_hex "000000000001" に合わせる）
 ```
 
 ### 6.4 identity オーバーライド時の注意
@@ -354,7 +360,7 @@ aka-only-server（T-03 G10 / T-04 E2E-301〜316）を相手に再同期を確認
 3. クライアント側 IND=0 スロットが高値になり、aka-only-server の SQN が古いと判定されて AUTS が送られ、再同期後に Accept となる
 4. 再同期が実際に起きたことを、vector-gateway の `BACKEND_EXTERNAL_CALL`（`resync=true`）または aka-only-server のログ（`resync:true`）で確認する
 
-> **注意**: 既存 config の `FF9BB4D0B607` は IND=7 のため、aka-only-server が使う IND=0 とは別スロットになる。この値のまま `sqn.reset: true` で実行しても再同期は起きずに Accept となり、**テストは PASS するが再同期を検証できていない**。内部 Vector API を相手にする T-03 G3（INT-003 系）でも同じ理由で再同期が起きないことがあるため、`EAP_RESYNC` / `SQN_RESYNC` ログの有無で判定すること。
+> **注意**: 既存 config の `FF9BB4D0B607` は IND=7 のため、aka-only-server が使う IND=0 とは別スロットになる。この値のまま `sqn.reset: true` で実行しても再同期は起きずに Accept となり、**テストは PASS するが再同期を検証できていない**。内部 Vector API を相手にする T-03 G3（INT-003 系）でも同じ理由で再同期が起きないことがあるため、`EAP_RESYNC_CHALLENGE` / `SQN_RESYNC` ログの有無で判定すること（2026-10-04 にテストベクターモードで `config_testvector.yaml` を使って実施した際は、INT-003-01/02 とも再同期が発生した）。
 
 ---
 
@@ -362,12 +368,13 @@ aka-only-server（T-03 G10 / T-04 E2E-301〜316）を相手に再同期を確認
 
 ### 7.1 AMF と config 設定の対応
 
-本プロジェクトでは、テストベクターモードで2つの AMF 値を使用する:
+テストベクターモード（`TEST_VECTOR_ENABLED=true`）では、テストベクター対象 IMSI（`00101` 始まり）の AMF は Valkey の登録値にかかわらず固定値 `B9B9` になる。実計算モード（`TEST_VECTOR_ENABLED=false`）では Valkey の `sub:{IMSI}` の AMF が使われる（r2改訂）。
 
-| AMF | 対象 IMSI | config ファイル | 用途 |
-|:----|:---------|:--------------|:-----|
-| `B9B9` | IMSI 000, 001, 002, 006, 007 | `config_testvector.yaml` | テストベクター標準（大半のシナリオ） |
-| `8000` | IMSI 003 | `config_testvector_imsi003.yaml` | NAS/SSID ルール付きポリシーテスト |
+| モード | 対象 IMSI | サーバー側 AMF | config ファイル |
+|:------|:---------|:-------------|:--------------|
+| テストベクターモード（T-03） | IMSI 000, 001, 002, 003, 006, 007 | `B9B9`（固定） | `config_testvector.yaml` |
+| 実計算モード | IMSI 000, 001, 002, 006, 007 | `B9B9`（登録値） | `config_testvector.yaml` |
+| 実計算モード | IMSI 003 | `8000`（登録値） | `config_testvector_imsi003.yaml` |
 
 ### 7.2 identity オーバーライドの注意点
 
@@ -375,9 +382,9 @@ eapaka_test のテストケースで `identity` を指定すると、config の 
 
 1. **AMF**: config の `sim.amf` が使用される → IMSI 側の AMF と不一致なら認証中断
 2. **SQN**: SQN ストアに未登録なら `sqn_initial_hex` が使用される → サーバー側との同期が必要
-3. **Ki/OPc**: config の値が使用される（テストベクターモードではサーバー側が固定値を返すため影響なし）
+3. **Ki/OPc**: config の値が使用される（テストベクターモードではサーバー側も Test Set 1 の固定値で計算するため、`config_testvector.yaml` の値と一致する）
 
-したがって、異なる AMF の IMSI を使用する場合は IMSI ごとに個別の config ファイルを用意する必要がある。
+したがって、サーバー側 AMF が異なる IMSI（実計算モードの IMSI 003 等）を使用する場合は IMSI ごとに個別の config ファイルを用意する必要がある。テストベクターモードでは AMF が全 IMSI で `B9B9` のため、`config_testvector.yaml` 1つで足りる。
 
 ---
 
@@ -388,15 +395,15 @@ eapaka_test のテストケースで `identity` を指定すると、config の 
 | 原因 | 確認方法 | 対処 |
 |:-----|:--------|:-----|
 | `TEST_VECTOR_ENABLED` 設定不整合 | `docker compose exec vector-api env \| grep TEST_VECTOR` | `.env` の設定を確認し `docker compose up -d` |
-| 加入者データ未登録 | `redis-cli HGETALL sub:{IMSI}` | Valkey にデータ投入 |
+| 加入者データ未登録 | `docker compose exec valkey valkey-cli -a "$VALKEY_PASSWORD" --no-auth-warning HGETALL sub:{IMSI}` | Valkey にデータ投入（テストベクター対象 IMSI は未登録でもベクターが生成されるため、この原因にはならない） |
 | Ki/OPc 不一致 | eapaka_test のパラメータと Valkey 登録値を比較 | 値を統一 |
-| ポリシー設定 | `redis-cli HGETALL policy:{IMSI}` | ポリシー修正 |
+| ポリシー設定 | `docker compose exec valkey valkey-cli -a "$VALKEY_PASSWORD" --no-auth-warning HGETALL policy:{IMSI}` | ポリシー修正 |
 
 ### 8.2 AMF ミスマッチ
 
 | 症状 | 原因 | 対処 |
 |:-----|:-----|:-----|
-| eapaka_test が `amf mismatch` で中断 | config の AMF とサーバー側 AMF が不一致 | 対象 IMSI の AMF に合った config を使用（セクション7参照） |
+| eapaka_test が `amf mismatch` で中断 | config の AMF とサーバー側 AMF が不一致 | 対象 IMSI の AMF に合った config を使用（セクション7参照）。テストベクターモードでは全 IMSI が `B9B9` のため `config_testvector.yaml` を使う（IMSI 003 に `config_testvector_imsi003.yaml` を使うとこの症状になる） |
 
 ### 8.3 SQN 不整合
 
@@ -436,7 +443,8 @@ radclient -x -r 1 -t 3 127.0.0.1:1812 status TESTSECRET123 < /tmp/status.attrs
 ### 9.1 T-03 結合テストでの利用パターン
 
 - **テストベクターモード**（`TEST_VECTOR_ENABLED=true`）で実行
-- 大半のシナリオは `config_testvector.yaml` を使用、IMSI 003 のみ `config_testvector_imsi003.yaml` を使用
+- 全シナリオで `config_testvector.yaml` を使用（IMSI 003 も AMF `B9B9` になるため。`config_testvector_imsi003.yaml` は実計算モード専用。r2改訂）
+- テストベクター対象 IMSI（`00101` 始まり）は Valkey 未登録でもベクターが生成されるため、未登録 IMSI のテストにはテストベクター対象外の IMSI（`001029999999999`）を使う
 - テスト実行前にテストデータ（加入者・クライアント・ポリシー）を Valkey に投入する必要がある
 - G1〜G7 は AI 自動実行可能、G8（PLMN）は環境変更を伴い、G9（障害系）は人間介在が必要
 
@@ -444,7 +452,7 @@ radclient -x -r 1 -t 3 127.0.0.1:1812 status TESTSECRET123 < /tmp/status.attrs
 
 - **実設定モード**（`TEST_VECTOR_ENABLED=false`）で実行
 - Vector API が実際の Milenage 計算を実行し、Valkey の SIM パラメータを参照
-- eapaka_test 設定の AMF は Valkey 登録値と一致させること
+- eapaka_test 設定の AMF は Valkey 登録値と一致させること（IMSI 003 は AMF `8000` のため `config_testvector_imsi003.yaml`）
 - テストケースは T-03 と同一ファイルを使用可能
 
 ### 9.3 テスト反復時の SQN リセット運用
@@ -473,4 +481,4 @@ radclient -x -r 1 -t 3 127.0.0.1:1812 status TESTSECRET123 < /tmp/status.attrs
 | 版数 | 日付 | 内容 |
 |:----:|:-----|:-----|
 | r1 | 2026-02-24 | 初版作成 |
-| r2 | 2026-10-04 | Vector Gateway 接続方式01（aka-only-server）対応: 6.5「IND と再同期（aka-only-server 相手の場合）」・9.4「aka-only-server 相手での利用パターン」を追加、3.5 に AKA' の `net_name` は AT_KDF_INPUT が優先される旨を追記、4.3 の INT-GW-PLMN-010 の前提を `441999:02` に変更、8.3 に再同期不発の行を追加、1.2/1.3 を更新 |
+| r2 | 2026-10-04 | Vector Gateway 接続方式01（aka-only-server）対応: 6.5「IND と再同期（aka-only-server 相手の場合）」・9.4「aka-only-server 相手での利用パターン」を追加、3.5 に AKA' の `net_name` は AT_KDF_INPUT が優先される旨を追記、4.3 の INT-GW-PLMN-010 の前提を `441999:02` に変更、8.3 に再同期不発の行を追加、1.2/1.3 を更新。テストベクターモードの実動作（2026-10-04 確認）に合わせて修正: 3.2 にテストベクターモードの動作（Ki/OPc/AMF は Test Set 1 固定・AMF `B9B9`、`sub:{IMSI}` は SQN 管理のみ）を追記し、IMSI 003 のケースもテストベクターモードでは `config_testvector.yaml` を使い `config_testvector_imsi003.yaml` は実計算モード専用とした（1.3・3.3・4.3・5.4・6.3・7.1・7.2・8.1・8.2・9.1・9.2）。4.3 で `reject_imsi_not_found.yaml` の IMSI をテストベクター対象外の `001029999999999` に変更した旨と、`mismatch_strict_fail.yaml` は現実装では IMSI 未登録で Reject になり方式ミスマッチを検証できない旨を追記。Valkey 操作を `valkey-cli -a "$VALKEY_PASSWORD" --no-auth-warning` 形式に統一、`EAP_RESYNC` を `EAP_RESYNC_CHALLENGE` に修正 |

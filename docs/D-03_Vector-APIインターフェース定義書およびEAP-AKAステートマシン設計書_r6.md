@@ -273,7 +273,7 @@ Valkeyの `eap:{UUID}` 内の `stage` フィールドで管理します。
 - **Condition:** Identity先頭が `2`,`4`(EAP-AKA) または `7`,`8`(EAP-AKA')
 - **Current State制約:** `NEW` のみ（`WAITING_IDENTITY` で再度受信した場合は 2c へ）
 - **Action:**
-  1. Identity種別を記録（ログ出力: `EAP_PSEUDONYM_FALLBACK`）。
+  1. Identity種別を判定（フル認証誘導時の専用ログは出力しない。初回の EAP-Response/Identity 受信時の `EAP_IDENTITY_RECEIVED` のみ）。
   2. Valkey `eap:{UUID}` に `permanent_id_requested: true` をセット。
   3. `EAP-Request/AKA-Identity` または `EAP-Request/AKA'-Identity` を作成。
      - `AT_PERMANENT_ID_REQ` を含める（RFC 4187 Section 4.1.4）。
@@ -340,7 +340,7 @@ EAP認証成功後の認可処理。`policy:{IMSI}` を参照し、接続可否�
 | 取得結果 | 処理 | ログ | Next State |
 |---------|------|------|------------|
 | キー不在 | Access-Reject | `AUTH_POLICY_NOT_FOUND` | FAILURE |
-| JSONパース失敗 | Access-Reject | `POLICY_PARSE_ERR` | FAILURE |
+| JSONパース失敗 | Access-Reject | `AUTH_POLICY_NOT_FOUND`（専用のevent_idはなく、`error` 属性で区別） | FAILURE |
 | 取得成功 | ルール評価へ | - | - |
 
 3. **ルール評価:**
@@ -412,11 +412,10 @@ EAP認証成功後の認可処理。`policy:{IMSI}` を参照し、接続可否�
 - **Current State:** `CHALLENGE_SENT` または `WAITING_IDENTITY`
 - **Trigger:** `EAP-Response/AKA-Client-Error`
 - **Action:**
-  1. `AT_CLIENT_ERROR_CODE` からエラーコードを抽出。
-  2. ログ出力（`EAP_CLIENT_ERROR`、エラーコード含む）。
+  1. ログ出力（`EAP_CLIENT_ERROR`。属性は `trace_id`, `imsi`。`AT_CLIENT_ERROR_CODE` のエラーコードは抽出・記録しない）。
      - エラーコードの詳細は RFC 4187 Section 10.20 を参照。
-  3. `EAP-Failure` 送信。
-  4. **Next State:** `FAILURE`
+  2. `EAP-Failure` 送信。
+  3. **Next State:** `FAILURE`
 
 ### 6. Authentication-Reject受信 (Receive Authentication Reject)
 
@@ -434,7 +433,11 @@ EAP認証成功後の認可処理。`policy:{IMSI}` を参照し、接続可否�
 - **Current State:** 期待される状態と異なる
 - **Trigger:** 現在の状態で受信すべきでないEAPメッセージを受信
 - **Action:**
-  1. ログ出力（`EAP_INVALID_STATE`、現在の状態と受信したメッセージ種別を含む）。
+  1. ログ出力（WARN。属性は `trace_id`, `stage`（現在の状態））。
+     - `CHALLENGE_SENT` 以外で Challenge 応答／再同期応答（Synchronization-Failure）を受信: `EAP_STATE_ERR`
+     - `WAITING_IDENTITY` 以外で AKA-Identity 応答を受信: `EAP_UNEXPECTED_IDENTITY`
+     - 未知の Subtype を受信: `EAP_UNKNOWN_SUBTYPE`（属性は `trace_id`, `subtype`）
+     - なお、状態遷移表による内部検証の失敗も `EAP_STATE_ERR`（ERROR、属性は `trace_id`, `error`）で出力される。
   2. `EAP-Failure` 送信。
   3. **Next State:** `FAILURE`
 
@@ -449,4 +452,4 @@ EAP認証成功後の認可処理。`policy:{IMSI}` を参照し、接続可否�
 | r3 | 2026-01-12 | 状態定義の整理: IDENTITY_RECEIVED状態追加、タイムアウト時の遷移先をFAILUREに統一（ABORTED/TIMEOUT廃止）、PoC対象外状態を表から削除。状態遷移図をテキストベースに変更。Policy評価タイミングをPost-Authのみに変更（Pre-Auth Policy Check削除）。WAITING_VECTORおよびRESYNC_SENT状態の使用を明確化。不正な状態遷移時の処理（EAP_INVALID_STATE）を追加。Post-Auth Policy Checkの詳細化: デフォルトポリシー（default=allow/deny）の評価ロジック追加、ポリシー未設定/パースエラー時の処理明記。WAITING_IDENTITY状態からFAILURE遷移を明記（非対応/不正ID受信時、Client-Error受信時）。 |
 | r4 | 2026-01-27 | API接続設計統一: セクション1のタイトルを「Vector Gateway経由」に変更、Base URLを`http://vector-gateway:8080/api/v1`に更新、接続構成図追加、Error Responseに409/501/502エラー追加（表形式に変更）、D-12参照追加 |
 | r5 | 2026-02-18 | PolicyRule新構造反映: Post-Auth Policy Checkのルール評価をSSID/Action/TimeMin/TimeMax構造に更新、関連ドキュメント版数更新 |
-| r6 | 2026-10-04 | 接続方式01（aka-only-server）対応: 接続構成図・注記を更新（内部IFは変更なし）、Error Responseに接続方式01由来の400/403/404/502を追加、403の3ケース（detailで区別）と再同期AUTS検証失敗が403となる点を明記、Auth ServerでのCB対象外扱い・502のCB計上を注記。既存記載の実装との不一致を修正（2a の404時ログを `AUTH_IMSI_NOT_FOUND` → `VECTOR_IMSI_NOT_FOUND`、APIエラー時ログに `VECTOR_CONN_ERR` / `VECTOR_CB_OPEN` / `VECTOR_UNKNOWN_ERR` を追記、再同期APIエラー時のAuth Server側ログを `VECTOR_API_ERR` 等に修正、404応答例の detail を実装の文言に修正） |
+| r6 | 2026-10-04 | 接続方式01（aka-only-server）対応: 接続構成図・注記を更新（内部IFは変更なし）、Error Responseに接続方式01由来の400/403/404/502を追加、403の3ケース（detailで区別）と再同期AUTS検証失敗が403となる点を明記、Auth ServerでのCB対象外扱い・502のCB計上を注記。既存記載の実装との不一致を修正（2a の404時ログを `AUTH_IMSI_NOT_FOUND` → `VECTOR_IMSI_NOT_FOUND`、APIエラー時ログに `VECTOR_CONN_ERR` / `VECTOR_CB_OPEN` / `VECTOR_UNKNOWN_ERR` を追記、再同期APIエラー時のAuth Server側ログを `VECTOR_API_ERR` 等に修正、404応答例の detail を実装の文言に修正）。D-04 r19 の event_id 全面整合に合わせて修正（2b の `EAP_PSEUDONYM_FALLBACK` を削除（フル認証誘導時は専用ログなし）、§7 不正な状態遷移の `EAP_INVALID_STATE` を `EAP_STATE_ERR` / `EAP_UNEXPECTED_IDENTITY` / `EAP_UNKNOWN_SUBTYPE` に修正、3a のJSONパース失敗時ログ `POLICY_PARSE_ERR` を `AUTH_POLICY_NOT_FOUND` に修正、§5 Client-Error受信時にエラーコードを記録しない旨を明記） |
