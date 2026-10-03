@@ -175,9 +175,9 @@ Auth ServerからVector Gateway、Vector GatewayからVector API（および aka
 | **1**   | **auth-server**     | 1812/udp             | 認証ロジック。`VECTOR_API_URL` と `RADIUS_SECRET` (Fallback) を環境変数で受ける。 |
 | **2**   | **acct-server**     | 1813/udp             | 課金ロジック。`RADIUS_SECRET` (Fallback) を環境変数で受ける。 |
 | **3**   | **vector-gateway**  | なし                 | ルーティング。PLMNベースでバックエンド選択（`00`: vector-api、`01`: aka-only-server）。外部公開なし。`GET /health` でヘルスチェック応答。`./certs` を `/certs` に読み取り専用マウント（aka-only-server 接続用証明書）。 |
-| **4**   | **vector-api**      | なし                 | 内部API。外部公開なし。`TEST_VECTOR_ENABLED` 環境変数でテストベクターモードを有効化可能。`GET /health` でヘルスチェック応答。 |
+| **4**   | **vector-api**      | なし                 | 内部API。外部公開なし。`TEST_VECTOR_ENABLED` 環境変数でテストベクターモードを有効化可能（compose が `.env` の `TEST_VECTOR_ENABLED`／`TEST_VECTOR_IMSI_PREFIX` を渡す。既定は無効）。`GET /health` でヘルスチェック応答。 |
 | **5**   | **valkey**          | 127.0.0.1:6379       | DB。ホスト(TUI)用にlocalhostのみバインド。`--requirepass` 有効化。 |
-| **6**   | **fluent-bit**      | 24224/tcp, 24224/udp | ログ収集。出力先は `/output_logs` 固定。                     |
+| **6**   | **fluent-bit**      | 24224/tcp, 24224/udp | ログ収集。設定は `configs/fluent-bit/fluent-bit.yaml`（YAML形式）。出力先は `/output_logs` 固定。 |
 
 > **注記（オーバーレイ）:** aka-only-server を同一ホストで動かす場合は、`deployments/docker-compose.aka-av.yml` を重ねて起動する（`docker compose -f docker-compose.yml -f docker-compose.aka-av.yml up -d`）。このオーバーレイは vector-gateway だけを aka-only-server の compose が作る共有ネットワーク（external、名前 `${AKA_SHARED_NETWORK:-aka-av}`）に参加させる。共有ネットワークは aka-only-server 側が作るため、先に aka-only-server を起動しておく。別ホストの aka-only-server に接続する場合はオーバーレイを重ねない。
 
@@ -202,8 +202,7 @@ my-radius-project/
 │
 ├── configs/                      # 設定ファイル
 │   └── fluent-bit/
-│       ├── fluent-bit.conf       # Fluent Bit設定
-│       └── parsers.conf          # パーサー設定
+│       └── fluent-bit.yaml       # Fluent Bit設定（YAML形式。パーサー定義を含む）
 │
 ├── deployments/                  # 運用関連
 │   ├── docker-compose.yml        # 構成定義
@@ -227,7 +226,7 @@ my-radius-project/
 
 ## 7. `docker-compose.yml` (最終定義)
 
-> **注記:** `docker-compose.yml` は `deployments/` ディレクトリに配置されるため、`build:` パスは `../apps/...` となる。D-08「インフラ設定・運用設計書」の記載と整合している。
+> **注記:** `docker-compose.yml` は `deployments/` ディレクトリに配置される。各アプリの Dockerfile は Go Workspace（`go.work`）と共有パッケージ `pkg/` を参照するため、`build:` はビルドコンテキストをリポジトリルート（`context: ..`）とし、`dockerfile: apps/<アプリ名>/Dockerfile` で Dockerfile を指定する。ログドライバ設定は `x-logging` アンカー（`&fluent-bit-logging`）を各サービスでマージし、`options` にサービスごとの `tag`（`app.<サービス名>`）を指定する（`options` はマージ時に丸ごと上書きされるため、アンカーと同じオプションも各サービスで再掲している）。以下は実ファイル `deployments/docker-compose.yml` の全文であり、D-08「インフラ設定・運用設計書」4.1節の記載と一致している。
 
 ```yaml
 x-logging: &fluent-bit-logging
@@ -236,7 +235,6 @@ x-logging: &fluent-bit-logging
     fluentd-address: localhost:24224
     fluentd-async: "true"
     fluentd-buffer-limit: "1048576"
-    tag: "{{.Name}}.logs"
 
 x-timezone: &timezone
   TZ: Asia/Tokyo
@@ -246,7 +244,9 @@ services:
   # Logic Layer
   # ==========================================================================
   auth-server:
-    build: ../apps/auth-server
+    build:
+      context: ..
+      dockerfile: apps/auth-server/Dockerfile
     ports:
       - "1812:1812/udp"
     environment:
@@ -269,10 +269,18 @@ services:
       retries: 3
       start_period: 10s
     restart: always
-    logging: *fluent-bit-logging
+    logging:
+      <<: *fluent-bit-logging
+      options:
+        fluentd-address: localhost:24224
+        fluentd-async: "true"
+        fluentd-buffer-limit: "1048576"
+        tag: "app.auth-server"
 
   acct-server:
-    build: ../apps/acct-server
+    build:
+      context: ..
+      dockerfile: apps/acct-server/Dockerfile
     ports:
       - "1813:1813/udp"
     environment:
@@ -292,10 +300,18 @@ services:
       retries: 3
       start_period: 10s
     restart: always
-    logging: *fluent-bit-logging
+    logging:
+      <<: *fluent-bit-logging
+      options:
+        fluentd-address: localhost:24224
+        fluentd-async: "true"
+        fluentd-buffer-limit: "1048576"
+        tag: "app.acct-server"
 
   vector-gateway:
-    build: ../apps/vector-gateway
+    build:
+      context: ..
+      dockerfile: apps/vector-gateway/Dockerfile
     expose:
       - "8080"
     environment:
@@ -324,10 +340,18 @@ services:
       retries: 3
       start_period: 10s
     restart: always
-    logging: *fluent-bit-logging
+    logging:
+      <<: *fluent-bit-logging
+      options:
+        fluentd-address: localhost:24224
+        fluentd-async: "true"
+        fluentd-buffer-limit: "1048576"
+        tag: "app.vector-gateway"
 
   vector-api:
-    build: ../apps/vector-api
+    build:
+      context: ..
+      dockerfile: apps/vector-api/Dockerfile
     expose:
       - "8080"
     environment:
@@ -336,6 +360,9 @@ services:
       REDIS_PORT: "6379"
       REDIS_PASS: ${VALKEY_PASSWORD}
       LOG_MASK_IMSI: ${LOG_MASK_IMSI:-true}
+      # テストベクターモード（開発・テスト専用。本番では有効にしないこと）
+      TEST_VECTOR_ENABLED: ${TEST_VECTOR_ENABLED:-false}
+      TEST_VECTOR_IMSI_PREFIX: ${TEST_VECTOR_IMSI_PREFIX:-00101}
     depends_on:
       valkey:
         condition: service_healthy
@@ -346,7 +373,13 @@ services:
       retries: 3
       start_period: 10s
     restart: always
-    logging: *fluent-bit-logging
+    logging:
+      <<: *fluent-bit-logging
+      options:
+        fluentd-address: localhost:24224
+        fluentd-async: "true"
+        fluentd-buffer-limit: "1048576"
+        tag: "app.vector-api"
 
   # ==========================================================================
   # Data Layer
@@ -373,19 +406,25 @@ services:
       retries: 3
       start_period: 5s
     restart: always
-    logging: *fluent-bit-logging
+    logging:
+      <<: *fluent-bit-logging
+      options:
+        fluentd-address: localhost:24224
+        fluentd-async: "true"
+        fluentd-buffer-limit: "1048576"
+        tag: "app.valkey"
 
   # ==========================================================================
   # Logging Layer
   # ==========================================================================
   fluent-bit:
-    image: fluent/fluent-bit:3.0
+    image: fluent/fluent-bit:4.2
+    command: ["/fluent-bit/bin/fluent-bit", "-c", "/fluent-bit/etc/fluent-bit.yaml"]
     ports:
       - "24224:24224"
       - "24224:24224/udp"
     volumes:
-      - ../configs/fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
-      - ../configs/fluent-bit/parsers.conf:/fluent-bit/etc/parsers.conf:ro
+      - ../configs/fluent-bit/fluent-bit.yaml:/fluent-bit/etc/fluent-bit.yaml:ro
       - ./logs_on_host:/output_logs
     environment:
       <<: *timezone
@@ -395,9 +434,24 @@ volumes:
   valkey_data:
 ```
 
-aka-only-server を同一ホストで動かす場合に重ねるオーバーレイ `deployments/docker-compose.aka-av.yml`（任意）:
+> **注記（テストベクターモード）:** vector-api の `TEST_VECTOR_ENABLED`（既定 `false`）と `TEST_VECTOR_IMSI_PREFIX`（既定 `00101`）は、compose が `.env` の値を渡す。開発・テスト環境でのみ `.env` に `TEST_VECTOR_ENABLED=true` を設定して有効化し、本番環境では有効にしないこと。
+
+aka-only-server を同一ホストで動かす場合に重ねるオーバーレイ `deployments/docker-compose.aka-av.yml`（任意、全文）:
 
 ```yaml
+# =============================================================================
+# aka-only-server を同一ホストで動かす場合のオーバーレイ
+# =============================================================================
+# aka-only-server の compose が作る共有ネットワーク（既定名 aka-av）に
+# vector-gateway だけを参加させる。共有ネットワークは aka-only-server 側が作るので、
+# 先に aka-only-server を起動しておくこと。
+#
+#   docker compose -f docker-compose.yml -f docker-compose.aka-av.yml up -d
+#
+# 参加後は https://aka-only-server:8443（平文なら http://aka-only-server:8080）で届く。
+# 別ホストの aka-only-server に接続する場合は、このファイルを重ねずに
+# VECTOR_GATEWAY_AKAONLY_URL を相手ホストのアドレスにする。
+# =============================================================================
 services:
   vector-gateway:
     networks:
@@ -478,4 +532,4 @@ VECTOR_GATEWAY_PLMN_MAP=""
 | r7 | 2026-01-27 | docker-compose.yml相対パス修正: セクション7のbuildパスを`./apps/...`→`../apps/...`に修正（D-08との整合性確保） |
 | r8 | 2026-01-27 | Fluent Bit設定ファイルの相対パス修正（`./configs/...`→`../configs/...`、deployments基準でD-08と整合） |
 | r9 | 2026-02-16 | 実装コードとの不整合20件を修正: データモデル注記追加（RadiusClient/Subscriber/Policy）、パッケージ利用マップ更新（envconfig/resty/tcell/mock/miniredis）、Valkeyキースキーマ概要追加、コンテナ構成詳細更新（healthcheck/fluent-bitポート/テストベクターモード/healthエンドポイント）、docker-compose.ymlを実装ファイルと完全同期、セットアップ手順のenvconfig記述修正 |
-| r10 | 2026-10-04 | Vector Gateway 接続方式ID `01`（外部の aka-only-server、mTLS、任意）対応: 2章構成図に aka-only-server を追加し注記追加、3.1 Vector Gateway の処理フロー更新、3.5に aka-only-server への接続設定追加、4章に Outbound 接続と証明書管理を追記、5章に vector-gateway の証明書マウントと docker-compose.aka-av.yml の注記追加、6章リポジトリ構成に docker-compose.aka-av.yml と certs/ を追加、7章 docker-compose.yml の vector-gateway に `VECTOR_GATEWAY_AKAONLY_*` と certs ボリュームを追加しオーバーレイを掲載、8章に `VECTOR_GATEWAY_AKAONLY_*`・`AKA_SHARED_NETWORK` と接続方式ID `01` を追加 |
+| r10 | 2026-10-04 | Vector Gateway 接続方式ID `01`（外部の aka-only-server、mTLS、任意）対応: 2章構成図に aka-only-server を追加し注記追加、3.1 Vector Gateway の処理フロー更新、3.5に aka-only-server への接続設定追加、4章に Outbound 接続と証明書管理を追記、5章に vector-gateway の証明書マウントと docker-compose.aka-av.yml の注記追加、6章リポジトリ構成に docker-compose.aka-av.yml と certs/ を追加、7章 docker-compose.yml の vector-gateway に `VECTOR_GATEWAY_AKAONLY_*` と certs ボリュームを追加しオーバーレイを掲載、8章に `VECTOR_GATEWAY_AKAONLY_*`・`AKA_SHARED_NETWORK` と接続方式ID `01` を追加。既存記載の実装との不一致を修正（7章 docker-compose.yml を実ファイル全文と一致させた: build を `context: ..`＋`dockerfile: apps/<アプリ名>/Dockerfile` に、logging をアンカーのマージ＋サービスごとの `tag: "app.<サービス名>"` に、fluent-bit を `fluent/fluent-bit:4.2`・`command` 指定・`fluent-bit.yaml` マウントに修正し、vector-api に `TEST_VECTOR_ENABLED`／`TEST_VECTOR_IMSI_PREFIX` を追加。オーバーレイもコメント込みの全文に。5章の vector-api・fluent-bit 行と6章 configs/fluent-bit の構成を実装に合わせた） |

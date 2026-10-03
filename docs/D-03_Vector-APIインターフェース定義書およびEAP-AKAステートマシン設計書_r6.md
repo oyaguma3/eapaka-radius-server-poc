@@ -108,7 +108,7 @@ RFC7807 (Problem Details) に準拠した形式で返します。
 {
   "type": "about:blank",
   "title": "User Not Found",
-  "detail": "IMSI 44010... does not exist in subscriber DB.",
+  "detail": "IMSI does not exist in subscriber DB",
   "status": 404
 }
 ```
@@ -258,12 +258,12 @@ Valkeyの `eap:{UUID}` 内の `stage` フィールドで管理します。
     4. RADIUS `Access-Challenge` 返信。
     5. **Next State:** `CHALLENGE_SENT`
   - **APIエラー (404 Not Found):**
-    1. ログ出力（`AUTH_IMSI_NOT_FOUND`）。
+    1. ログ出力（`VECTOR_IMSI_NOT_FOUND`）。
     2. `EAP-Failure` を作成。
     3. RADIUS `Access-Reject` 返信。
     4. **Next State:** `FAILURE`
-  - **APIエラー (400/403/500/502/タイムアウト):**
-    1. ログ出力（`VECTOR_API_ERR`）。
+  - **APIエラー (400/403/500/501/502等) / 接続失敗・タイムアウト / Circuit Breaker Open:**
+    1. ログ出力（HTTPエラー応答: `VECTOR_API_ERR`、接続失敗・タイムアウト: `VECTOR_CONN_ERR`、Circuit Breaker Open: `VECTOR_CB_OPEN`、その他: `VECTOR_UNKNOWN_ERR`）。
     2. `EAP-Failure` を作成。
     3. RADIUS `Access-Reject` 返信。
     4. **Next State:** `FAILURE`
@@ -397,7 +397,7 @@ EAP認証成功後の認可処理。`policy:{IMSI}` を参照し、接続可否�
     3. **新しい** `EAP-Request/AKA-Challenge` を作成して送信。
     4. **Next State:** `CHALLENGE_SENT`
   - **APIエラー (MAC不正など):**
-    1. ログ出力（`SQN_RESYNC_MAC_ERR` 等）。
+    1. ログ出力（Auth Server: `VECTOR_API_ERR` 等。2a のAPIエラー時と同じ。接続方式00の場合は Vector API 側で `SQN_RESYNC_MAC_ERR` 等も出力される）。
        - AUTS 検証失敗は、接続方式00では 400、接続方式01（aka-only-server）では 403 で返る。
     2. `EAP-Failure` 送信。
     3. **Next State:** `FAILURE`
@@ -449,4 +449,4 @@ EAP認証成功後の認可処理。`policy:{IMSI}` を参照し、接続可否�
 | r3 | 2026-01-12 | 状態定義の整理: IDENTITY_RECEIVED状態追加、タイムアウト時の遷移先をFAILUREに統一（ABORTED/TIMEOUT廃止）、PoC対象外状態を表から削除。状態遷移図をテキストベースに変更。Policy評価タイミングをPost-Authのみに変更（Pre-Auth Policy Check削除）。WAITING_VECTORおよびRESYNC_SENT状態の使用を明確化。不正な状態遷移時の処理（EAP_INVALID_STATE）を追加。Post-Auth Policy Checkの詳細化: デフォルトポリシー（default=allow/deny）の評価ロジック追加、ポリシー未設定/パースエラー時の処理明記。WAITING_IDENTITY状態からFAILURE遷移を明記（非対応/不正ID受信時、Client-Error受信時）。 |
 | r4 | 2026-01-27 | API接続設計統一: セクション1のタイトルを「Vector Gateway経由」に変更、Base URLを`http://vector-gateway:8080/api/v1`に更新、接続構成図追加、Error Responseに409/501/502エラー追加（表形式に変更）、D-12参照追加 |
 | r5 | 2026-02-18 | PolicyRule新構造反映: Post-Auth Policy Checkのルール評価をSSID/Action/TimeMin/TimeMax構造に更新、関連ドキュメント版数更新 |
-| r6 | 2026-10-04 | 接続方式01（aka-only-server）対応: 接続構成図・注記を更新（内部IFは変更なし）、Error Responseに接続方式01由来の400/403/404/502を追加、403の3ケース（detailで区別）と再同期AUTS検証失敗が403となる点を明記、Auth ServerでのCB対象外扱い・502のCB計上を注記 |
+| r6 | 2026-10-04 | 接続方式01（aka-only-server）対応: 接続構成図・注記を更新（内部IFは変更なし）、Error Responseに接続方式01由来の400/403/404/502を追加、403の3ケース（detailで区別）と再同期AUTS検証失敗が403となる点を明記、Auth ServerでのCB対象外扱い・502のCB計上を注記。既存記載の実装との不一致を修正（2a の404時ログを `AUTH_IMSI_NOT_FOUND` → `VECTOR_IMSI_NOT_FOUND`、APIエラー時ログに `VECTOR_CONN_ERR` / `VECTOR_CB_OPEN` / `VECTOR_UNKNOWN_ERR` を追記、再同期APIエラー時のAuth Server側ログを `VECTOR_API_ERR` 等に修正、404応答例の detail を実装の文言に修正） |

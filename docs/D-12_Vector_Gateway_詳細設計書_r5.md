@@ -229,30 +229,83 @@ type Backend interface {
 
 ### 4.2 PoC実装: 内部バックエンド（ID:00）
 
+実装: `internal/backend/internal.go`（抜粋）。内部バックエンド自身はログを出力しない（選択・成功・失敗のログはハンドラーの `GW_ROUTE` / `GW_OK` / `GW_ERR`、9.2節）。
+
 ```go
+const (
+    internalBackendID   = "00"
+    internalBackendName = "Internal Vector API"
+    traceIDHeader       = "X-Trace-ID"
+)
+
+// InternalBackend は内部Vector APIへのバックエンド。
 type InternalBackend struct {
-    url        string
-    httpClient *http.Client
+    baseURL string
+    client  *http.Client
 }
 
-func (b *InternalBackend) ID() string   { return "00" }
-func (b *InternalBackend) Name() string { return "vector-api" }
-
-func (b *InternalBackend) GetVector(ctx context.Context, req *VectorRequest) (*VectorResponse, error) {
-    traceID := ctx.Value("trace_id").(string)
-    
-    slog.Info("calling internal vector API",
-        "event_id", "BACKEND_INTERNAL_CALL",
-        "trace_id", traceID,
-        "imsi", maskIMSI(req.IMSI))
-    
-    // Vector APIへHTTPリクエスト
-    resp, err := b.doRequest(ctx, traceID, req)
-    if err != nil {
-        return nil, fmt.Errorf("internal backend call failed: %w", err)
+// NewInternalBackend は新しいInternalBackendを生成する。
+func NewInternalBackend(baseURL string, timeout time.Duration) *InternalBackend {
+    return &InternalBackend{
+        baseURL: baseURL,
+        client:  &http.Client{Timeout: timeout},
     }
-    
-    return resp, nil
+}
+
+func (b *InternalBackend) ID() string   { return internalBackendID }
+func (b *InternalBackend) Name() string { return internalBackendName }
+
+// GetVector は内部Vector APIからベクターを取得する。
+func (b *InternalBackend) GetVector(ctx context.Context, req *VectorRequest) (*VectorResponse, error) {
+    body, err := json.Marshal(req)
+    if err != nil {
+        return nil, &BackendCommunicationError{Err: fmt.Errorf("failed to marshal request: %w", err)}
+    }
+
+    url := b.baseURL + "/api/v1/vector"
+    httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+    if err != nil {
+        return nil, &BackendCommunicationError{Err: fmt.Errorf("failed to create request: %w", err)}
+    }
+    httpReq.Header.Set("Content-Type", "application/json")
+
+    // X-Trace-IDヘッダの伝搬（ハンドラーが ContextWithTraceID で設定）
+    if traceID, ok := ctx.Value(traceIDContextKey).(string); ok && traceID != "" {
+        httpReq.Header.Set(traceIDHeader, traceID)
+    }
+
+    resp, err := b.client.Do(httpReq)
+    if err != nil {
+        return nil, &BackendCommunicationError{Err: fmt.Errorf("failed to send request: %w", err)}
+    }
+    defer resp.Body.Close()
+
+    respBody, err := io.ReadAll(resp.Body)
+    if err != nil {
+        return nil, &BackendCommunicationError{Err: fmt.Errorf("failed to read response: %w", err)}
+    }
+
+    // 4xx: ProblemDetailをそのまま伝搬
+    if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+        var problem httputil.ProblemDetail
+        if err := json.Unmarshal(respBody, &problem); err != nil {
+            return nil, &BackendCommunicationError{Err: fmt.Errorf("failed to parse error response: %w", err)}
+        }
+        return nil, &BackendResponseError{StatusCode: resp.StatusCode, Problem: &problem}
+    }
+
+    // 5xx: 通信エラーとして扱う（ハンドラーで502に変換）
+    if resp.StatusCode >= 500 {
+        return nil, &BackendCommunicationError{
+            Err: fmt.Errorf("backend returned status %d", resp.StatusCode),
+        }
+    }
+
+    var vectorResp VectorResponse
+    if err := json.Unmarshal(respBody, &vectorResp); err != nil {
+        return nil, &BackendCommunicationError{Err: fmt.Errorf("failed to parse response: %w", err)}
+    }
+    return &vectorResp, nil
 }
 ```
 
@@ -886,16 +939,25 @@ Response (200 OK):
 
 ### 7.3 エラーレスポンス
 
-| HTTPステータス | 状況 | レスポンス例 |
-|---------------|------|------------|
-| 400 Bad Request | リクエスト不正、または aka-only-server が 400 を返した（ID:01） | `{"error": "invalid IMSI format"}` |
-| 403 Forbidden | aka-only-server が 403 を返した（ID:01。許可クライアント外、AUTS検証失敗、平文HTTP許可なし） | `{"error": "client is not allowed for this subscriber"}` |
-| 404 Not Found | IMSI未登録（内部API、または aka-only-server の `USER_NOT_FOUND`） | `{"error": "IMSI not found"}` |
-| 501 Not Implemented | 未実装バックエンド（ID:02〜99、URL未設定時のID:01） | `{"error": "Backend ID 02 is not implemented"}` |
-| 500 Internal Server Error | 内部エラー | `{"error": "internal server error"}` |
-| 502 Bad Gateway | バックエンド通信エラー（aka-only-server の 5xx・不正応答・TLS失敗を含む） | `{"error": "backend communication failed"}` |
+エラー本文は RFC 7807 準拠の ProblemDetail（`pkg/httputil.ProblemDetail`、`type` / `title` / `status` / `detail`、`type` は `about:blank`）で返す。Vector Gateway 自身が生成するエラーの `detail` は次のとおり（`internal/handler/vector.go`）。
 
-> **注記:** レスポンス例は概略である。実際のエラー本文は RFC 7807 準拠の ProblemDetail（`pkg/httputil.ProblemDetail`、`type` / `title` / `status` / `detail`）で返す。aka-only-server 由来の 4xx は `title` / `status` / `detail` を引き継ぎ、`type` は `about:blank` とする（4.5.4）。
+| HTTPステータス | 状況 | `title` | `detail` |
+|---------------|------|---------|----------|
+| 400 Bad Request | リクエストJSON不正 | `Bad Request` | `Invalid request body` |
+| 400 Bad Request | IMSI形式不正（15桁の数字でない） | `Bad Request` | `IMSI must be 15 digits` |
+| 501 Not Implemented | 未実装バックエンド（ID:02〜99、URL未設定時のID:01） | `Not Implemented` | `Backend "02" is not implemented`（IDはダブルクォート付き） |
+| 502 Bad Gateway | バックエンド通信エラー（Vector API の 5xx、aka-only-server の 5xx・不正応答・TLS失敗を含む） | `Bad Gateway` | `Failed to communicate with backend service` |
+| 500 Internal Server Error | ルーティングの想定外エラー、その他のバックエンドエラー、panic | `Internal Server Error` | `An unexpected error occurred` |
+
+バックエンドが 4xx を返した場合は、そのステータスと ProblemDetail をそのまま返す（`detail` はバックエンドのもの）。
+
+| HTTPステータス | 状況 | `detail` の例 |
+|---------------|------|--------------|
+| 400 Bad Request | Vector API または aka-only-server（ID:01）が 400 を返した | Vector API: `IMSI must be 15 digits` 等 |
+| 403 Forbidden | aka-only-server が 403 を返した（ID:01。許可クライアント外、AUTS検証失敗、平文HTTP許可なし） | `client is not allowed for this subscriber` |
+| 404 Not Found | IMSI未登録（Vector API、または aka-only-server の `USER_NOT_FOUND`） | Vector API: `IMSI does not exist in subscriber DB` |
+
+> **注記:** aka-only-server 由来の 4xx は `title` / `status` / `detail` を引き継ぎ、`type` は `about:blank` とする（4.5.4）。
 
 ---
 
@@ -903,13 +965,17 @@ Response (200 OK):
 
 ### 8.1 エラー分類
 
-| カテゴリ | HTTPステータス | event_id | 対処 |
+ハンドラーのエラーログはすべて `event_id`=`GW_ERR` であり、`msg` で区別する（9.2節）。
+
+| カテゴリ | HTTPステータス | event_id（`msg`） | 対処 |
 |---------|---------------|----------|------|
-| リクエスト不正 | 400 | `REQUEST_INVALID` | エラー返却 |
-| バックエンド未実装 | 501 | `BACKEND_NOT_IMPLEMENTED` | エラー返却 |
-| 内部API通信エラー | 502 | `BACKEND_INTERNAL_ERR` | エラー返却 |
-| 内部API 404応答 | 404 | （内部APIからの伝搬） | エラー返却 |
-| 内部APIその他エラー | 500 | `BACKEND_INTERNAL_ERR` | エラー返却 |
+| リクエスト不正（JSON不正） | 400 | `GW_ERR`（`invalid request body`、WARN） | エラー返却 |
+| リクエスト不正（IMSI形式不正） | 400 | `GW_ERR`（`invalid IMSI format`、WARN） | エラー返却 |
+| バックエンド未実装・未設定 | 501 | `GW_ERR`（`backend not implemented`、WARN） | エラー返却 |
+| ルーティングの想定外エラー | 500 | `GW_ERR`（`routing error`、ERROR） | エラー返却 |
+| バックエンドの 4xx 応答（内部APIの 404 等） | 4xx（そのまま伝搬） | `GW_ERR`（`backend returned error`、WARN） | エラー返却 |
+| バックエンド通信エラー・5xx・不正応答 | 502 | `GW_ERR`（`backend communication error`、ERROR） | エラー返却 |
+| その他のバックエンドエラー | 500 | `GW_ERR`（`unexpected backend error`、ERROR） | エラー返却 |
 
 ### 8.2 外部API用エラー
 
@@ -990,16 +1056,27 @@ Vector Gateway (ログ出力で境界記録)
 
 ### 9.2 ログ設計
 
-#### event_id一覧（PoC）
+#### event_id一覧（ハンドラー、接続方式共通）
 
-| event_id | 発生条件 | レベル |
-|----------|---------|--------|
-| `PLMN_ROUTE_MATCH` | PLMNマッチでバックエンド選択 | DEBUG |
-| `PLMN_ROUTE_UNMATCH` | PLMNマップに未登録（デフォルト動作） | DEBUG |
-| `BACKEND_NOT_IMPLEMENTED` | 未実装接続方式IDが指定された | WARN |
-| `BACKEND_INTERNAL_CALL` | 内部Vector API呼び出し | INFO |
-| `BACKEND_INTERNAL_ERR` | 内部Vector API呼び出し失敗 | ERROR |
-| `REQUEST_INVALID` | リクエスト形式不正 | WARN |
+ハンドラー（`internal/handler/vector.go`）が出力する event_id は `GW_ROUTE` / `GW_OK` / `GW_ERR` の3種類。`GW_ERR` は複数の状況で共通のため `msg` で区別する。
+
+| event_id | レベル | msg | 発生条件 | 項目 |
+|----------|--------|-----|---------|------|
+| `GW_ROUTE` | INFO | `backend selected` | バックエンド選択（PLMN一致・未一致・passthroughを問わず毎リクエスト） | `trace_id`, `imsi`（マスク）, `backend_id`, `backend_name` |
+| `GW_OK` | INFO | `vector forwarded` | ベクター取得成功（200返却） | `trace_id`, `imsi`（マスク）, `backend_id`, `http_status`（200） |
+| `GW_ERR` | WARN | `invalid request body` | リクエストJSON不正（400） | `trace_id`, `error` |
+| `GW_ERR` | WARN | `invalid IMSI format` | IMSI形式不正（400） | `trace_id`, `imsi`（マスク）, `error` |
+| `GW_ERR` | WARN | `backend not implemented` | 未実装・未設定の接続方式ID（501） | `trace_id`, `imsi`（マスク）, `backend_id` |
+| `GW_ERR` | ERROR | `routing error` | ルーティングの想定外エラー（500） | `trace_id`, `imsi`（マスク）, `error` |
+| `GW_ERR` | WARN | `backend returned error` | バックエンドが 4xx を返した（そのまま返却） | `trace_id`, `imsi`（マスク）, `http_status` |
+| `GW_ERR` | ERROR | `backend communication error` | 通信エラー・5xx・不正応答（502） | `trace_id`, `imsi`（マスク）, `error` |
+| `GW_ERR` | ERROR | `unexpected backend error` | その他（500） | `trace_id`, `imsi`（マスク）, `error` |
+
+- PLMN一致／未一致を区別するログ（DEBUGを含む）はない。選択結果は `GW_ROUTE` の `backend_id` で判断する。
+- 内部Vector API（`00`）の呼び出し専用ログはない。`00` の失敗は `GW_ERR`（`backend returned error` / `backend communication error`）で判断する。
+- `GW_OK` は `latency_ms` を持たない。リクエスト全体の処理時間はミドルウェアの `request completed`（event_id なし。`trace_id`, `method`, `path`, `http_status`, `latency_ms`）で確認する。
+- `X-Trace-ID` ヘッダがない場合、`trace_id` は `"no-trace-id"` となる。
+- lnav での絞り込み例: `;SELECT log_time, trace_id, imsi FROM aka_radius_log WHERE event_id = 'GW_ERR' AND log_body = 'backend communication error'`（`log_body` は `msg` に対応）。
 
 #### event_id一覧（接続方式01: aka-only-server、r5で実装）
 
@@ -1022,21 +1099,19 @@ Vector Gateway (ログ出力で境界記録)
 | `EXTERNAL_AUTH_ERR` | 外部API認証失敗 | ERROR |
 | `EXTERNAL_RATE_LIMIT` | 外部API Rate Limit | WARN |
 
-> **注記:** 実装のハンドラー・ルーターが出力する event_id は `GW_ROUTE`（バックエンド選択、INFO）、`GW_OK`（転送成功、INFO）、`GW_ERR`（リクエスト不正・501・バックエンドエラー等、WARN/ERROR）であり、上記「PoC」表の `PLMN_ROUTE_MATCH` 等とは一致していない（D-04 の記載とも差異あり）。本版では既存部分の記載は変更していない。
-
 #### ログ出力例
 
 ```json
 {
-  "time": "2026-01-05T12:00:00.000Z",
+  "time": "2026-10-04T12:00:00.000+09:00",
   "level": "INFO",
+  "msg": "backend selected",
   "app": "vector-gateway",
-  "event_id": "BACKEND_INTERNAL_CALL",
   "trace_id": "550e8400-e29b-...",
-  "msg": "calling internal vector API",
-  "imsi": "44010*****890",
+  "event_id": "GW_ROUTE",
+  "imsi": "440101********0",
   "backend_id": "00",
-  "backend_name": "vector-api"
+  "backend_name": "Internal Vector API"
 }
 ```
 
@@ -1079,31 +1154,32 @@ Vector Gatewayにおいて、以下のevent_idを含むログ出力時にマス�
 
 | event_id | 出力箇所 | imsiフィールド |
 |----------|---------|---------------|
-| `PLMN_ROUTE_MATCH` | PLMNマッチ時 | マスキング対象 |
-| `PLMN_ROUTE_UNMATCH` | PLMNマップ未登録時 | マスキング対象 |
-| `BACKEND_INTERNAL_CALL` | 内部API呼び出し時 | マスキング対象 |
-| `BACKEND_INTERNAL_ERR` | 内部API呼び出し失敗時 | マスキング対象 |
+| `GW_ROUTE` | バックエンド選択時 | マスキング対象 |
+| `GW_OK` | ベクター取得成功時 | マスキング対象 |
+| `GW_ERR` | IMSI形式不正・501・ルーティング／バックエンドエラー時（`invalid request body` は `imsi` なし） | マスキング対象 |
 | `BACKEND_EXTERNAL_CALL` | 外部API（aka-only-server）呼び出し成功時 | マスキング対象 |
 | `BACKEND_EXTERNAL_ERR` | 外部API（aka-only-server）呼び出し失敗時 | マスキング対象（エラー文からも URL を除去し、生IMSIを出さない） |
-| `GW_REQUEST_OK` | リクエスト成功時 | マスキング対象 |
 
-**実装例（セクション3.5/4.2のコード修正）:**
+**実装例（`internal/handler/vector.go`）:**
 
 ```go
-// ルーティングロジック内のログ出力
-slog.Debug("PLMN matched",
-    "event_id", "PLMN_ROUTE_MATCH",
-    "plmn", extractPLMN(imsi),
-    "imsi", logging.MaskIMSI(imsi, cfg.LogMaskIMSI),  // 環境変数で制御
-    "backend_id", backendID)
-
-// 内部バックエンド呼び出し
-slog.Info("calling internal vector API",
-    "event_id", "BACKEND_INTERNAL_CALL",
+// バックエンド選択
+slog.Info("backend selected",
     "trace_id", traceID,
-    "imsi", logging.MaskIMSI(req.IMSI, cfg.LogMaskIMSI),  // 環境変数で制御
-    "backend_id", "00",
-    "backend_name", "vector-api")
+    "event_id", "GW_ROUTE",
+    "imsi", logging.MaskIMSI(req.IMSI, h.cfg.LogMaskIMSI), // 環境変数で制御
+    "backend_id", b.ID(),
+    "backend_name", b.Name(),
+)
+
+// ベクター取得成功
+slog.Info("vector forwarded",
+    "trace_id", traceID,
+    "event_id", "GW_OK",
+    "imsi", logging.MaskIMSI(req.IMSI, h.cfg.LogMaskIMSI),
+    "backend_id", b.ID(),
+    "http_status", http.StatusOK,
+)
 ```
 
 #### 9.3.5 注意事項
@@ -1201,7 +1277,7 @@ D-12: Vector Gateway詳細設計書 (未) ◄── 新規追加
 |-----|---------------|-----------|---------|
 | D-01 | ミニPC版設計仕様書 | r10 | 構成図・環境変数の説明に接続方式 `01` を追加 |
 | D-03 | Vector-APIインターフェース定義書 | r6 | Vector Gateway が 403 を返す場合があることを追記 |
-| D-04 | ログ仕様設計書 | r19 | `BACKEND_EXTERNAL_CALL` / `BACKEND_EXTERNAL_ERR` を実装済みに、`cause` フィールド追加 |
+| D-04 | ログ仕様設計書 | r19 | `BACKEND_EXTERNAL_CALL` / `BACKEND_EXTERNAL_ERR` を実装済みに、`cause` フィールド追加。§3.3 の Vector Gateway の event_id を実装（`GW_ROUTE` / `GW_OK` / `GW_ERR`）に合わせて修正 |
 | D-06 | エラーハンドリング詳細設計書 | r7 | aka-only-server のエラー変換を追記 |
 | D-08 | インフラ設定・運用設計書 | r14 | compose の変更、共有ネットワーク、証明書の配置 |
 | B-02 | アプリケーションデプロイ手順書 | r10 | aka-only-server への接続手順 |
@@ -1260,4 +1336,4 @@ D-12: Vector Gateway詳細設計書 (未) ◄── 新規追加
 | r2 | 2026-01-18 | ドキュメント名変更（実装レベル検討書→詳細設計書）、IMSIマスキング設定追加: セクション5.1/5.2に環境変数LOG_MASK_IMSI追加、セクション6.2の設定構造体更新、セクション9.3新設（マスキング仕様・実装・適用箇所） |
 | r3 | 2026-01-26 | インフラ基盤統一: セクション4.6新設（Dockerfile方針 - ベースイメージdebian:bookworm-slim、curl/ca-certificates導入、ヘルスチェックcurl -fsS） |
 | r4 | 2026-02-18 | ディレクトリ構造全面更新、関連ドキュメント版数更新 |
-| r5 | 2026-10-04 | 接続方式ID `01`（aka-only-server、mTLS/平文HTTP）を追加: 1.1/1.2/1.4更新、2.1〜2.3（構成図・通信フロー・責務）更新、3.1/3.2更新、3.4/3.5・4.3・4.4を実装コードに合わせて更新（レジストリの `01` 登録条件）、4.5新設（IF変換・エラー変換・TLS設定・やらないこと）、旧4.5/4.6を4.6/4.7に繰り下げ、5.1/5.2更新（`VECTOR_GATEWAY_AKAONLY_*`、docker-compose.yml を実ファイルに同期）、5.3〜5.5新設（起動時検証・起動ログ/WARN、docker-compose.aka-av.yml・証明書配置・接続手順、運用上の注意）、6.1/6.2を実装に合わせて更新、7.3に403追加、8.2・9.1・9.2・9.3.3・9.3.4で `BACKEND_EXTERNAL_CALL` / `BACKEND_EXTERNAL_ERR` を実装済みに更新、10.2/10.3・11・12.4・13・14.2更新 |
+| r5 | 2026-10-04 | 接続方式ID `01`（aka-only-server、mTLS/平文HTTP）を追加: 1.1/1.2/1.4更新、2.1〜2.3（構成図・通信フロー・責務）更新、3.1/3.2更新、3.4/3.5・4.3・4.4を実装コードに合わせて更新（レジストリの `01` 登録条件）、4.5新設（IF変換・エラー変換・TLS設定・やらないこと）、旧4.5/4.6を4.6/4.7に繰り下げ、5.1/5.2更新（`VECTOR_GATEWAY_AKAONLY_*`、docker-compose.yml を実ファイルに同期）、5.3〜5.5新設（起動時検証・起動ログ/WARN、docker-compose.aka-av.yml・証明書配置・接続手順、運用上の注意）、6.1/6.2を実装に合わせて更新、7.3に403追加、8.2・9.1・9.2・9.3.3・9.3.4で `BACKEND_EXTERNAL_CALL` / `BACKEND_EXTERNAL_ERR` を実装済みに更新、10.2/10.3・11・12.4・13・14.2更新。既存記載の実装との不一致を修正（4.2の内部バックエンドのコードを実装 `internal/backend/internal.go` に合わせて更新、7.3のエラー応答を ProblemDetail の実際の `title` / `detail` に修正、8.1・9.2・9.3.4のevent_idを実装の `GW_ROUTE` / `GW_OK` / `GW_ERR`（`msg` で区別）に置き換え（`PLMN_ROUTE_MATCH` / `PLMN_ROUTE_UNMATCH` / `BACKEND_INTERNAL_CALL` / `BACKEND_INTERNAL_ERR` / `REQUEST_INVALID` / `BACKEND_NOT_IMPLEMENTED` / `GW_REQUEST_OK` を削除）、9.2のログ出力例・9.3.4の実装例を実装に合わせて修正、9.2の差異注記を削除、12.4のD-04行に追記）。lnav のクエリを実際の動作（lnav 0.11.2）に合わせて修正: 9.2 の絞り込み例を `logline`（選択中の1行のみ）から全行を対象とする `aka_radius_log` テーブルに変更 |

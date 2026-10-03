@@ -129,6 +129,9 @@ services:
       REDIS_PORT: "6379"
       REDIS_PASS: ${VALKEY_PASSWORD}
       LOG_MASK_IMSI: ${LOG_MASK_IMSI:-true}
+      # テストベクターモード（開発・テスト専用。本番では有効にしないこと）
+      TEST_VECTOR_ENABLED: ${TEST_VECTOR_ENABLED:-false}
+      TEST_VECTOR_IMSI_PREFIX: ${TEST_VECTOR_IMSI_PREFIX:-00101}
     depends_on:
       valkey:
         condition: service_healthy
