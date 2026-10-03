@@ -1,7 +1,10 @@
 # INT-GW-PLMN-010対応: 未実装バックエンドPLMNルーティング
 # config: config_testvector.yaml
-# 前提: VECTOR_GATEWAY_MODE=gateway, VECTOR_GATEWAY_PLMN_MAP に 441999:01 を含むこと
-# 動作: PLMN 441999 → BackendID 01（未登録）→ 501 Not Implemented → Access-Reject
+# 前提: VECTOR_GATEWAY_MODE=gateway, VECTOR_GATEWAY_PLMN_MAP に 441999:02 を含むこと
+#       （01 は aka-only-server として実装済み。VECTOR_GATEWAY_AKAONLY_URL 設定時は
+#        441999:01 だと aka-only-server に向き 404 で Reject になるため、未実装IDの 02 を使う。
+#        URL 未設定の環境では従来どおり 441999:01 でも 501 になる）
+# 動作: PLMN 441999 → BackendID 02（未実装）→ 501 Not Implemented → Access-Reject
 # 備考: 認証ベクター取得前にGatewayで拒否されるため、SIMパラメータは不問
 version: 1
 name: reject_plmn_not_implemented

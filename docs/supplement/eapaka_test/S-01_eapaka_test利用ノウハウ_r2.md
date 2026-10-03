@@ -1,7 +1,8 @@
-# S-01 eapaka_test 利用ノウハウ (r1)
+# S-01 eapaka_test 利用ノウハウ (r2)
 
-**版数:** r1
+**版数:** r2
 **作成日:** 2026-02-24
+**改版日:** 2026-10-04
 **分類:** 補足資料
 
 ---
@@ -25,14 +26,14 @@ eapaka_test は、RADIUS 経由で EAP-AKA / EAP-AKA' を実行するサーバ�
 
 | テストフェーズ | ドキュメント | 用途 |
 |:-------------|:-----------|:-----|
-| 結合テスト | T-03 結合テスト仕様書 | テストベクターモードでの EAP-AKA/AKA' 認証検証（G2〜G5, G7〜G9） |
-| E2Eテスト | T-04 E2Eテスト仕様書 | 擬似E2E（実設定モード）での認証・課金フロー検証（E2E-101〜105） |
+| 結合テスト | T-03 結合テスト仕様書 | テストベクターモードでの EAP-AKA/AKA' 認証検証（G2〜G5, G7〜G9）、接続方式01（aka-only-server）結合（G10） |
+| E2Eテスト | T-04 E2Eテスト仕様書 | 擬似E2E（実設定モード）での認証・課金フロー検証（E2E-101〜105）、aka-only-server 接続（E2E-301〜316） |
 
 ### 1.3 supplement 内ファイル構成
 
 ```
 docs/supplement/eapaka_test/
-├── S-01_eapaka_test利用ノウハウ_r1.md    # 本ドキュメント
+├── S-01_eapaka_test利用ノウハウ_r2.md    # 本ドキュメント
 ├── configs/                               # 設定ファイル（5件）
 │   ├── example.yaml                       # サンプル設定ファイル
 │   ├── config_testvector.yaml             # テストベクターモード用（AMF=B9B9）
@@ -154,6 +155,8 @@ IMSI 003 専用の設定ファイル。AMF が `8000` である点が `config_te
 6. `radius.secret` — RADIUS 共有秘密（Valkey のクライアント登録 Secret と一致させること）
 7. `eap.aka_prime.net_name` / `identity.realm` — PLMN に応じたネットワーク名
 
+> **AKA' の `net_name` について（r2追記）**: eapaka_test は、サーバーが EAP-Request/AKA'-Challenge で送る AT_KDF_INPUT のネットワーク名を `eap.aka_prime.net_name` より優先して鍵導出に使う。本プロジェクトの auth-server が送る値は `EAP_AKA_PRIME_NETWORK_NAME`（既定 `"WLAN"`）であり、config やテストケースの `net_name` を変えても結果は変わらない。AKA' の鍵導出の不一致を疑う場合は auth-server 側の設定を確認すること。
+
 ---
 
 ## 4. テストケースファイル解説
@@ -225,6 +228,8 @@ EAP-AKA / AKA' 認証の基本フローを検証する。`identity` フィール
 #### PLMN ルーティング（1件）
 
 未実装バックエンド PLMN へのルーティングで Reject が返却されることを検証する。
+
+> **前提（r2更新）**: `reject_plmn_not_implemented.yaml`（INT-GW-PLMN-010）は `VECTOR_GATEWAY_PLMN_MAP` に **`441999:02`**（未実装ID、501）を含めて実行する。接続方式ID `01` は aka-only-server として実装済みで、`VECTOR_GATEWAY_AKAONLY_URL` を設定した環境では `441999:01` が aka-only-server に向き、未登録加入者として 404 → Reject になる（Reject だが理由が変わる）。`VECTOR_GATEWAY_AKAONLY_URL` が空の環境では従来どおり `441999:01` でも 501 になる。
 
 ---
 
@@ -333,6 +338,24 @@ docker compose exec valkey redis-cli -a "$VALKEY_PASSWORD" HSET sub:001010000000
 - `policy_wildcard_ssid_testvector.yaml` は IMSI `001010000000006` を identity で指定
 - → サーバー側 `sub:001010000000006` の SQN を `FF9BB4D0B607` に設定する必要がある
 
+### 6.5 IND と再同期（aka-only-server 相手の場合）（r2追記）
+
+eapaka_test はクライアント側 SQN を **IND（SQN の下位5ビット）ごとの配列**で管理し、受信した AUTN の SQN を同じ IND スロットの値と比較して fresh 判定する。そのため、再同期（Sync-Failure / AUTS）が起きるかどうかは、サーバーが送る SQN の IND と `sqn_initial_hex` の IND の組み合わせで決まる。
+
+| サーバー | SQN の増え方 | IND |
+|:--------|:-----------|:----|
+| 内部 Vector API | +32 固定 | 初期値の IND のまま変わらない |
+| aka-only-server（SQN 増加タイプ inc32、既定） | +32 | 0 のまま変わらない（登録時 SQN 既定 `000000000000`） |
+
+aka-only-server（T-03 G10 / T-04 E2E-301〜316）を相手に再同期を確認する場合は、次のようにする。
+
+1. 再同期用の config で `sim.sqn_initial_hex` を **IND=0 の高い値（例 `FF9BB4D0B600`）** にする。`sqn_store.path` は通常認証用と分ける
+2. `sqn.reset: true` のテストケース（`resync_aka_testvector.yaml` 等の `identity` を対象 IMSI に書き換えたもの）を実行する
+3. クライアント側 IND=0 スロットが高値になり、aka-only-server の SQN が古いと判定されて AUTS が送られ、再同期後に Accept となる
+4. 再同期が実際に起きたことを、vector-gateway の `BACKEND_EXTERNAL_CALL`（`resync=true`）または aka-only-server のログ（`resync:true`）で確認する
+
+> **注意**: 既存 config の `FF9BB4D0B607` は IND=7 のため、aka-only-server が使う IND=0 とは別スロットになる。この値のまま `sqn.reset: true` で実行しても再同期は起きずに Accept となり、**テストは PASS するが再同期を検証できていない**。内部 Vector API を相手にする T-03 G3（INT-003 系）でも同じ理由で再同期が起きないことがあるため、`EAP_RESYNC` / `SQN_RESYNC` ログの有無で判定すること。
+
 ---
 
 ## 7. config と IMSI の使い分け
@@ -381,6 +404,7 @@ eapaka_test のテストケースで `identity` を指定すると、config の 
 |:-----|:-----|:-----|
 | `SQN difference exceeds allowed range` | クライアント/サーバー間の SQN 乖離 | SQN リセット（セクション6.3） |
 | Resync 後も認証失敗 | SQN ストアファイルの IMSI 間干渉 | SQN ストアファイル削除 |
+| `sqn.reset: true` なのに再同期が起きず Accept | `sqn_initial_hex` の IND がサーバー側 SQN の IND と異なる | IND を合わせる（aka-only-server 相手なら `FF9BB4D0B600` 等。セクション6.5） |
 
 ### 8.4 Docker イメージ再ビルドの必要性
 
@@ -433,6 +457,15 @@ radclient -x -r 1 -t 3 127.0.0.1:1812 status TESTSECRET123 < /tmp/status.attrs
 
 > **SQN increment step**: テストベクターモードでは SQN increment step = 0x20（32）。テストを10回繰り返すだけで SQN が 320 進むため、繰り返しテスト時は定期的なリセットが有効。
 
+### 9.4 aka-only-server（接続方式01）相手での利用パターン（r2追記）
+
+- 対象は T-03 G10（INT-GW-AKAONLY-001〜015）と T-04 E2E-301〜316。事前準備・設定例・実行手順は T-03 (r8) セクション5.10 を参照
+- SIM パラメータ（Ki/OPc、AMF `8000`）は aka-only-server 側に登録し、eapaka_test の `sim.ki` / `sim.opc` / `sim.amf` をそれに合わせる（PoC の Valkey には `sub:` を登録しない。ポリシーは登録が必要）
+- `identity.realm` は PLMN に合わせる（PLMN 44010 なら `wlan.mnc010.mcc440.3gppnetwork.org`）
+- SQN ストアは config の `sim.imsi` をキーにするため、IMSI ごと・用途（通常 / 再同期）ごとに config と `sqn_store.path` を分ける
+- 再同期の確認は `sqn_initial_hex` を IND=0 の高値にする（セクション6.5）
+- AKA' の `net_name` は AT_KDF_INPUT が優先される（セクション3.5 の注記）
+
 ---
 
 ## 改版履歴
@@ -440,3 +473,4 @@ radclient -x -r 1 -t 3 127.0.0.1:1812 status TESTSECRET123 < /tmp/status.attrs
 | 版数 | 日付 | 内容 |
 |:----:|:-----|:-----|
 | r1 | 2026-02-24 | 初版作成 |
+| r2 | 2026-10-04 | Vector Gateway 接続方式01（aka-only-server）対応: 6.5「IND と再同期（aka-only-server 相手の場合）」・9.4「aka-only-server 相手での利用パターン」を追加、3.5 に AKA' の `net_name` は AT_KDF_INPUT が優先される旨を追記、4.3 の INT-GW-PLMN-010 の前提を `441999:02` に変更、8.3 に再同期不発の行を追加、1.2/1.3 を更新 |
