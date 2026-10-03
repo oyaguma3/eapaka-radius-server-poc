@@ -14,7 +14,10 @@ func TestNewRegistry(t *testing.T) {
 		InternalTimeout: 5 * time.Second,
 	}
 
-	r := NewRegistry(cfg)
+	r, err := NewRegistry(cfg)
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
 
 	// デフォルトバックエンドが登録されていることを確認
 	defaultBackend := r.Default()
@@ -31,7 +34,10 @@ func TestRegistryGet(t *testing.T) {
 		InternalURL:     "http://localhost:8080",
 		InternalTimeout: 5 * time.Second,
 	}
-	r := NewRegistry(cfg)
+	r, err := NewRegistry(cfg)
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
 
 	t.Run("existing backend", func(t *testing.T) {
 		b, err := r.Get("00")

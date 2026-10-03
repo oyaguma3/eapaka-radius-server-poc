@@ -279,3 +279,126 @@ func TestValidateBackendID(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadAKAOnlyDefaults(t *testing.T) {
+	t.Setenv("VECTOR_GATEWAY_INTERNAL_URL", "http://localhost:9090")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.AKAOnlyURL != "" {
+		t.Errorf("AKAOnlyURL = %q, want empty", cfg.AKAOnlyURL)
+	}
+	if cfg.AKAOnlyTimeout.String() != "5s" {
+		t.Errorf("AKAOnlyTimeout = %v, want 5s", cfg.AKAOnlyTimeout)
+	}
+	if cfg.AKAOnlyEnabled() {
+		t.Error("AKAOnlyEnabled() = true, want false")
+	}
+}
+
+func TestLoadAKAOnly(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     map[string]string
+		wantErr bool
+		wantURL string
+		wantTLS bool
+	}{
+		{
+			name: "https with certs",
+			env: map[string]string{
+				"VECTOR_GATEWAY_AKAONLY_URL":         "https://aka-only-server:8443/",
+				"VECTOR_GATEWAY_AKAONLY_CLIENT_CERT": "/certs/av-client.pem",
+				"VECTOR_GATEWAY_AKAONLY_SERVER_CERT": "/certs/av-server.pem",
+			},
+			wantURL: "https://aka-only-server:8443",
+			wantTLS: true,
+		},
+		{
+			name: "http without certs",
+			env: map[string]string{
+				"VECTOR_GATEWAY_AKAONLY_URL": "http://aka-only-server:8080",
+			},
+			wantURL: "http://aka-only-server:8080",
+			wantTLS: false,
+		},
+		{
+			name: "http ignores certs",
+			env: map[string]string{
+				"VECTOR_GATEWAY_AKAONLY_URL":         "http://aka-only-server:8080//",
+				"VECTOR_GATEWAY_AKAONLY_CLIENT_CERT": "/nonexistent.pem",
+			},
+			wantURL: "http://aka-only-server:8080",
+			wantTLS: false,
+		},
+		{
+			name: "https without client cert",
+			env: map[string]string{
+				"VECTOR_GATEWAY_AKAONLY_URL":         "https://aka-only-server:8443",
+				"VECTOR_GATEWAY_AKAONLY_SERVER_CERT": "/certs/av-server.pem",
+			},
+			wantErr: true,
+		},
+		{
+			name: "https without server cert",
+			env: map[string]string{
+				"VECTOR_GATEWAY_AKAONLY_URL":         "https://aka-only-server:8443",
+				"VECTOR_GATEWAY_AKAONLY_CLIENT_CERT": "/certs/av-client.pem",
+			},
+			wantErr: true,
+		},
+		{
+			name: "unsupported scheme",
+			env: map[string]string{
+				"VECTOR_GATEWAY_AKAONLY_URL": "ftp://aka-only-server",
+			},
+			wantErr: true,
+		},
+		{
+			name: "no scheme",
+			env: map[string]string{
+				"VECTOR_GATEWAY_AKAONLY_URL": "aka-only-server:8443",
+			},
+			wantErr: true,
+		},
+		{
+			name: "non-positive timeout",
+			env: map[string]string{
+				"VECTOR_GATEWAY_AKAONLY_URL":     "http://aka-only-server:8080",
+				"VECTOR_GATEWAY_AKAONLY_TIMEOUT": "0s",
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("VECTOR_GATEWAY_INTERNAL_URL", "http://localhost:9090")
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+
+			cfg, err := Load()
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("Load() expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if cfg.AKAOnlyURL != tt.wantURL {
+				t.Errorf("AKAOnlyURL = %q, want %q", cfg.AKAOnlyURL, tt.wantURL)
+			}
+			if !cfg.AKAOnlyEnabled() {
+				t.Error("AKAOnlyEnabled() = false, want true")
+			}
+			if cfg.AKAOnlyUseTLS() != tt.wantTLS {
+				t.Errorf("AKAOnlyUseTLS() = %v, want %v", cfg.AKAOnlyUseTLS(), tt.wantTLS)
+			}
+		})
+	}
+}
