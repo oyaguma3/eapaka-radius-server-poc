@@ -17,8 +17,10 @@ type Config struct {
 	// 内部Vector API接続先URL
 	InternalURL string `envconfig:"VECTOR_GATEWAY_INTERNAL_URL" required:"true"`
 
-	// 内部Vector APIへのタイムアウト
-	InternalTimeout time.Duration `envconfig:"VECTOR_GATEWAY_INTERNAL_TIMEOUT" default:"5s"`
+	// 内部Vector APIへのタイムアウト。
+	// auth-server の Vector Gateway 呼び出しタイムアウト（5秒）より短くし、バックエンド障害時に
+	// auth-server がタイムアウトする前に 502 を返せるようにする
+	InternalTimeout time.Duration `envconfig:"VECTOR_GATEWAY_INTERNAL_TIMEOUT" default:"3s"`
 
 	// PLMNマッピング文字列（"44010:01,44020:01" 形式）
 	PLMNMapRaw string `envconfig:"VECTOR_GATEWAY_PLMN_MAP" default:""`
@@ -35,8 +37,8 @@ type Config struct {
 	// aka-only-serverのAV用サーバー証明書（PEM）。これだけを信頼する
 	AKAOnlyServerCert string `envconfig:"VECTOR_GATEWAY_AKAONLY_SERVER_CERT" default:""`
 
-	// aka-only-serverへのタイムアウト
-	AKAOnlyTimeout time.Duration `envconfig:"VECTOR_GATEWAY_AKAONLY_TIMEOUT" default:"5s"`
+	// aka-only-serverへのタイムアウト（InternalTimeout と同じ理由で auth-server の5秒より短くする）
+	AKAOnlyTimeout time.Duration `envconfig:"VECTOR_GATEWAY_AKAONLY_TIMEOUT" default:"3s"`
 
 	// サーバー設定
 	ListenAddr  string `envconfig:"LISTEN_ADDR" default:":8080"`

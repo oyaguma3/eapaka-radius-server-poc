@@ -1,4 +1,4 @@
-# D-01 ミニPC版 EAP-AKA RADIUS PoC環境 設計仕様書 (r14)
+# D-01 ミニPC版 EAP-AKA RADIUS PoC環境 設計仕様書 (r15)
 
 ## 1. システム概要
 
@@ -141,8 +141,10 @@ Auth ServerからVector Gateway、Vector GatewayからVector API（および aka
 | 接続 | タイムアウト | 備考 |
 |------|------------|------|
 | Auth Server → Vector Gateway | 5秒 | 既存のVector API接続設定を継承 |
-| Vector Gateway → Vector API | 5秒 | `VECTOR_GATEWAY_INTERNAL_TIMEOUT` で設定 |
-| Vector Gateway → aka-only-server（接続方式01、任意） | 5秒 | `VECTOR_GATEWAY_AKAONLY_TIMEOUT` で設定。HTTPS + mTLS（既定）または平文HTTP |
+| Vector Gateway → Vector API | 3秒 | `VECTOR_GATEWAY_INTERNAL_TIMEOUT` で設定 |
+| Vector Gateway → aka-only-server（接続方式01、任意） | 3秒 | `VECTOR_GATEWAY_AKAONLY_TIMEOUT` で設定。HTTPS + mTLS（既定）または平文HTTP |
+
+> **注記:** Vector Gateway → バックエンドのタイムアウトは、Auth Server → Vector Gateway のタイムアウト（5秒）より短くする。バックエンド障害時に Vector Gateway が 502 を返す前に Auth Server がタイムアウトしないようにするためである（設定値が5秒以上なら Vector Gateway が起動時に WARN を出す。D-12 5.3節）。
 
 ## 4. ネットワーク・セキュリティ設定
 
@@ -324,13 +326,13 @@ services:
       VECTOR_GATEWAY_MODE: ${VECTOR_GATEWAY_MODE:-gateway}
       VECTOR_GATEWAY_INTERNAL_URL: http://vector-api:8080
       VECTOR_GATEWAY_PLMN_MAP: ${VECTOR_GATEWAY_PLMN_MAP:-}
-      VECTOR_GATEWAY_INTERNAL_TIMEOUT: ${VECTOR_GATEWAY_INTERNAL_TIMEOUT:-5s}
+      VECTOR_GATEWAY_INTERNAL_TIMEOUT: ${VECTOR_GATEWAY_INTERNAL_TIMEOUT:-3s}
       # aka-only-server（接続方式ID:01）。URLが空なら01は無効
       VECTOR_GATEWAY_AKAONLY_URL: ${VECTOR_GATEWAY_AKAONLY_URL:-}
       VECTOR_GATEWAY_AKAONLY_CLIENT_CERT: ${VECTOR_GATEWAY_AKAONLY_CLIENT_CERT:-}
       VECTOR_GATEWAY_AKAONLY_CLIENT_KEY: ${VECTOR_GATEWAY_AKAONLY_CLIENT_KEY:-}
       VECTOR_GATEWAY_AKAONLY_SERVER_CERT: ${VECTOR_GATEWAY_AKAONLY_SERVER_CERT:-}
-      VECTOR_GATEWAY_AKAONLY_TIMEOUT: ${VECTOR_GATEWAY_AKAONLY_TIMEOUT:-5s}
+      VECTOR_GATEWAY_AKAONLY_TIMEOUT: ${VECTOR_GATEWAY_AKAONLY_TIMEOUT:-3s}
       LOG_MASK_IMSI: ${LOG_MASK_IMSI:-true}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
@@ -482,12 +484,12 @@ Vector Gatewayの動作を制御する環境変数。
 | `VECTOR_GATEWAY_MODE` | No | `gateway` | 動作モード。`gateway`: PLMNルーティング、`passthrough`: 全て内部APIへ転送 |
 | `VECTOR_GATEWAY_INTERNAL_URL` | Yes | - | 内部Vector APIのURL |
 | `VECTOR_GATEWAY_PLMN_MAP` | No | 空文字列 | PLMNマッピング（`PLMN:ID,PLMN:ID,...` 形式） |
-| `VECTOR_GATEWAY_INTERNAL_TIMEOUT` | No | `5s` | 内部API呼び出しタイムアウト |
+| `VECTOR_GATEWAY_INTERNAL_TIMEOUT` | No | `3s` | 内部API呼び出しタイムアウト。Auth Server のタイムアウト（5秒）より短くする（3.5節） |
 | `VECTOR_GATEWAY_AKAONLY_URL` | No | 空文字列 | aka-only-server（接続方式01）のベースURL。例: `https://aka-only-server:8443`。`https://` で mTLS、`http://` で平文HTTP（同一ホスト限定）。空なら `01` は無効（`01` に向けたPLMNは501） |
 | `VECTOR_GATEWAY_AKAONLY_CLIENT_CERT` | https時Yes | 空文字列 | クライアント証明書のPEM（コンテナ内パス、例: `/certs/av-client.pem`）。証明書と秘密鍵が1ファイルでよい |
 | `VECTOR_GATEWAY_AKAONLY_CLIENT_KEY` | No | 空文字列 | 秘密鍵のPEM。空なら `CLIENT_CERT` と同じファイルから読む |
 | `VECTOR_GATEWAY_AKAONLY_SERVER_CERT` | https時Yes | 空文字列 | aka-only-server の AV 用サーバー証明書のPEM（例: `/certs/av-server.pem`）。これだけを信頼する |
-| `VECTOR_GATEWAY_AKAONLY_TIMEOUT` | No | `5s` | aka-only-server 呼び出しタイムアウト |
+| `VECTOR_GATEWAY_AKAONLY_TIMEOUT` | No | `3s` | aka-only-server 呼び出しタイムアウト。Auth Server のタイムアウト（5秒）より短くする（3.5節） |
 | `AKA_SHARED_NETWORK` | No | `aka-av` | `docker-compose.aka-av.yml` で参加する共有ネットワーク名（compose の変数） |
 
 > **注記:** `VECTOR_GATEWAY_AKAONLY_*` の設定が不正な場合（URL のスキーム不正、https で証明書未指定、証明書ファイルが読めない等）、vector-gateway は起動しない。起動時の検証・ログの詳細は D-12 5.3節を参照。
@@ -546,3 +548,4 @@ VECTOR_GATEWAY_PLMN_MAP=""
 | r12 | 2026-10-04 | auth-server の LOG_LEVEL 対応に伴う compose 修正の反映: §7 docker-compose.yml の auth-server / vector-gateway / vector-api の environment に `LOG_LEVEL: ${LOG_LEVEL:-INFO}` を追加（実ファイルと一致）し、対象サービス（acct-server は INFO 固定のため渡さない）の注記を追加 |
 | r13 | 2026-10-04 | acct-server の LOG_LEVEL 対応に伴う compose 修正の反映: §7 docker-compose.yml の acct-server の environment に `LOG_LEVEL: ${LOG_LEVEL:-INFO}` を追加（実ファイルと一致）し、ログレベルの注記を4サーバー（auth-server / acct-server / vector-gateway / vector-api）とも `.env` の値を渡す形に修正（「acct-server は INFO 固定のため渡さない」を削除） |
 | r14 | 2026-10-04 | §3.3 Valkeyキースキーマ概要を実装（D-02 r17）に合わせて修正: 実装に存在しない `audit:log`（監査ログ）と `acct:{ID}`（課金セッション）を削除し、`sess:{UUID}`（アクティブセッション）・`idx:user:{IMSI}`（ユーザー検索インデックス）・`acct:seen:{Acct-Session-Id}`（Accounting重複検出キャッシュ）を追加。`sub:{IMSI}` の使用コンポーネントから Auth Server を削除（参照するのは Vector API と Admin TUI）、`eap:{UUID}` の用途を EAP認証コンテキストに修正。監査ログは Valkey に保存せず Admin TUI の標準出力に JSON で出力する旨の注記を追加し、§3.1 Admin TUI の監査ログの説明も同様に修正 |
+| r15 | 2026-10-04 | vector-gateway のバックエンド向けタイムアウトを auth-server より短くした実装修正の反映: §3.5 Vector Gateway接続設定の Vector Gateway → Vector API / aka-only-server のタイムアウトを 5秒 → 3秒に修正し、Auth Server（5秒）より短くする理由の注記を追加。§7 docker-compose.yml の `VECTOR_GATEWAY_INTERNAL_TIMEOUT` / `VECTOR_GATEWAY_AKAONLY_TIMEOUT` の既定値を `3s` に修正（実ファイルと一致）、§8 環境変数表の既定値を `3s` に修正 |

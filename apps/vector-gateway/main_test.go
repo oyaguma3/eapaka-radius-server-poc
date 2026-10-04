@@ -112,3 +112,50 @@ func TestInitLogger(t *testing.T) {
 		}
 	}
 }
+
+func TestWarnBackendConfig_Timeouts(t *testing.T) {
+	tests := []struct {
+		name     string
+		internal time.Duration
+		akaOnly  time.Duration
+		akaURL   string
+		want     []string // 警告が出るべき設定名
+	}{
+		{"defaults are shorter than auth-server", 3 * time.Second, 3 * time.Second, "http://aka-only-server:8080", nil},
+		{"internal timeout equal to auth-server", 5 * time.Second, 3 * time.Second, "", []string{"VECTOR_GATEWAY_INTERNAL_TIMEOUT"}},
+		{"akaonly timeout longer than auth-server", 3 * time.Second, 10 * time.Second, "http://aka-only-server:8080", []string{"VECTOR_GATEWAY_AKAONLY_TIMEOUT"}},
+		{"akaonly timeout ignored when not configured", 3 * time.Second, 10 * time.Second, "", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+			defer slog.SetDefault(prev)
+
+			cfg := config.Config{
+				Mode:            "gateway",
+				InternalURL:     "http://localhost:8080",
+				InternalTimeout: tt.internal,
+				AKAOnlyURL:      tt.akaURL,
+				AKAOnlyTimeout:  tt.akaOnly,
+			}
+			reg, err := backend.NewRegistry(&cfg)
+			if err != nil {
+				t.Fatalf("NewRegistry() error = %v", err)
+			}
+			warnBackendConfig(&cfg, nil, reg)
+
+			logs := buf.String()
+			for _, name := range []string{"VECTOR_GATEWAY_INTERNAL_TIMEOUT", "VECTOR_GATEWAY_AKAONLY_TIMEOUT"} {
+				want := false
+				for _, w := range tt.want {
+					want = want || w == name
+				}
+				if got := strings.Contains(logs, `"setting":"`+name+`"`); got != want {
+					t.Errorf("warning for %s = %v, want %v: %s", name, got, want, logs)
+				}
+			}
+		})
+	}
+}

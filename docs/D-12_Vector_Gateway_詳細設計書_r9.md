@@ -1,4 +1,4 @@
-# D-12 Vector Gateway 詳細設計書 (r8)
+# D-12 Vector Gateway 詳細設計書 (r9)
 
 ## 1. 概要
 
@@ -608,7 +608,8 @@ VECTOR_GATEWAY_PLMN_MAP=""
 # -----------------------------------------------------------------------------
 # タイムアウト設定
 # -----------------------------------------------------------------------------
-VECTOR_GATEWAY_INTERNAL_TIMEOUT=5s
+# auth-server の Vector Gateway 呼び出しタイムアウト（5秒）より短くすること（5.3節）
+VECTOR_GATEWAY_INTERNAL_TIMEOUT=3s
 
 # -----------------------------------------------------------------------------
 # aka-only-server 接続設定（接続方式ID:01、オプション）
@@ -623,8 +624,8 @@ VECTOR_GATEWAY_AKAONLY_CLIENT_CERT=
 VECTOR_GATEWAY_AKAONLY_CLIENT_KEY=
 # aka-only-server の AV 用サーバー証明書（PEM。これだけを信頼する）
 VECTOR_GATEWAY_AKAONLY_SERVER_CERT=
-# 呼び出しタイムアウト
-VECTOR_GATEWAY_AKAONLY_TIMEOUT=5s
+# 呼び出しタイムアウト（INTERNAL_TIMEOUT と同じく5秒より短くすること）
+VECTOR_GATEWAY_AKAONLY_TIMEOUT=3s
 
 # -----------------------------------------------------------------------------
 # ログ設定
@@ -646,7 +647,7 @@ LOG_MASK_IMSI=true
 | `VECTOR_GATEWAY_AKAONLY_CLIENT_CERT` | （空） | クライアント証明書の PEM。`client gen-cert` の出力のように証明書と秘密鍵が1ファイルでよい |
 | `VECTOR_GATEWAY_AKAONLY_CLIENT_KEY` | （空） | 秘密鍵の PEM。空なら `CLIENT_CERT` と同じファイルから読む |
 | `VECTOR_GATEWAY_AKAONLY_SERVER_CERT` | （空） | aka-only-server の AV 用サーバー証明書（`av-cert` の出力）。これだけを信頼する |
-| `VECTOR_GATEWAY_AKAONLY_TIMEOUT` | `5s` | 呼び出しのタイムアウト |
+| `VECTOR_GATEWAY_AKAONLY_TIMEOUT` | `3s` | 呼び出しのタイムアウト。auth-server の呼び出しタイムアウト（5秒）より短くする（5.3節） |
 
 ### 5.2 docker-compose.yml（抜粋）
 
@@ -674,13 +675,13 @@ services:
       VECTOR_GATEWAY_MODE: ${VECTOR_GATEWAY_MODE:-gateway}
       VECTOR_GATEWAY_INTERNAL_URL: http://vector-api:8080
       VECTOR_GATEWAY_PLMN_MAP: ${VECTOR_GATEWAY_PLMN_MAP:-}
-      VECTOR_GATEWAY_INTERNAL_TIMEOUT: ${VECTOR_GATEWAY_INTERNAL_TIMEOUT:-5s}
+      VECTOR_GATEWAY_INTERNAL_TIMEOUT: ${VECTOR_GATEWAY_INTERNAL_TIMEOUT:-3s}
       # aka-only-server（接続方式ID:01）。URLが空なら01は無効
       VECTOR_GATEWAY_AKAONLY_URL: ${VECTOR_GATEWAY_AKAONLY_URL:-}
       VECTOR_GATEWAY_AKAONLY_CLIENT_CERT: ${VECTOR_GATEWAY_AKAONLY_CLIENT_CERT:-}
       VECTOR_GATEWAY_AKAONLY_CLIENT_KEY: ${VECTOR_GATEWAY_AKAONLY_CLIENT_KEY:-}
       VECTOR_GATEWAY_AKAONLY_SERVER_CERT: ${VECTOR_GATEWAY_AKAONLY_SERVER_CERT:-}
-      VECTOR_GATEWAY_AKAONLY_TIMEOUT: ${VECTOR_GATEWAY_AKAONLY_TIMEOUT:-5s}
+      VECTOR_GATEWAY_AKAONLY_TIMEOUT: ${VECTOR_GATEWAY_AKAONLY_TIMEOUT:-3s}
       LOG_MASK_IMSI: ${LOG_MASK_IMSI:-true}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
@@ -714,8 +715,11 @@ URL が空の場合は `01` を使わないため検証しない。
 
 | 条件 | WARN メッセージ | 付加項目 |
 |------|----------------|---------|
+| `VECTOR_GATEWAY_INTERNAL_TIMEOUT`、または `01` が有効（URL 設定時）の場合の `VECTOR_GATEWAY_AKAONLY_TIMEOUT` が auth-server の呼び出しタイムアウト（5秒）以上（passthroughモードでも判定する） | `backend timeout should be shorter than the auth-server timeout; auth-server may time out before receiving 502` | `setting`（設定名）, `timeout`（設定値）, `auth_server_timeout`（`5s`） |
 | `http://` で接続する | `aka-only-server is connected over plain HTTP; CK/IK are transmitted unencrypted` | `akaonly_url` |
 | PLMNマップが登録されていないバックエンドID（例: URL 空なのに `01`、または `02`〜`99`）を参照している（passthroughモードでは出さない） | `PLMN map refers to a backend that is not configured; requests will fail with 501` | `plmn`, `backend_id` |
+
+**バックエンド向けタイムアウトの考え方:** auth-server は Vector Gateway の呼び出しに接続2秒・リクエスト5秒のタイムアウトを持つ（D-09 §7.2、`apps/auth-server/internal/config/constants.go` の `VectorConnectTimeout` / `VectorRequestTimeout`）。gateway のバックエンド向けタイムアウト（`VECTOR_GATEWAY_INTERNAL_TIMEOUT` / `VECTOR_GATEWAY_AKAONLY_TIMEOUT`）がこれと同じか長いと、バックエンド（vector-api / aka-only-server）障害時に gateway が 502 を返す前に auth-server がタイムアウトし、auth-server のログが `VECTOR_API_ERR`（`http_status`=502）になるか `VECTOR_CONN_ERR` になるかが環境（停止したコンテナ名の名前解決にかかる時間など）次第で変わる。このため既定値を 3s とし、auth-server が先に 502 を受け取るようにしている。WARN の判定に使う auth-server のタイムアウトは `main.go` の定数 `authServerVectorTimeout`（5秒）で、auth-server の `VectorRequestTimeout` と同じ値である。どちらかを変更するときは両方を合わせること。
 
 起動ログ `starting vector-gateway`（INFO）には `listen_addr` / `log_level` / `mode` / `plmn_map_entries` に加えて、次の項目を出力する。
 
@@ -868,8 +872,10 @@ type Config struct {
     // 内部Vector API接続先URL
     InternalURL string `envconfig:"VECTOR_GATEWAY_INTERNAL_URL" required:"true"`
 
-    // 内部Vector APIへのタイムアウト
-    InternalTimeout time.Duration `envconfig:"VECTOR_GATEWAY_INTERNAL_TIMEOUT" default:"5s"`
+    // 内部Vector APIへのタイムアウト。
+    // auth-server の Vector Gateway 呼び出しタイムアウト（5秒）より短くし、バックエンド障害時に
+    // auth-server がタイムアウトする前に 502 を返せるようにする
+    InternalTimeout time.Duration `envconfig:"VECTOR_GATEWAY_INTERNAL_TIMEOUT" default:"3s"`
 
     // PLMNマッピング文字列（"44010:01,44020:01" 形式）
     PLMNMapRaw string `envconfig:"VECTOR_GATEWAY_PLMN_MAP" default:""`
@@ -886,8 +892,8 @@ type Config struct {
     // aka-only-serverのAV用サーバー証明書（PEM）。これだけを信頼する
     AKAOnlyServerCert string `envconfig:"VECTOR_GATEWAY_AKAONLY_SERVER_CERT" default:""`
 
-    // aka-only-serverへのタイムアウト
-    AKAOnlyTimeout time.Duration `envconfig:"VECTOR_GATEWAY_AKAONLY_TIMEOUT" default:"5s"`
+    // aka-only-serverへのタイムアウト（InternalTimeout と同じ理由で auth-server の5秒より短くする）
+    AKAOnlyTimeout time.Duration `envconfig:"VECTOR_GATEWAY_AKAONLY_TIMEOUT" default:"3s"`
 
     // サーバー設定
     ListenAddr  string `envconfig:"LISTEN_ADDR" default:":8080"`
@@ -1347,3 +1353,4 @@ D-12: Vector Gateway詳細設計書 (未) ◄── 新規追加
 | r6 | 2026-10-04 | compose が LOG_LEVEL を auth-server / vector-gateway / vector-api に渡すよう修正されたことの反映: §5.2 docker-compose.yml（抜粋）の auth-server / vector-gateway の environment に `LOG_LEVEL: ${LOG_LEVEL:-INFO}` を追加し、対象サービスと vector-gateway でのレベル変換の注記を追加、§5.1 環境変数（PoC版）のログ設定に `LOG_LEVEL` を追加（vector-gateway の実装は変更なし） |
 | r7 | 2026-10-04 | vector-gateway のログレベル変換を `pkg/logging.ParseLevel` に統一した実装修正の反映: §5.2 注記の `LOG_LEVEL` の変換を `initLogger` 独自の変換から `pkg/logging.ParseLevel`（`WARNING` も `WARN`、前後の空白を無視）に修正 |
 | r8 | 2026-10-04 | acct-server の LOG_LEVEL 対応（compose で acct-server にも `LOG_LEVEL` を渡す）の反映: §5.2 注記の `LOG_LEVEL` を渡す対象を4サーバー（auth-server / acct-server / vector-gateway / vector-api）に修正（「acct-server は LOG_LEVEL 未対応のため渡さない」を削除） |
+| r9 | 2026-10-04 | vector-gateway のバックエンド向けタイムアウトを auth-server より短くした実装修正の反映: §5.1 環境変数（PoC版）・接続方式 `01` の環境変数表・§5.2 docker-compose.yml（抜粋）・§6.2 設定構造体の `VECTOR_GATEWAY_INTERNAL_TIMEOUT` / `VECTOR_GATEWAY_AKAONLY_TIMEOUT` の既定値を 5s → 3s に修正。§5.3 の起動時 WARN に `backend timeout should be shorter than the auth-server timeout; auth-server may time out before receiving 502`（`setting` / `timeout` / `auth_server_timeout`。AKAONLY は `01` 有効時のみ判定）を追加し、タイムアウトの考え方（auth-server の 5秒より短くする理由、定数 `authServerVectorTimeout` と auth-server の `VectorRequestTimeout` を合わせること）を追記 |

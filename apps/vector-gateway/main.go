@@ -88,6 +88,10 @@ func main() {
 	slog.Info("server stopped")
 }
 
+// authServerVectorTimeout は auth-server が Vector Gateway を呼び出すときのタイムアウト
+// （apps/auth-server/internal/config.VectorRequestTimeout と同じ値）。
+const authServerVectorTimeout = 5 * time.Second
+
 // akaOnlyTransport はaka-only-serverへの接続方式（mtls / plain / disabled）を返す。
 func akaOnlyTransport(cfg *config.Config) string {
 	switch {
@@ -102,6 +106,25 @@ func akaOnlyTransport(cfg *config.Config) string {
 
 // warnBackendConfig は起動を止めるほどではない設定上の注意をWARNログに出す。
 func warnBackendConfig(cfg *config.Config, plmnMap map[string]string, registry *backend.Registry) {
+	// バックエンド向けタイムアウトは auth-server の呼び出しタイムアウトより短くする必要がある
+	timeouts := []struct {
+		name string
+		d    time.Duration
+		used bool
+	}{
+		{"VECTOR_GATEWAY_INTERNAL_TIMEOUT", cfg.InternalTimeout, true},
+		{"VECTOR_GATEWAY_AKAONLY_TIMEOUT", cfg.AKAOnlyTimeout, cfg.AKAOnlyEnabled()},
+	}
+	for _, t := range timeouts {
+		if t.used && t.d >= authServerVectorTimeout {
+			slog.Warn("backend timeout should be shorter than the auth-server timeout; auth-server may time out before receiving 502",
+				"setting", t.name,
+				"timeout", t.d.String(),
+				"auth_server_timeout", authServerVectorTimeout.String(),
+			)
+		}
+	}
+
 	if cfg.AKAOnlyEnabled() && !cfg.AKAOnlyUseTLS() {
 		slog.Warn("aka-only-server is connected over plain HTTP; CK/IK are transmitted unencrypted",
 			"akaonly_url", cfg.AKAOnlyURL,

@@ -33,8 +33,8 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Mode != "gateway" {
 		t.Errorf("Mode = %q, want %q", cfg.Mode, "gateway")
 	}
-	if cfg.InternalTimeout.String() != "5s" {
-		t.Errorf("InternalTimeout = %v, want 5s", cfg.InternalTimeout)
+	if cfg.InternalTimeout.String() != "3s" {
+		t.Errorf("InternalTimeout = %v, want 3s", cfg.InternalTimeout)
 	}
 	if cfg.PLMNMapRaw != "" {
 		t.Errorf("PLMNMapRaw = %q, want %q", cfg.PLMNMapRaw, "")
@@ -290,8 +290,8 @@ func TestLoadAKAOnlyDefaults(t *testing.T) {
 	if cfg.AKAOnlyURL != "" {
 		t.Errorf("AKAOnlyURL = %q, want empty", cfg.AKAOnlyURL)
 	}
-	if cfg.AKAOnlyTimeout.String() != "5s" {
-		t.Errorf("AKAOnlyTimeout = %v, want 5s", cfg.AKAOnlyTimeout)
+	if cfg.AKAOnlyTimeout.String() != "3s" {
+		t.Errorf("AKAOnlyTimeout = %v, want 3s", cfg.AKAOnlyTimeout)
 	}
 	if cfg.AKAOnlyEnabled() {
 		t.Error("AKAOnlyEnabled() = true, want false")
