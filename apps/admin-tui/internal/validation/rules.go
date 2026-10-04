@@ -32,7 +32,7 @@ var (
 	// VendorPattern はベンダー名形式（0-64文字の英数字、スペース、ハイフン）
 	VendorPattern = regexp.MustCompile(`^[a-zA-Z0-9 -]{0,64}$`)
 
-	// NasIDPattern はNAS ID形式（1-253文字、ワイルドカード*可）
+	// NasIDPattern はNAS ID形式（1-253文字。"*" 単独は任意のNASに一致するワイルドカード）
 	NasIDPattern = regexp.MustCompile(`^[\x21-\x7E*]{1,253}$`)
 
 	// SSIDPattern はSSID形式（1-32文字）

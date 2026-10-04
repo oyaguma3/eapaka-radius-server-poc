@@ -163,3 +163,42 @@ func TestExtractSSIDEmpty(t *testing.T) {
 		t.Errorf("ExtractSSID = %q, want empty string", ssid)
 	}
 }
+
+func TestEvaluateWildcardNasID(t *testing.T) {
+	vlanRule := PolicyRule{NasID: "AP-01", AllowedSSIDs: []string{"CORP"}, VlanID: "100"}
+	anyNasRule := PolicyRule{NasID: "*", AllowedSSIDs: []string{"GUEST"}, VlanID: "200"}
+
+	tests := []struct {
+		name        string
+		rules       []PolicyRule
+		nasID       string
+		ssid        string
+		wantAllowed bool
+		wantVlan    string // 一致したルールのVLAN（default判定なら空）
+	}{
+		{"wildcard matches any NAS-ID", []PolicyRule{anyNasRule}, "ANY-NAS", "GUEST", true, "200"},
+		{"wildcard matches empty NAS-ID", []PolicyRule{anyNasRule}, "", "GUEST", true, "200"},
+		{"wildcard still requires SSID match", []PolicyRule{anyNasRule}, "ANY-NAS", "CORP", false, ""},
+		{"specific rule before wildcard wins", []PolicyRule{vlanRule, anyNasRule}, "AP-01", "CORP", true, "100"},
+		{"falls through to wildcard rule", []PolicyRule{vlanRule, anyNasRule}, "AP-02", "GUEST", true, "200"},
+		{"wildcard before specific rule wins", []PolicyRule{{NasID: "*", AllowedSSIDs: []string{"*"}, VlanID: "300"}, vlanRule}, "AP-01", "CORP", true, "300"},
+		{"partial wildcard is not supported", []PolicyRule{{NasID: "AP-*", AllowedSSIDs: []string{"*"}}}, "AP-01", "CORP", false, ""},
+		{"literal asterisk NAS-ID matches wildcard", []PolicyRule{anyNasRule}, "*", "GUEST", true, "200"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := NewEvaluator().Evaluate(&Policy{Rules: tt.rules, Default: "deny"}, tt.nasID, tt.ssid)
+			if result.Allowed != tt.wantAllowed {
+				t.Fatalf("Allowed = %v, want %v", result.Allowed, tt.wantAllowed)
+			}
+			gotVlan := ""
+			if result.MatchedRule != nil {
+				gotVlan = result.MatchedRule.VlanID
+			}
+			if gotVlan != tt.wantVlan {
+				t.Errorf("matched VLAN = %q, want %q", gotVlan, tt.wantVlan)
+			}
+		})
+	}
+}
