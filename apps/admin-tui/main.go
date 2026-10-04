@@ -155,8 +155,9 @@ func (a *Application) setupGlobalKeyBindings() {
 			return nil
 		}
 
-		// F1 でヘルプ
-		if event.Key() == tcell.KeyF1 {
+		// F1 でヘルプ。? でもヘルプを開く（入力欄では文字として入力できるよう、入力中は除く）
+		if event.Key() == tcell.KeyF1 ||
+			(event.Key() == tcell.KeyRune && event.Rune() == ui.RuneHelp && !ui.IsTextInput(a.app.GetApplication().GetFocus())) {
 			a.showHelp()
 			return nil
 		}
@@ -183,6 +184,11 @@ func (a *Application) showSubscriberList() {
 	})
 
 	screen.SetOnEdit(func(imsi string) {
+		a.showSubscriberForm(true, imsi)
+	})
+
+	// 一覧で Enter を押したときも編集画面を開く（F3 / e と同じ）
+	screen.SetOnSelect(func(imsi string) {
 		a.showSubscriberForm(true, imsi)
 	})
 
@@ -260,6 +266,11 @@ func (a *Application) showClientList() {
 		a.showClientForm(true, ip)
 	})
 
+	// 一覧で Enter を押したときも編集画面を開く（F3 / e と同じ）
+	screen.SetOnSelect(func(ip string) {
+		a.showClientForm(true, ip)
+	})
+
 	screen.SetOnDelete(func(ip string) {
 		a.showDeleteConfirm("client", ip, screen.GetTable(), func() {
 			ctx := context.Background()
@@ -330,6 +341,11 @@ func (a *Application) showPolicyList() {
 	})
 
 	screen.SetOnEdit(func(imsi string) {
+		a.showPolicyForm(true, imsi)
+	})
+
+	// 一覧で Enter を押したときも編集画面を開く（F3 / e と同じ）
+	screen.SetOnSelect(func(imsi string) {
 		a.showPolicyForm(true, imsi)
 	})
 

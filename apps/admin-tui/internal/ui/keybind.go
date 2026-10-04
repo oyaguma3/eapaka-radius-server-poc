@@ -1,6 +1,9 @@
 package ui
 
-import "github.com/gdamore/tcell/v2"
+import (
+	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/tview"
+)
 
 // キーバインド定義
 var (
@@ -158,5 +161,16 @@ func keyToString(key tcell.Key) string {
 		return "Ctrl+Q"
 	default:
 		return "?"
+	}
+}
+
+// IsTextInput はフォーカス中の部品が文字入力を受け付けるか（? などの文字キーを
+// ショートカットとして扱ってはいけないか）を返す。
+func IsTextInput(p tview.Primitive) bool {
+	switch p.(type) {
+	case *tview.InputField, *tview.TextArea:
+		return true
+	default:
+		return false
 	}
 }

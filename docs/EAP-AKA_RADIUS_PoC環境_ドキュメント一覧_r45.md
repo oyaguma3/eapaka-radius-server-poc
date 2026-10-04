@@ -1,4 +1,4 @@
-# EAP-AKA RADIUS PoC環境 ドキュメント一覧 (r44)
+# EAP-AKA RADIUS PoC環境 ドキュメント一覧 (r45)
 
 **作成日:** 2025-12-30
 **最終更新:** 2026-10-04
@@ -16,9 +16,9 @@
 | D-02 | Valkeyデータ設計仕様書 | r17 | 2026-10-04 | データ構造、キー設計、TTL、Go構造体、CK/IK非保存方針、UUID仕様明記、Acct重複検出キャッシュ、stageフィールド値明記、SQN競合制御（WATCH/MULTI CAS）、idx:userクリーンアップ方針、PolicyRule構造を実装コードに整合（NasID/AllowedSSIDs/VlanID/SessionTimeout）、実装との突き合わせによる修正（SQN競合制御は設計のみで現行未実装、セッション/インデックス/重複検出/EAPコンテキストの実態）、Interimのセッション不在時に作成しない・重複検出のInterim判定（no_start_received / interim_after_stop）を実装に整合、テストベクターモードでも加入者登録必須・既定SQNフォールバック廃止（`sqn` だけの Hash を作らない）を実装に整合、nas_idの`*`単独で任意のNASに一致（部分一致なし、それ以外は完全一致）を実装に整合、Trace ID は初回に生成し以降は State 属性の UUID を引き継ぐ旨を実装に整合、重複Interimの event_id を ACCT_DUPLICATE_INTERIM に分離 |
 | D-03 | Vector-APIインターフェース定義書およびEAP-AKAステートマシン設計書 | r7 | 2026-10-04 | API仕様、8状態定義、Policy評価Post-Authのみ、接続先をVector Gatewayに変更、接続方式01経由時の403応答、Post-Authのルール評価を実装のPolicyRule（nas_id/allowed_ssids、nas_idの`*`は任意のNASに一致）に整合 |
 | D-04 | ログ仕様設計書 | r27 | 2026-10-04 | ログフォーマット、event_id定義、Vector Gateway対応、EAP_INVALID_STATE追加、IMSIマスキング（4コンポーネント対応、Admin TUI除外明記）、Acct Server PKT_RECV追加、SQN_CONFLICT_ERR追加、lnavフォーマット全面改訂（bunyan競合回避・timestamp-format削除・file-pattern・sample追加）、ACCT_ON/ACCT_OFF追加、ヘルスチェックログ分離記述追加、BACKEND_EXTERNAL_CALL/BACKEND_EXTERNAL_ERR実装済み化・causeフィールド追加、IMSIマスク漏れ修正の反映（user_name等のマスク、User-Nameマスク規則追加）・lnavフォーマットのvalue整理（code/subtype/eap_type/acct_status_type/session_time追加、retry_count/downtime_ms削除）、ACCT_SEQUENCE_ERRのInterim側msg変更・interim_after_stop追加、ACCT_SESSION_NOT_FOUNDをStart/Interimに拡大、テストベクターモードのTEST_SQN_FALLBACK/TEST_SQN_PARSE_ERR/TEST_SQN_PERSIST_ERRを削除（エラーログは通常モードと同じ）、auth-server の trace_id を認証単位で引き継ぎ（2回目以降の PKT_RECV 等も同一 trace_id）、EAP_ENGINE_ERR 削除、LOG_LEVEL（§4.6新設、DEBUG で vector api success）、Vector API のログ整理（SQN_RESYNC に trace_id・imsi、SQN_RESYNC_DELTA_ERR とテストモードの CALC_OK を1行化・CALC_OK に test_mode、ProblemError 経路のログに error 属性、Vector Gateway / Vector API も ParseLevel で WARNING を WARN）、Acct Server の重複Interimを ACCT_DUPLICATE_INTERIM に分離・SYS_ERR 削除・LOG_LEVEL 対応（4コンポーネント、起動ログに log_level）、Admin TUI の監査ログに件数（import / export の record_count、search の result_count）を追加し検索IMSIを target_imsi に記録、Vector Gateway の起動時 WARN（バックエンド向けタイムアウトが auth-server の5秒以上）を追加 |
-| D-05 | Admin TUI詳細設計書【前半】 | r10 | 2026-10-04 | 画面設計、バリデーション、インポート/エクスポート、IMSI表示方針（常に生値）、全マスタデータHash形式統一、実装スクリーンショットとのASCIIレイアウト整合性修正（12画面）、バリデーション規則を実装に整合（NAS ID 1〜253文字の印字可能ASCII・`*` ワイルドカード、NAS ID は NAS-Identifier と比較、SQN・Client Name 必須、エラーメッセージ等）、ポリシールールの例を現行構造に修正、監査ログの import / export に record_count |
+| D-05 | Admin TUI詳細設計書【前半】 | r11 | 2026-10-04 | 画面設計、バリデーション、インポート/エクスポート、IMSI表示方針（常に生値）、全マスタデータHash形式統一、実装スクリーンショットとのASCIIレイアウト整合性修正（12画面）、バリデーション規則を実装に整合（NAS ID 1〜253文字の印字可能ASCII・`*` ワイルドカード、NAS ID は NAS-Identifier と比較、SQN・Client Name 必須、エラーメッセージ等）、ポリシールールの例を現行構造に修正、監査ログの import / export に record_count、キー配線漏れ修正の反映（一覧の Enter で編集画面、`?` は入力欄では文字入力、一覧の F6 でフィルタ、フィルタ入力ダイアログを Esc で閉じる）、キー操作・ダイアログを実装に整合（終了確認・変更破棄確認・上書き確認ダイアログはない、Default allow 警告は Continue / Cancel、ページ切替は PgUp / PgDn、ポリシーフォームに Ctrl+S はない、接続失敗時は Connection Error の Retry / Exit） |
 | D-06 | エラーハンドリング詳細設計書 | r14 | 2026-10-04 | 異常系処理、タイムアウト、リトライ、Circuit Breaker、Vector Gateway追加、SQN競合エラー（409）追加、Vector Gateway経由フロー明記、接続方式01（aka-only-server）のエラー変換、EAP Identity系ログのuser_nameマスク反映、Interimのセッション不在・順序異常の扱いを実装に整合、テストベクターモードのエラー処理を通常モードと同一化、EAPエンジンが error を返さない実装に合わせ EAP_ENGINE_ERR を削除、Vector API の Valkey リトライなし（未使用の GetWithRetry 削除）・SQN_RESYNC_DELTA_ERR の1行化・定義済みエラーのログに error 属性、重複Interimの ACCT_DUPLICATE_INTERIM 分離、Accounting処理が error を返さない実装に合わせ SYS_ERR を削除、Vector Gateway → バックエンドのタイムアウトを 3秒に（auth-server の5秒より短くする理由、バックエンド障害時は VECTOR_API_ERR（502））・起動時 WARN を追加 |
-| D-07 | Admin TUI詳細設計書【後半】 | r9 | 2026-10-04 | モニタリング画面、ヘルプダイアログ、IMSI記録方針（監査ログに生値）、idx:userクリーンアップ処理、実装スクリーンショットとのASCIIレイアウト整合性修正（5画面）、event_idを実装に整合、Session Detail 検索の監査ログを実装に整合（検索IMSIを target_imsi、結果件数を result_count、検索失敗時は details に理由） |
+| D-07 | Admin TUI詳細設計書【後半】 | r10 | 2026-10-04 | モニタリング画面、ヘルプダイアログ、IMSI記録方針（監査ログに生値）、idx:userクリーンアップ処理、実装スクリーンショットとのASCIIレイアウト整合性修正（5画面）、event_idを実装に整合、Session Detail 検索の監査ログを実装に整合（検索IMSIを target_imsi、結果件数を result_count、検索失敗時は details に理由）、Session List のソートを現行の s キーによる3項目の切り替えに整合（Start Time ▼ → NAS IP ▲ → IMSI ▲、同値は start_time 降順 → UUID 順）、入力ダイアログを Esc で閉じる・ヘルプは F1 / ?、キー操作・画面遷移を実装に整合（Session Search へは Session List の Enter、ページ切替は PgUp / PgDn、Session Search はページ分割・r キーなしで Esc / q は Session List へ、IMSI 入力は検証しない）、Session Search の検索結果は画面側で start_time 降順に並べ替え、Session List のフィルタ（IMSI・NAS IP・Client IP の部分一致）に合わせて PoC 対象外・将来課題を修正、Statistics Dashboard の統計キャッシュ（件数のみ、要求時更新の1分キャッシュ）を実装に整合、Go構造体定義・フォーマット関数・セッション取得のコード片を実装（model.Session、SessionListScreen / SessionDetailScreen、internal/format の BytesShort 等）に整合 |
 | D-08 | インフラ設定・運用設計書 | r18 | 2026-10-04 | Docker Compose設定、Valkey設定、Fluent Bit設定（fluent/fluent-bit:4.2、YAML形式、rewrite_tagによるヘルスチェックログ分離、キャッチオール廃止による重複出力解消）、UFW設定、運用手順、IMSIマスキング環境変数（4コンポーネント限定）、Valkeyバージョン9.0、ヘルスチェック方針（curl -fsS）、テストベクターモード環境変数、B-02スコープ修正（B-01境界整合）、aka-only-server接続（compose環境変数・証明書マウント・共有ネットワークaka-av用オーバーレイ）、テストベクターモードの.env.example説明を実装に整合（加入者登録必須）、compose / .env.example の LOG_LEVEL（auth-server / vector-gateway / vector-api）を実ファイルに同期、compose / .env.example の LOG_LEVEL を acct-server にも渡す（4サーバー）よう実ファイルに同期、compose / .env.example の vector-gateway のタイムアウト既定値（3s）と説明を実ファイルに同期 |
 | D-09 | Auth Server詳細設計書 | r15 | 2026-10-04 | パッケージ構成、RADIUS受信処理、EAP制御フロー、Vector Gateway連携、セッション管理、IMSIマスキング、UUID仕様明記、互換性エイリアス削除、ベースイメージ方針、Vector関連event_id（VECTOR_IMSI_NOT_FOUND等）を実装に整合、user_nameのマスキング（MaskUserName）追加、Acct ServerのInterim時のセッション不在の扱いを修正、認可ポリシー評価（セクション8）を実装のPolicyRule構造とnas_idの`*`（任意のNASに一致）に整合、Trace ID の決定（State 属性の UUID 引き継ぎ）、EAPProcessor の Process(ctx, req) *Result・EAP_ENGINE_ERR 削除、LOG_LEVEL（pkg/logging.ParseLevel）対応、Vector Gateway 側のタイムアウト（3秒）を VectorRequestTimeout（5秒）より短くする理由と定数を合わせる必要の注記 |
 | D-10 | Acct Server詳細設計書 | r10 | 2026-10-04 | パッケージ構成、Accounting処理フロー、セッション更新ロジック、重複検出、IMSIマスキング、Status-Server対応、ベースイメージ方針、Accounting-On/Off対応（ProcessOn/ProcessOff、NAS-Identifier処理）、event_idを実装に整合、IMSI抽出不可時のUser-Nameをマスクして出力、Interimのシーケンス判定（CheckInterim、interim_after_stop）とセッション存在確認、重複Interimの ACCT_DUPLICATE_INTERIM 分離、AccountingProcessor の戻り値から error を外し SYS_ERR を削除、LOG_LEVEL 対応（環境変数・設定構造体・main.go のロガー初期化） |
@@ -64,7 +64,7 @@
 | No. | ドキュメント名 | 版数 | 最終更新 | 内容 |
 |-----|---------------|------|---------|------|
 | T-01 | テスト戦略書 | r4 | 2026-10-04 | テストレベル定義、テスト範囲、テスト環境、モック戦略、テストデータ戦略、品質ゲート、テストベクターモード運用注記、.env例の環境変数名（RADIUS_SECRET）を実装に整合、テストベクターモードの動作を実装に整合（加入者登録必須） |
-| T-02 | 単体テスト仕様書 | r11 | 2026-10-04 | コンポーネント別テストケース（全1,254件）、モック戦略、テストデータ設計、Vector Gateway接続方式01のテストケース追加、IMSIマスク漏れ修正のテストケース追加、acct-server Interimシーケンス判定修正のテストケース反映、vector-apiテストベクターモードの加入者登録必須化のテストケース反映、auth-serverポリシーnas_idワイルドカード（`*`）のテストケース追加、auth-server trace_id引き継ぎ・LOG_LEVEL対応のテストケース反映（ParseLevel・TraceIDFromState等を追加、EngineErrorを欠番）、vector-apiログ整理のテストケース反映（LogAttributes・LogsTraceIDAndMaskedIMSI等を追加、ErrInvalidIMSIの検証を欠番）、acct-server の重複Interim分離・SYS_ERR削除・LOG_LEVEL対応のテストケース反映（TestLoadLogLevel を追加、ProcessorError を欠番）、admin-tui 監査ログの件数・検索IMSI記録修正のテストケース反映（LogExport_ZeroRecords・LogCreate_NoCounts を追加、LogSearch を4件のテーブル駆動に）、vector-gateway のタイムアウト既定値変更・起動時 WARN のテストケース反映（TestWarnBackendConfig_Timeouts を追加） |
+| T-02 | 単体テスト仕様書 | r12 | 2026-10-04 | コンポーネント別テストケース（全1,269件）、モック戦略、テストデータ設計、Vector Gateway接続方式01のテストケース追加、IMSIマスク漏れ修正のテストケース追加、acct-server Interimシーケンス判定修正のテストケース反映、vector-apiテストベクターモードの加入者登録必須化のテストケース反映、auth-serverポリシーnas_idワイルドカード（`*`）のテストケース追加、auth-server trace_id引き継ぎ・LOG_LEVEL対応のテストケース反映（ParseLevel・TraceIDFromState等を追加、EngineErrorを欠番）、vector-apiログ整理のテストケース反映（LogAttributes・LogsTraceIDAndMaskedIMSI等を追加、ErrInvalidIMSIの検証を欠番）、acct-server の重複Interim分離・SYS_ERR削除・LOG_LEVEL対応のテストケース反映（TestLoadLogLevel を追加、ProcessorError を欠番）、admin-tui 監査ログの件数・検索IMSI記録修正のテストケース反映（LogExport_ZeroRecords・LogCreate_NoCounts を追加、LogSearch を4件のテーブル駆動に）、vector-gateway のタイムアウト既定値変更・起動時 WARN のテストケース反映（TestWarnBackendConfig_Timeouts を追加）、admin-tui のキー配線漏れ修正のテストケース追加（`internal/ui` 配下に初のテスト。一覧の Enter / F6、IsTextInput、入力ダイアログの Esc、Session List のソート、Session Search の検索結果の並べ替え。新カテゴリ UT-TUI-UI） |
 | T-03 | 結合テスト仕様書 | r13 | 2026-10-04 | コンポーネント間連携テスト、シナリオテスト、テストベクターモード検証、Valkeyデータ整合性検証、Secret体系明確化、SQN再同期手順改訂、IMSI 003専用config追加、障害系PASS条件修正、identityオーバーライドIMSIのSQNリセット運用補足、Dockerイメージ再ビルド注意事項追加、eapaka_testパス参照をsupplement配下に一般化、INT-ACCT-ON-017/INT-ACCT-OFF-018追加、aka-only-server結合シナリオ追加、INT-GW-PLMN-010の未実装IDを02に変更、テストベクターモードでも加入者登録必須（テストIMSI帯でも未登録は404）・事前準備での登録を明記、INT-006 の期待結果に Auth Server の全パケットの PKT_RECV も同一 trace_id であることを追記、INT-006-03 に Vector API の SQN_RESYNC も同一 trace_id であることを追記、G6 と INT-005 の ACCT_DUPLICATE_INTERIM、INT-FAULT の Acct Server ベストエフォート動作を現行ハンドラー（SYS_ERR なし）に整合、INT-FAULT-001（Vector API停止）の PASS 条件を VECTOR_API_ERR（502）のみに（vector-gateway のタイムアウト 3s） |
 | T-04 | E2Eテスト仕様書 | r8 | 2026-10-04 | 実機テスト（SIM/AP）3件、擬似E2E（eapaka_test）5件、実機異常系3件の計11シナリオ、SQN管理注意事項追加、Valkey再起動後データ残存確認追加、eapaka_testパス参照をsupplement配下に一般化、aka-only-server接続E2Eシナリオと実施結果（2026-10-04）追加、テストベクターモードのT-03との差分（加入者登録必須）を実装に整合、認可ポリシーのnas_id `*`（任意のNASに一致）を反映、E2E-002 のログ確認に ACCT_DUPLICATE_INTERIM を追加 |
 
@@ -97,8 +97,8 @@
 
 | No. | ドキュメント名 | 作成時期 | 必須前提・方針 | 概要 |
 |-----|---------------|---------|---------------|------|
-| O-01 | 操作ガイド（user-guide.md） | **完了 (r4)** | D-05, D-07の完成後 | 加入者登録、ポリシー設定、セッション監視の操作手順。ASCIIレイアウト付き。PLMNによる加入者登録先（Admin TUI / aka-only-server）の区別。ポリシーCSVのnas_id `*`（任意のNASに一致）の説明。入力規則を実装に整合（SQN・Client Name 必須、Vendor 0〜64文字、保存時のみ検証・大文字化、NAS ID 1〜253文字、既存キーの新規登録はエラー、インポートは既存キーを上書き）。ダイアログ（削除確認は Yes / No、Default allow 警告は Continue / Cancel、終了確認・変更破棄確認はない）とキー操作（ヘルプは F1、一覧の Enter・← / →・F6 は使わない、Session List のソートは s、Session Search へは Enter）を実装に整合。 |
-| O-02 | ポリシー設定ガイド（policy-config-guide.md） | **完了 (r2)** | D-02の認可ポリシー設計確定後 | NAS-ID/SSID設定例、VLAN割り当て例、トラブルシューティング、NAS ID `*`（任意のNASに一致）の設定例と評価順の注意 |
+| O-01 | 操作ガイド（user-guide.md） | **完了 (r5)** | D-05, D-07の完成後 | 加入者登録、ポリシー設定、セッション監視の操作手順。ASCIIレイアウト付き。PLMNによる加入者登録先（Admin TUI / aka-only-server）の区別。ポリシーCSVのnas_id `*`（任意のNASに一致）の説明。入力規則を実装に整合（SQN・Client Name 必須、Vendor 0〜64文字、保存時のみ検証・大文字化、NAS ID 1〜253文字、既存キーの新規登録はエラー、インポートは既存キーを上書き）。ダイアログ（削除確認は Yes / No、Default allow 警告は Continue / Cancel、終了確認・変更破棄確認はない）とキー操作（一覧の ← / → は使わない、Session List のソートは s、Session Search へは Enter）を実装に整合。キー配線漏れ修正の反映（ヘルプは F1 / ?（入力欄では ? は文字入力）、一覧の Enter で編集画面、一覧の F6 でフィルタ、Session List のソートは Start Time ▼ / NAS IP ▲ / IMSI ▲、入力ダイアログは Esc でも閉じる）。確認ダイアログの Esc は No / Cancel と同じ、ルール編集ダイアログは Esc では閉じない。 |
+| O-02 | ポリシー設定ガイド（policy-config-guide.md） | **完了 (r3)** | D-02の認可ポリシー設計確定後 | NAS-ID/SSID設定例、VLAN割り当て例、トラブルシューティング、NAS ID `*`（任意のNASに一致）の設定例と評価順の注意。ポリシー画面の操作を実装に整合（Ctrl+S はない、Default allow 警告は Continue / Cancel、F6 はフォーム→ルールリスト、ルール追加ダイアログは Add Rule、マウス操作は無効）、バリデーション規則を実装に整合 |
 | O-03 | 障害対応手順書 | **完了 (r7)** | D-06, D-08の完成後 | 障害検知方法、切り分け手順、復旧手順、エスカレーションフロー、aka-only-server接続（接続方式01）の切り分け、Acct Serverの順序異常（reason別）・Interimのセッション不在の切り分け、EAP_CTX_NOT_FOUND の trace_id による切り分け手順、LOG_LEVEL=DEBUG による Vector 呼び出し時間の確認、Vector API の VALKEY_CONN_ERR / CALC_ERR の error 属性で原因を確認、重複Interimの ACCT_DUPLICATE_INTERIM 分離と切り分け、SYS_ERR 削除、Vector API停止時は VECTOR_API_ERR（502）になる旨と vector-gateway のタイムアウト設定（起動時 WARN）の切り分け |
 
 ### 5.2 保守ドキュメント類
@@ -131,9 +131,9 @@
     ├─ D-02: Valkeyデータ設計仕様書 (r17) ✓                              │
     ├─ D-03: Vector-API/ステートマシン設計書 (r7) ✓                     │
     ├─ D-04: ログ仕様設計書 (r27) ✓                                     │
-    ├─ D-05: Admin TUI詳細設計書【前半】(r10) ✓                         │
+    ├─ D-05: Admin TUI詳細設計書【前半】(r11) ✓                         │
     ├─ D-06: エラーハンドリング詳細設計書 (r14) ✓                       │
-    ├─ D-07: Admin TUI詳細設計書【後半】(r9) ✓                          │
+    ├─ D-07: Admin TUI詳細設計書【後半】(r10) ✓                         │
     ├─ D-08: インフラ設定・運用設計書 (r18) ✓                            │
     ├─ D-09: Auth Server詳細設計書 (r15) ✓                               │
     ├─ D-10: Acct Server詳細設計書 (r10) ✓                              │
@@ -151,7 +151,7 @@
 [テストドキュメント] ───────────────────────────────────────────────────┤
     │                                                                   │
     ├─ T-01: テスト戦略書 (r4) ✓                                        │
-    ├─ T-02: 単体テスト仕様書 (r11) ✓                                    │
+    ├─ T-02: 単体テスト仕様書 (r12) ✓                                    │
     ├─ T-03: 結合テスト仕様書 (r13) ✓                                   │
     └─ T-04: E2Eテスト仕様書 (r8) ✓                                    │
                     │                                                   │
@@ -164,8 +164,8 @@
                     ▼                                                   │
 [運用ドキュメント] ◄────────────────────────────────────────────────────┘
     │
-    ├─ O-01: 操作ガイド (r4) ✓
-    ├─ O-02: ポリシー設定ガイド (r2)✓
+    ├─ O-01: 操作ガイド (r5) ✓
+    ├─ O-02: ポリシー設定ガイド (r3)✓
     ├─ O-03: 障害対応手順書 (r7) ✓
     ├─ O-04: バックアップ・リストア手順書 (r1) ✓
     └─ O-05: ログ解析ガイド (r15)✓
@@ -179,7 +179,7 @@
 
 | 順序 | ドキュメントID | ドキュメント名 | ステータス |
 |-----|---------------|---------------|-----------|
-| 1 | D-07 | Admin TUI詳細設計書【後半】 | **完了 (r9)** |
+| 1 | D-07 | Admin TUI詳細設計書【後半】 | **完了 (r10)** |
 | 2 | D-12 | Vector Gateway詳細設計書 | **完了 (r9)** |
 | 3 | D-08 | インフラ設定・運用設計書 | **完了 (r18)** |
 | 4 | D-09 | Auth Server詳細設計書 | **完了 (r15)** |
@@ -199,7 +199,7 @@
 
 | 順序 | ドキュメントID | ドキュメント名 | ステータス |
 |-----|---------------|---------------|-----------|
-| 11 | T-02 | 単体テスト仕様書 | **完了 (r11)** |
+| 11 | T-02 | 単体テスト仕様書 | **完了 (r12)** |
 | 12 | T-03 | 結合テスト仕様書 | **完了 (r13)** |
 | 13 | T-04 | E2Eテスト仕様書 | **完了 (r8)** |
 
@@ -214,8 +214,8 @@
 
 | 順序 | ドキュメントID | ドキュメント名 | ステータス |
 |-----|---------------|---------------|-----------|
-| 16 | O-01 | 操作ガイド | **完了 (r4)** |
-| 17 | O-02 | ポリシー設定ガイド | **完了 (r2)** |
+| 16 | O-01 | 操作ガイド | **完了 (r5)** |
+| 17 | O-02 | ポリシー設定ガイド | **完了 (r3)** |
 | 18 | O-03 | 障害対応手順書 | **完了 (r7)** |
 | 19 | O-04 | バックアップ・リストア手順書 | **完了 (r1)** |
 | 20 | O-05 | ログ解析ガイド | **完了 (r15)** |
@@ -286,3 +286,4 @@
 | r42 | 2026-10-04 | acct-server の重複 Interim の event_id 分離・到達しない SYS_ERR の削除・LOG_LEVEL 対応の実装修正（重複 Interim は新設の ACCT_DUPLICATE_INTERIM（重複 Start は従来どおり ACCT_DUPLICATE_START）、AccountingProcessor の ProcessStart / ProcessInterim / ProcessStop / ProcessOn / ProcessOff の戻り値から error を外しハンドラーの SYS_ERR の分岐を削除（常に Accounting-Response を返す）、LOG_LEVEL 環境変数に対応（既定 INFO、pkg/logging.ParseLevel、起動ログに log_level）、compose / .env.example で acct-server にも LOG_LEVEL を渡し4サーバーとも対応）に伴う版数更新: D-01(r12→r13)、D-02(r16→r17)、D-04(r24→r25)、D-06(r12→r13)、D-08(r16→r17)、D-10(r9→r10)、D-12(r7→r8)、E-01(r5→r6)、E-02(r5→r6)、E-03(r7→r8)、T-02(r8→r9、全1,245件のまま（acct-server は1件追加・1件削除）)、T-03(r11→r12)、T-04(r7→r8)、B-02(r12→r13)、O-03(r5→r6)、O-05(r12→r13)。subdoc（T-02_UT-ACCT、T-03_INT-005、T-03_INT-FAULT、T-04_E2E-002）と T-02 の他の subdoc の親リンク、リネームした文書を参照する subdoc のパスも更新。README.md も更新（ドキュメント一覧へのリンク、環境変数表の LOG_LEVEL の対象サービス）。 |
 | r43 | 2026-10-04 | Admin TUI の監査ログに件数と検索IMSIを正しく記録する実装修正（import / export に record_count（インポート/エクスポートしたレコード件数。0件も出力）、Session Detail の検索（search）で検索したIMSIを details ではなく target_imsi に記録し、検索の実行後に result_count（結果件数）を記録。検索に失敗した場合は result_count を出さず details に理由。LogSearch に検索エラーの引数を追加）と、D-05 のバリデーション規則を実装に合わせた修正（NAS ID 1-64文字→1〜253文字の印字可能ASCII・`*` ワイルドカード、NAS ID は NAS IPアドレスではなく NAS-Identifier と比較、SQN・Client Name 必須、Vendor 0〜64文字、エラーメッセージ等）に伴う版数更新: D-04(r25→r26)、D-05(r9→r10)、D-07(r8→r9)、T-02(r9→r10)、O-05(r13→r14)。T-02 は全1,250件（ID付与済み1,253件）に更新。推奨作成順序の D-07 の版数（r1 のままだった）を r9 に修正。あわせて、O-01 の入力規則を実装と D-05 r10 に合わせた修正（SQN・Client Name 必須、Vendor 0〜64文字、入力中の文字種制限・自動大文字化はなく保存時に検証・大文字化、ルールの入力規則、既存キーの新規登録はエラー、インポートは既存キーを上書き、エクスポートのファイル名に既定値なし、ステータスバーの表示）と、D-01 §3.3 Valkeyキースキーマを実装（D-02 r17）に合わせた修正（存在しない audit:log・acct:{ID} を削除、sess:・idx:user:・acct:seen: を追加、sub: の使用コンポーネントから Auth Server を削除、監査ログは Admin TUI の標準出力）に伴う版数更新: O-01(r3→r4)、D-01(r13→r14)。O-01 は画面説明も実装に合わせた（削除確認ダイアログは `Confirm Delete` の Yes / No、終了確認・変更破棄確認ダイアログはない、Default allow 警告は Continue / Cancel、VALKEY_ADDR は参照しない、ヘルプは F1 のみ、一覧の Enter・← / →・F6 は使わない、Session List のソートは s キー、Session Search へは Session List の Enter で移る） |
 | r44 | 2026-10-04 | vector-gateway のバックエンド向けタイムアウトを auth-server より短くした実装修正（VECTOR_GATEWAY_INTERNAL_TIMEOUT / VECTOR_GATEWAY_AKAONLY_TIMEOUT の既定値を 5s → 3s。auth-server の Vector Gateway 呼び出しタイムアウト（5秒）と同じだと、バックエンド障害時に auth-server のログが VECTOR_API_ERR（502）になるか VECTOR_CONN_ERR になるかが環境次第で変わっていたため。設定値が5秒以上なら起動時に WARN「backend timeout should be shorter than the auth-server timeout; auth-server may time out before receiving 502」を出力）に伴う版数更新: D-01(r14→r15)、D-04(r26→r27)、D-06(r13→r14)、D-08(r17→r18)、D-09(r14→r15)、D-12(r8→r9)、E-01(r6→r7)、T-02(r10→r11)、T-03(r12→r13)、B-02(r13→r14)、O-03(r6→r7)、O-05(r14→r15)。T-02 は全1,254件（ID付与済み1,257件）に更新。T-03 の INT-FAULT-001（Vector API停止）の PASS 条件を VECTOR_API_ERR（http_status=502）のみに変更 |
+| r45 | 2026-10-04 | Admin TUI のキー配線漏れを修正した実装修正（加入者・クライアント・ポリシーの一覧で Enter を押すと編集画面（ポリシーは Policy Details）を開く、? でヘルプを開く（入力欄にフォーカスがあるときは文字として入力）、加入者・クライアント・ポリシー・セッションの一覧で F6 でもフィルタを開く、Session List の s キーのソートの向きを項目ごとに固定（Start Time は新しい順 ▼、NAS IP と IMSI は昇順 ▲。同値は開始時刻の新しい順→UUID順。以前は常に降順）、フィルタ・IMSI検索の入力ダイアログを Esc でも閉じられる）に伴う版数更新: O-01(r4→r5)、D-05(r10→r11)、D-07(r9→r10)、T-02(r11→r12)、O-02(r2→r3)。O-01 は r4 で入れた「? ではヘルプを開かない」「一覧の Enter では開かない・F6 は使わない」「ソートはいずれも降順」の記述を修正後の動作に改めた。D-07 は Session List のソート仕様を元設計の2モード（start_time 降順 / IMSI 昇順、i / t キー）から現行の3項目の切り替えに改めた。T-02 は全1,269件（ID付与済み1,272件）に更新（admin-tui に ui パッケージのテスト15件を追加）。あわせて、キー操作・ボタン名・ダイアログの記述を実装（main.go、internal/ui）に合わせて修正: D-05（終了確認・変更破棄確認・上書き確認ダイアログを削除、Default allow 警告を Continue / Cancel に、ポリシーフォームの Ctrl+S を削除、ページ切替を ← / → から PgUp / PgDn に、フィルタ・ステータスバー・起動時の接続エラーの記述を修正）、D-07（Session Search へは Session List の Enter、Session Search の PgUp / PgDn・r / F5 を削除し Esc / q は Session List へ、ページ切替を PgUp / PgDn に、Statistics・Session Search のエラー表示を修正）、O-01（ルール編集ダイアログは Esc で閉じない、確認ダイアログの Esc）、O-02（Ctrl+S を削除、Default allow 警告を Continue / Cancel に、F6 はフォーム→ルールリストの一方向、ルール追加ダイアログのタイトル・初期値、マウス操作は無効、バリデーション規則を実装に整合）。また、Session Search の検索結果を開始時刻の新しい順（同じなら UUID 順）に並べる実装修正（画面側の sortByStartTimeDesc。テスト TestSortByStartTimeDesc を追加）に合わせて D-07 の処理フロー・コード例を修正し、D-07 の PoC 対象外・将来課題の「NAS-IP / Client-IP フィルタ」を Session List のフィルタの実装に合わせて修正、D-07 §4 / §8.1 の統計キャッシュを実装（件数4項目、要求時更新の1分キャッシュ）に合わせて修正。さらに D-07 の設計初期のまま残っていたコード片・型名（§5.6 の Acct-ID 切り詰め、§5.8.4 の fetchAllSessions、§8.2 / §8.3 の SessionListItem・SessionDetailSummary 等、§9 の KB 表記のフォーマット関数）を実装（SessionStore.List、model.Session、SessionListScreen / SessionDetailScreen、internal/format）に差し替え、Session List の Duration の色・Traffic の表記（1.2K 形式）を D-07 / O-01 で実装に合わせた |

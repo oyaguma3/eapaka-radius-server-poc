@@ -254,6 +254,9 @@ func (s *ListScreen) setupKeyBindings() {
 				})
 			}()
 			return nil
+		case tcell.KeyF6:
+			s.showFilterDialog()
+			return nil
 		case tcell.KeyPgUp:
 			if s.pagination.PrevPage() {
 				s.render()
