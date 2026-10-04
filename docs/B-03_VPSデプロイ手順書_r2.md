@@ -1,4 +1,4 @@
-# B-03 VPSデプロイ手順書（AWS Lightsail）(r1)
+# B-03 VPSデプロイ手順書（AWS Lightsail）(r2)
 
 ## 1. 概要
 
@@ -27,7 +27,7 @@ B-01（ホストOS構築）・B-02（アプリケーションデプロイ）は�
 
 ### 1.3 検証状況
 
-本書の手順は **机上確認** である（2026-10-04 時点で Lightsail の実機では通していない）。次の点は、検証機（Debian 13、Docker Compose）で実際に確認した。
+本書の手順は **机上確認** をもとにしている（2026-10-04 時点で Lightsail の実機では通していない）。実機で判明した点は随時反映する（r2: §4.4 の `admin` ユーザーの作成）。次の点は、検証機（Debian 13、Docker Compose）で実際に確認した。
 
 - `develop` の compose 一式のビルド・起動、テストベクターモードでの認証・再同期、公開ポート（24224 / 6379 が 127.0.0.1 のみ）
 - `RADIUS_SECRET` を空にしたときに、登録のない送信元が破棄されること（B-02 §4.2）
@@ -210,12 +210,16 @@ SSH や UFW の設定（§5.2・§5.3）を誤ると、ブラウザ SSH を含�
 
 B-01 / B-02 の systemd ユニット・logrotate・crontab・各手順は `/home/admin` を前提にしている。`admin` ユーザーを作成し、以降の作業は `admin` で行う。
 
-> **注記:** Ubuntu 24.04 の `adduser` では `--gecos` が非推奨になっている場合がある（警告が出るだけで動作する）。警告が出る場合は `--comment ""` を使ってもよい。
+Ubuntu には、旧来の sudo 権限用の `admin` グループが既にある（`/etc/sudoers` の `%admin ALL=(ALL) ALL`）。`adduser admin` は、ユーザー名と同じ名前のグループを新しく作ろうとして `fatal: The group 'admin' already exists.` で失敗する（このときユーザーは作られない）。そのため、既存の `admin` グループを主グループに指定して作成する（`--ingroup admin`）。
 
 ```bash
-# admin ユーザーを作成（パスワードは sudo で使う。SSH はパスワードでは入れない）
-sudo adduser --gecos "" admin
+# admin グループが既にあることの確認
+getent group admin
+
+# admin ユーザーを作成（主グループは既存の admin グループ。パスワードは sudo で使う。SSH はパスワードでは入れない）
+sudo adduser --gecos "" --ingroup admin admin
 sudo usermod -aG sudo admin
+id admin    # groups に admin と sudo が含まれること
 
 # ubuntu ユーザーの公開鍵を admin にコピー
 sudo mkdir -p /home/admin/.ssh
@@ -231,6 +235,10 @@ sudo chmod 600 /home/admin/.ssh/authorized_keys
 ssh -i ~/.ssh/<秘密鍵ファイル> admin@<VPSのIP>
 sudo -v   # admin のパスワードで sudo できること
 ```
+
+> **注記:** Ubuntu 24.04 の `adduser` では `--gecos` が非推奨になっている場合がある（警告が出るだけで動作する）。警告が出る場合は `--comment ""` を使ってもよい。
+
+> **注記（r2）:** 主グループが `admin`（ユーザー名と同じ名前だが、ユーザー作成前からある既存のグループ）なので、`chown admin:admin` など B-01 / B-02 の手順はそのまま使える。r1 の `sudo adduser --gecos "" admin` は、Lightsail の Ubuntu 24.04 で上記のエラーになった（2026-10-04 にユーザーが実機で確認。Ubuntu 24.04 のコンテナで再現し、`--ingroup admin` で作成できることを確認）。
 
 > **注記:** ブラウザ SSH は `ubuntu` ユーザーで接続する。`ubuntu` ユーザーは削除せずに残しておく（復旧手段）。
 
@@ -502,3 +510,4 @@ B-01 §9・B-02 §11 に加えて確認する。D-08 §8（セキュリティチ
 | 版数 | 日付 | 内容 |
 |------|------|------|
 | r1 | 2026-10-04 | 初版作成（机上確認）。AWS Lightsail の Ubuntu 24.04 LTS に、B-01 / B-02 の手順をもとに構築・デプロイする手順を作成。インスタンスの作成（デュアルスタック、メモリ 2GB 以上推奨）、静的IP、IPv4 / IPv6 ファイアウォール（SSH は 22 のまま管理端末のIPに限りブラウザ SSH を許可、HTTP 80 を削除、RADIUS は AP のグローバルIPに限って後から追加）、スワップ、`admin` ユーザーの作成、B-01 / B-02 の差分（時刻同期の確認、sshd のドロップイン、UFW は任意、ログディレクトリ 755、1つずつのイメージビルド、golang コンテナでの Admin TUI のビルド、`RADIUS_SECRET` を空に）、自動スナップショット、VPS 固有のチェックリストとトラブルシューティングを記載。検証機（Debian 13）で compose 一式・logrotate の権限・Admin TUI のコンテナビルド・バックアップとリストアを確認し、Lightsail 固有の点は AWS / Ubuntu の公式情報をもとに記載。机上確認（別の担当者による通読）の指摘を反映: 前提となるソースの版とクローン後の確認コマンド（§1.4、§5.5）、`.env` の確認コマンド、SSH・UFW の設定前の手動スナップショットと復旧の限界、`apt upgrade` での sshd_config の確認画面、IPv6 では RADIUS を受けない・Docker ゲートウェイIPを登録しない、Admin TUI の起動で `.env` を読み込む、B-02 §12 / §14.3 と D-08 §8 の読み替え |
+| r2 | 2026-10-04 | §4.4 の `admin` ユーザーの作成を訂正: Ubuntu には旧来の sudo 用の `admin` グループが既にあり、`sudo adduser --gecos "" admin` が `fatal: The group 'admin' already exists.` で失敗する（Lightsail の実機でユーザーが確認）。既存の `admin` グループを主グループにする `sudo adduser --gecos "" --ingroup admin admin` に変更し、`getent group admin` と `id admin` の確認を追加（Ubuntu 24.04 のコンテナで再現と修正を確認）。§1.3 に実機で判明した点を反映する旨を追記 |
