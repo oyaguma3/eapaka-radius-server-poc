@@ -1,4 +1,4 @@
-# D-05 Admin TUI 詳細設計書【前半】(r10)
+# D-05 Admin TUI 詳細設計書【前半】(r11)
 
 ## 1. 概要
 
@@ -148,7 +148,7 @@ HSET "policy:440101234567890" "default" "deny" "rules" '[{"nas_id":"AP-OFFICE-01
  │
  ├─[O] Monitoring（モニタリング）（後半で定義）
  │
- └─[Q] Exit Confirmation（終了確認）
+ └─[Q] Exit（終了。確認ダイアログなし）
 ```
 
 ### 2.2 画面遷移図
@@ -188,11 +188,13 @@ HSET "policy:440101234567890" "default" "deny" "rules" '[{"nas_id":"AP-OFFICE-01
 
 | キー | 動作 | 備考 |
 |------|------|------|
-| `Esc` | 前の画面に戻る / キャンセル | メインメニューでは終了確認表示 |
+| `Esc` | 前の画面に戻る / キャンセル | メインメニューでは確認なしで終了。フィルタ適用中の一覧ではフィルタ解除 |
 | `Ctrl+Q` | アプリケーション終了 | 確認なしで即座に終了 |
 | `F1` / `?` | ヘルプ表示 | 現在画面のキーバインド一覧をモーダル表示 |
 | `Tab` | 次のフォーカス要素へ移動 | - |
 | `Shift+Tab` | 前のフォーカス要素へ移動 | - |
+
+**注記：** `F1` / `?` はアプリケーション全体の InputCapture（`main.go` の `setupGlobalKeyBindings`）で処理する。ただし、フォーカス中の部品が文字入力を受け付ける部品（`tview.InputField` / `tview.TextArea`。`ui.IsTextInput` で判定）の場合は `?` をショートカットとして扱わず、文字としてそのまま入力欄へ渡す（フォームやフィルタ・検索ダイアログの入力欄で `?` を入力できるようにするため）。入力欄にフォーカスがあるときにヘルプを開くには `F1` を使う。
 
 ### 3.2 キーバインド（一覧画面共通）
 
@@ -207,46 +209,57 @@ HSET "policy:440101234567890" "default" "deny" "rules" '[{"nas_id":"AP-OFFICE-01
 | `F5` / `r` | 一覧を再読み込み |
 | `F6` / `/` | フィルタ入力ダイアログ表示 |
 
+**注記：**
+- 加入者・クライアント・ポリシーの一覧で `Enter` を押すと、`F3` / `e` と同じく選択項目の編集画面（ポリシーは Policy Details フォーム）を開く。一覧画面は `Enter` で `onSelect` コールバックを呼ぶため、`main.go` で各一覧に `SetOnSelect` を設定して編集画面を開く（`SetOnEdit` と同じ処理）。
+- `F6` / `/` のフィルタは、加入者・クライアント・ポリシーの一覧と Session List（D-07 §5）で共通である。ポリシー詳細フォームの `F6`（§4.4.2。フォーム部分からルールリストへのフォーカス移動）は、フォーム側の InputCapture で処理するため一覧の `F6` とは競合しない。
+
 ### 3.3 キーバインド（フォーム画面共通）
 
 | キー | 動作 |
 |------|------|
+| `Tab` / `Shift+Tab` | 次 / 前のフィールド・ボタンへ移動 |
 | `Save` ボタン | 保存実行（tview.Form 標準ボタン） |
-| `Esc` | キャンセル（一覧画面へ戻る） |
+| `Cancel` ボタン / `Esc` | 保存せずに一覧画面へ戻る（確認ダイアログなし。入力内容は破棄する） |
+
+**注記：** 保存のショートカットキー（`Ctrl+S` 等）は設けない。保存は `Save` ボタンで行う。
 
 ### 3.4 確認ダイアログ仕様
 
-破壊的操作や重要な変更時に表示する。
+破壊的操作や重要な変更時に表示する。いずれも `tview.Modal` によるダイアログで、`ui.NewConfirmDialog`（`Yes` / `No`）または `ui.NewWarningDialog`（`Continue` / `Cancel`。本文の先頭に `⚠ WARNING ⚠`）で生成する。
 
-| 種別 | トリガー | メッセージ例 | 選択肢 |
+| 種別（ボーダータイトル） | トリガー | メッセージ | 選択肢 |
 |------|---------|-------------|--------|
-| **削除確認** | 削除操作時 | `Delete IMSI: 440101234567890?`<br>`This action cannot be undone.` | `[Delete] [Cancel]` |
-| **変更破棄確認** | 編集中にEsc | `Changes have not been saved.`<br>`Discard and go back?` | `[Discard] [Cancel]` |
-| **終了確認** | メインメニューでEsc | `Exit Admin TUI?` | `[Exit] [Cancel]` |
-| **上書き確認** | 既存キーで登録試行 | `IMSI: 440101234567890 already exists.`<br>`Overwrite?` | `[Overwrite] [Cancel]` |
+| **削除確認**（`Confirm Delete`） | 一覧で削除操作（`F4` / `d`） | `Are you sure you want to delete this subscriber?`<br>（空行）<br>`440101234567890`<br>（client / policy も同形式で、対象のIP・IMSIを表示） | `[Yes] [No]` |
+| **SQN変更警告**（`SQN Modification Warning`） | 加入者の編集で SQN を変更して保存 | §4.2.2 参照 | `[Continue] [Cancel]` |
+| **Default allow 警告**（`Default Allow Warning`） | ポリシーの Default を `allow` にして保存 | §3.5 参照 | `[Continue] [Cancel]` |
+| **接続エラー**（`Connection Error`） | 起動時の Valkey 接続失敗 | §7.2 参照 | `[Retry] [Exit]` |
+
+**注記：**
+- 変更破棄確認・終了確認・上書き確認のダイアログは設けない。フォームの `Esc` / `Cancel` は確認なしで入力内容を破棄して一覧へ戻り、メインメニューの `q` / `Esc` / `(q) Exit` は確認なしで終了する。既存キーで新規登録しようとした場合は、ダイアログを出さずにステータスバーにエラー（`Failed to create: subscriber already exists` 等）を表示する（§5.2）。
+- ダイアログ表示中に `Esc` を押すと、tview.Modal の仕様で2つ目のボタン（`No` / `Cancel`）と同じ処理になる（`Connection Error` では `Exit`）。
 
 ### 3.5 Default "allow" 設定時の警告ダイアログ
 
 ポリシー保存時にDefaultが "allow" に設定されている場合に表示する。
 
+tview.Modal（`ui.NewWarningDialog`）を使用。ボーダータイトル「Default Allow Warning」（Yellow）。Policy Details の上にオーバーレイ表示。
+
 ```
-┌─────────────────────────────────────────────────────────┐
-│  Warning: Setting Default to "allow"                    │
-├─────────────────────────────────────────────────────────┤
-│                                                         │
-│  When Default is "allow", authentication will succeed   │
-│  for any SSID not explicitly listed in rules, as long   │
-│  as the subscriber's credentials (Ki/OPc) are valid.    │
-│                                                         │
-│                                                         │
-│  This may allow unintended network access.              │
-│                                                         │
-│  Are you sure you want to save with Default = "allow"?  │
-│                                                         │
-├─────────────────────────────────────────────────────────┤
-│  [Save Anyway]                              [Cancel]    │
-└─────────────────────────────────────────────────────────┘
+        ┌ Default Allow Warning ───────────────────────────────────┐
+        │                                                          │
+        │                    ⚠ WARNING ⚠                           │
+        │                                                          │
+        │  Setting default action to 'allow' means the subscriber  │
+        │  will have access even without matching rules.           │
+        │                                                          │
+        │  Are you sure you want to continue?                      │
+        │                                                          │
+        │           < Continue >     < Cancel >                    │
+        │                                                          │
+        └──────────────────────────────────────────────────────────┘
 ```
+
+`Continue` で保存し、`Cancel`（または `Esc`）で保存せずに Policy Details に戻る。
 
 ### 3.6 メッセージ表示
 
@@ -254,33 +267,34 @@ HSET "policy:440101234567890" "default" "deny" "rules" '[{"nas_id":"AP-OFFICE-01
 
 | 種別 | 表示色 | 表示時間 | 例 |
 |------|-------|---------|-----|
-| 成功 | 緑 | 3秒 | `✓ Subscriber created (IMSI: 440101234567890)` |
-| エラー | 赤 | 手動クリアまで | `✗ Failed: Invalid IMSI format` |
-| 警告 | 黄 | 5秒 | `⚠ SQN is still at initial value` |
-| 情報 | 白 | 3秒 | `ℹ Loaded 5 subscribers` |
+| 成功 | 緑 | 5秒 | `✓ Subscriber created: 440101234567890` |
+| エラー | 赤 | 5秒 | `✗ Validation error: IMSI: must be 15 digits` |
+
+5秒経過後は既定の表示（` F1:Help | q:Back/Quit | Ctrl+Q:Exit`）に戻る。ステータスバーには警告（黄、`⚠`）・情報（シアン、`ℹ`）の種別も定義されているが、現行の画面では使用していない。
 
 ### 3.7 フィルタ機能仕様
 
 | 項目 | 仕様 |
 |------|------|
-| 起動方法 | `/` キー押下でフィルタ入力欄にフォーカス |
-| 対象カラム | 一覧表示中の全カラム（部分一致） |
+| 起動方法 | `/` または `F6` キー押下でフィルタ入力ダイアログ（`ui.NewInputDialog`。`OK` / `Cancel` ボタン）を表示し、入力欄にフォーカス |
+| ダイアログを閉じる | `OK` で適用。`Cancel` ボタンまたは `Esc` でフィルタを変えずに閉じる（`Esc` は `tview.Form.SetCancelFunc` で `Cancel` と同じ処理を呼ぶ） |
+| 対象カラム | 加入者一覧: IMSI（入力欄 `IMSI contains:`）、クライアント一覧: IP Address・Name・Vendor（`IP/Name/Vendor contains:`）、ポリシー一覧: IMSI（`IMSI contains:`）。Session List は D-07 §5.4。いずれも部分一致 |
 | マッチング | 大文字小文字を区別しない（case-insensitive） |
-| 動作 | 入力文字列を含む行のみ表示（リアルタイム絞り込み） |
-| クリア | `Esc` でフィルタ解除、全件表示に戻る |
-| 件数表示 | `Showing: 25 / 125` 形式で絞り込み件数を表示 |
+| 動作 | ダイアログの `OK` 押下時に、入力文字列を含む行のみ表示する（入力中の逐次絞り込みはしない）。適用時は1ページ目に戻る |
+| クリア | 一覧画面で `Esc` を押すとフィルタ解除、全件表示に戻る（フィルタ未適用時の `Esc` は前の画面に戻る） |
+| 件数表示 | ボーダータイトルに `(Filter: "入力値")` と絞り込み後の件数・ページ情報を表示（例: `Subscriber List (Filter: "00101") 1-6 of 6 (Page 1/1)`） |
 
-フィルタはクライアント側（バッファ済みデータ）に対して適用する。フィルタ結果が不足する場合は、追加で `SCAN` を実行してデータを補充する。
+フィルタはクライアント側（一覧表示時に取得済みのデータ）に対して適用する。一覧表示時に全件を取得しているため、フィルタ時の追加取得はしない。
 
 ### 3.8 ページネーション仕様
 
 | 項目 | 仕様 |
 |------|------|
-| データ取得 | `SCAN` コマンドで100件ずつ取得 |
+| データ取得 | 一覧表示時（および `F5` / `r` の再読み込み時）に `SCAN`（COUNT 100）で全キーを走査して全件を取得し、メモリに保持する |
 | 表示 | 1ページあたり50件 |
-| ナビゲーション | `←` 前ページ / `→` 次ページ |
-| UI形式 | `[Prev] Page 1/25 [Next]` |
-| フィルタ併用時 | 取得済みデータに適用、必要に応じて追加取得 |
+| ナビゲーション | `PgUp` 前ページ / `PgDn` 次ページ（`←` / `→` はページ切替に使わない） |
+| UI形式 | ボーダータイトルに `1-50 of 125 (Page 1/3)` 形式で表示（0件時は `No items`） |
+| フィルタ併用時 | 取得済みデータに適用し、絞り込み後の件数でページ分割する |
 
 ### 3.9 ページライフサイクル管理
 
@@ -465,7 +479,7 @@ F1:Help  |  q:Back/Quit  |  Ctrl+Q:Exit
 | `3` | 認可ポリシー管理画面へ |
 | `4` | インポート/エクスポート画面へ |
 | `5` | モニタリング画面へ（後半で定義） |
-| `q` / `Esc` | 終了確認ダイアログ表示 |
+| `q` / `Esc` | Admin TUI を終了（確認ダイアログなし。`(q) Exit` の選択も同じ） |
 
 ---
 
@@ -579,7 +593,7 @@ tview.Form を centered() ヘルパーで画面中央にダイアログ表示す
 
 ##### SQN手動編集時の警告
 
-ユーザーがSQNフィールドを編集しようとした際に以下の警告を表示する。
+編集時に SQN フィールドの値を変更して `Save` を押した際（入力値の検証に通った後）に以下の警告を表示する。`Continue` で保存し、`Cancel`（または `Esc`）で保存せずに Edit Subscriber に戻る。
 
 tview.Modal を使用。ボーダータイトル「SQN Modification Warning」（Yellow）。Edit Subscriber ダイアログの上にオーバーレイ表示。
 
@@ -741,13 +755,19 @@ centered(form, width=60, height=15) で Policy Details の上にオーバーレ�
 
 ##### ポリシーフォームのキーバインド
 
-| キー | 動作 |
+| キー / ボタン | 動作 |
 |------|------|
-| `F6` | フォーム部分とルールリスト間のフォーカス切替 |
-| `Ctrl+S` | 保存実行 |
-| `Esc` | キャンセル |
+| `F6`（フォーム部分で） | ルールリストへフォーカスを移す |
+| `Esc` / `Tab`（ルールリストで） | フォーム部分へフォーカスを戻す |
+| `Enter`（ルールリストで） | 選択したルールの編集サブダイアログ（Edit Rule）を開く |
+| `Add Rule` ボタン | ルール追加サブダイアログ（Add Rule）を開く |
+| `Save` ボタン | 保存（Default が `allow` の場合は §3.5 の警告ダイアログを表示） |
+| `Cancel` ボタン / `Esc`（フォーム部分で） | 保存せずに一覧へ戻る（確認ダイアログなし） |
 
-**注記：** `Tab` キーはtviewのフォーム内ナビゲーション（フィールド間移動）で使用されるため、フォーム/ルールリスト間のフォーカス切替には `F6` キーを使用する。
+**注記：**
+- `Tab` キーはtviewのフォーム内ナビゲーション（フィールド間移動）で使用されるため、フォームからルールリストへのフォーカス移動には `F6` キーを使用する（ルールリストからフォームへは `Esc` / `Tab`）。
+- 保存のショートカットキー（`Ctrl+S` 等）は設けない。
+- ルール編集サブダイアログは `OK` / `Delete`（編集時のみ）/ `Cancel` ボタンで閉じる。サブダイアログでの `Esc` は無効（ダイアログは閉じない）。
 
 ##### フィールド定義（ポリシー本体）
 
@@ -863,6 +883,8 @@ imsi,default,rules_json
 **注記：** `rules_json` フィールドはJSON文字列をダブルクォートでエスケープしてCSV格納する。空文字列または `[]` はルールなし。各ルールは §5.1 の Rule の規則で検証する（エラーは `line {N}, rule[{i}]: NasID: required` の形式）。
 
 ### 6.5 インポート画面 [I1]
+
+メインメニューの `(4) Import/Export` で Import/Export メニュー（tview.List。ボーダータイトル「Import/Export」、項目 `(1) Import` / `(2) Export` / `(q) Back`）を表示する。メニューで `q` / `Esc` を押すとメインメニューへ戻る。インポート画面・エクスポート画面では、`Cancel` ボタンまたは `Esc` で Import/Export メニューへ戻る（完了後の状態では `Done` ボタンまたは `Esc`）。
 
 FlexRow で上部（Formエリア）と下部（Result表示エリア）に分割。Data Type は tview.DropDown（Subscribers / RADIUS Clients / Policies）。インポート完了後にフォームが状態遷移する。
 
@@ -1008,11 +1030,13 @@ func importSubscribers(records []SubscriberRecord) error {
 ### 7.1 初期化シーケンス
 
 ```
-1. 環境変数読み込み (envconfig)
-   └─ VALKEY_PASSWORD 未設定 → エラー終了
+1. 環境変数読み込み（os.Getenv）
+   └─ VALKEY_PASSWORD 未設定時は空のパスワードとして扱う（ここではエラーにしない）
 
-2. Valkey接続確認
-   └─ 接続失敗 → エラーメッセージ表示して終了
+2. Valkey接続確認（127.0.0.1:6379 に接続し PING）
+   └─ 接続失敗 → Connection Error ダイアログ（§7.2）を表示
+      ├─ Retry → 再接続。成功すればメインメニューへ、失敗すればステータスバーに `Connection failed: ...`
+      └─ Exit（または Esc）→ 終了
 
 3. 画面初期化 (tview.Application)
 
@@ -1123,3 +1147,4 @@ Admin TUIからの操作は、標準出力にJSON形式で記録する。
 | r8 | 2026-02-22 | Session Detail フリーズ不具合修正の知見反映: セクション3.10新設（tview Table の Selectable 状態管理 — 全セル NotSelectable 時の無限ループ問題と SetSelectable 切替による対策）、セクション3.11新設（非同期データ取得パターン — QueueUpdateDraw 内でのネットワーク I/O 回避）。旧3.10は3.12に再ナンバリング |
 | r9 | 2026-02-23 | 実装画面とのレイアウト整合性修正: スクリーンショット検証に基づくASCII図全面更新。§3.1 Ctrl+C→Ctrl+Q、F1/?ヘルプキー追加。§3.2 F2-F6ファンクションキー+代替文字キー追加。§4.1 メインメニューをtview.List形式に更新（ショートカット(1)-(q)括弧表記、ボーダータイトル追加）。§4.2.1 加入者一覧を6カラム+行頭"!"表示に更新（Ki/OPcマスク表示追加）。§4.2.2 フォームタイトルCreate/Edit Subscriber、SQN警告タイトルSQN Modification Warning。§4.3.1 クライアント一覧にSecret列マスク表示追加。§4.3.2 フォームタイトルCreate/Edit RADIUS Client。§4.4.1-4.4.2 ポリシーフォームタイトルPolicy Details、NAS ID/SSIDs/VLAN/Timeoutルール構造。§5.1 バリデーションルール表のRule部分をNAS ID/Allowed SSIDs/VLAN ID/Session Timeoutに更新。§6.5-6.6 インポート/エクスポート画面に状態遷移（Import Data→Import Completed、Export Data→Export Completed）追加。§7.2 起動エラーをConnection Errorモーダルに更新 |
 | r10 | 2026-10-04 | 実装との不一致の修正: §4.4.2 ルールの NAS ID を「NAS IPアドレスまたはNAS ID」から、RADIUS `NAS-Identifier` 属性と完全一致で比較する値（`*` 単独で任意のNASに一致。NAS IPアドレスとは比較しない。D-02 §2.C）に修正。§5.1 バリデーションルールを `internal/validation` の実装に合わせて全面修正（NAS ID 1-64文字→1〜253文字の印字可能ASCII・`*` ワイルドカード、SQN・Client Name を必須に、Name を英数字・ハイフン・アンダースコア、Vendor を0〜64文字の英数字・スペース・ハイフン、Allowed SSIDs の各SSID 1〜32文字、VLAN ID 0〜4094、Session Timeout 0〜86400、エラーメッセージを実際の `{Field}: {Message}` 形式に）。§5.2 バリデーションタイミングを保存時のみ（リアルタイムの文字種制限・フォーカス離脱時の検証はない）に、§5.3 を入力値の正規化（保存時に空白除去・Hexを大文字化）に修正。§4.2.2 SQN・§4.3.2 Name を必須に、§4.4.2 Rules を任意（0件可）、Default をドロップダウン選択に修正。§1.5・§6.4 のポリシールールの例を現行構造（`nas_id` / `allowed_ssids` / `vlan_id` / `session_timeout`）に修正。§6.2 インポート動作を実装（既存IMSIは上書き、エラーが1行でもあれば全体を中断）とエクスポートの出力ファイルパス（既定値なし）に修正。Admin TUI の監査ログに件数を記録する実装修正の反映: §8 に import / export の `record_count`（0件も出力、成功時のみ記録）を追記し、出力例の `time` を秒精度に修正 |
+| r11 | 2026-10-04 | Admin TUI のキー配線漏れを修正した実装修正の反映: §3.1 に、`F1` / `?` をグローバルの InputCapture で処理し、入力欄（`tview.InputField` / `tview.TextArea`。`ui.IsTextInput`）にフォーカスがあるときは `?` を文字として入力欄へ渡す旨の注記を追加。§3.2 に、加入者・クライアント・ポリシーの一覧の `Enter` で編集画面（ポリシーは Policy Details）を開くこと（`main.go` で各一覧に `SetOnSelect` を設定）、`F6` / `/` のフィルタは各一覧と Session List で共通で、ポリシー詳細フォームの `F6` とは競合しないことの注記を追加。§3.7 フィルタの起動方法に `F6` を追加し、フィルタ入力ダイアログを `Cancel` ボタンまたは `Esc`（`tview.Form.SetCancelFunc`）で閉じられること、一覧画面の `Esc` でフィルタを解除することを明記。あわせて、キー操作・ダイアログの記述を実装（`main.go`、`internal/ui`）に合わせて修正: §2.1 / §3.1 / §4.1 メインメニューの `q` / `Esc` は確認なしで終了（終了確認ダイアログはない）。§3.3 フォームのキーに `Tab` / `Shift+Tab` と `Cancel` / `Esc`（確認なしで破棄）を追加し、保存のショートカットはないことを明記。§3.4 確認ダイアログを実装にあるもの（`Confirm Delete` の `Yes` / `No`、SQN変更警告・Default allow 警告の `Continue` / `Cancel`、`Connection Error` の `Retry` / `Exit`）に差し替え、変更破棄確認・終了確認・上書き確認はないこと、ダイアログの `Esc` は2つ目のボタンと同じ動作であることを追記。§3.5 Default allow 警告ダイアログを実際の表示（`Default Allow Warning`、`Continue` / `Cancel`）に差し替え。§3.6 ステータスバーの表示時間・例を実装（成功・エラーとも5秒）に修正。§3.7 フィルタの対象カラム（画面ごと）、`OK` 押下で適用（逐次絞り込みはしない）、件数表示（ボーダータイトルの `(Filter: ...)` とページ情報）を修正し、SCANによる追加取得の記述を削除。§3.8 ページネーションのナビゲーションを `←` / `→` から `PgUp` / `PgDn` に、UI形式をボーダータイトルの `1-50 of 125 (Page 1/3)` に、データ取得を一覧表示時の全件取得に修正。§4.2.2 SQN変更警告の表示タイミングを保存時（SQN を変更して `Save`）に修正。§4.4.2 ポリシーフォームのキーから `Ctrl+S` を削除し、`F6`（フォーム→ルールリスト）、ルールリストの `Esc` / `Tab` / `Enter`、各ボタン、ルール編集サブダイアログは `Esc` では閉じないことを記載。§6.5 に Import/Export メニューの操作と、インポート/エクスポート画面の `Cancel` / `Esc` / `Done` を追加。§7.1 初期化シーケンスを実装（VALKEY_PASSWORD 未設定でもエラーにしない、接続失敗時は Connection Error ダイアログで Retry / Exit）に修正 |

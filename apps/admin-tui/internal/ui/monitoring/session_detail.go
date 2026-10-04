@@ -3,6 +3,7 @@ package monitoring
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/audit"
@@ -89,7 +90,7 @@ func (s *SessionDetailScreen) ShowSearchDialog() {
 					if err != nil {
 						s.app.GetStatusBar().ShowError("Search failed: " + err.Error())
 					} else {
-						s.sessions = sessions
+						s.sessions = sortByStartTimeDesc(sessions)
 						s.render()
 					}
 					s.app.SetFocus(s.sessionsList)
@@ -124,7 +125,7 @@ func (s *SessionDetailScreen) Search(ctx context.Context, imsi string) error {
 		return err
 	}
 
-	s.sessions = sessions
+	s.sessions = sortByStartTimeDesc(sessions)
 	s.render()
 	return nil
 }
@@ -273,4 +274,16 @@ func centeredDetail(p tview.Primitive, width, height int) tview.Primitive {
 			AddItem(p, height, 1, true).
 			AddItem(nil, 0, 1, false), width, 1, true).
 		AddItem(nil, 0, 1, false)
+}
+
+// sortByStartTimeDesc は検索結果を開始時刻の新しい順に並べる（同じなら UUID 順）。
+// idx:user の Set から取り出した順は不定なため、表示順をそろえる。
+func sortByStartTimeDesc(sessions []*model.Session) []*model.Session {
+	sort.SliceStable(sessions, func(i, j int) bool {
+		if sessions[i].StartTime != sessions[j].StartTime {
+			return sessions[i].StartTime > sessions[j].StartTime
+		}
+		return sessions[i].UUID < sessions[j].UUID
+	})
+	return sessions
 }

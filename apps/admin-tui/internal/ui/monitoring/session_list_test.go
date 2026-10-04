@@ -107,3 +107,14 @@ func equal(a, b []string) bool {
 	}
 	return true
 }
+
+func TestSortByStartTimeDesc(t *testing.T) {
+	got := uuids(sortByStartTimeDesc([]*model.Session{
+		{UUID: "b", StartTime: 100},
+		{UUID: "c", StartTime: 300},
+		{UUID: "a", StartTime: 100},
+	}))
+	if want := []string{"c", "a", "b"}; !equal(got, want) {
+		t.Errorf("order = %v, want %v", got, want)
+	}
+}
