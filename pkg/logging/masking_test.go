@@ -148,3 +148,41 @@ func TestMasker(t *testing.T) {
 		}
 	})
 }
+
+func TestMaskUserName(t *testing.T) {
+	tests := []struct {
+		name     string
+		userName string
+		enabled  bool
+		want     string
+	}{
+		{"EAP-AKA permanent identity", "0440101234567890@wlan.mnc010.mcc440.3gppnetwork.org", true, "0440101********0@wlan.mnc010.mcc440.3gppnetwork.org"},
+		{"EAP-AKA' permanent identity", "6001010000000003@wlan.mnc001.mcc001.3gppnetwork.org", true, "6001010********3@wlan.mnc001.mcc001.3gppnetwork.org"},
+		{"EAP-SIM permanent identity", "1440101234567890@realm", true, "1440101********0@realm"},
+		{"bare IMSI", "440101234567890", true, "440101********0"},
+		{"identity without realm", "0440101234567890", true, "0440101********0"},
+		{"pseudonym", "2some-pseudonym@example", true, "2some-p*******m@example"},
+		{"malformed digits", "04401012345@realm", true, "0440101***5@realm"},
+		{"short local part", "abc@realm", true, "abc@realm"},
+		{"empty realm", "0440101234567890@", true, "0440101********0@"},
+		{"empty", "", true, ""},
+		{"masking disabled", "0440101234567890@realm", false, "0440101234567890@realm"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := MaskUserName(tt.userName, tt.enabled); got != tt.want {
+				t.Errorf("MaskUserName(%q, %v) = %q, want %q", tt.userName, tt.enabled, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMaskerUserName(t *testing.T) {
+	if got := NewMasker(true).UserName("0440101234567890@realm"); got != "0440101********0@realm" {
+		t.Errorf("Masker(true).UserName() = %q", got)
+	}
+	if got := NewMasker(false).UserName("0440101234567890@realm"); got != "0440101234567890@realm" {
+		t.Errorf("Masker(false).UserName() = %q", got)
+	}
+}

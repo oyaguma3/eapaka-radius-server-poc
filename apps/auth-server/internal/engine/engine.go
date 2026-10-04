@@ -118,13 +118,13 @@ func (e *EngineImpl) handleIdentity(ctx context.Context, req *eap.Request) (*eap
 			slog.Warn("非対応のIdentity種別",
 				"event_id", "EAP_UNSUPPORTED_TYPE",
 				"trace_id", req.TraceID,
-				"user_name", req.UserName,
+				"user_name", e.maskUserName(req.UserName),
 			)
 		} else {
 			slog.Warn("Identity解析失敗",
 				"event_id", "EAP_IDENTITY_INVALID",
 				"trace_id", req.TraceID,
-				"user_name", req.UserName,
+				"user_name", e.maskUserName(req.UserName),
 				"error", err,
 			)
 		}
@@ -396,13 +396,13 @@ func (e *EngineImpl) handleIdentityResponse(ctx context.Context, req *eap.Reques
 			slog.Warn("非対応のIdentity種別",
 				"event_id", "EAP_UNSUPPORTED_TYPE",
 				"trace_id", traceID,
-				"user_name", req.UserName,
+				"user_name", e.maskUserName(req.UserName),
 			)
 		} else {
 			slog.Warn("Identity解析失敗",
 				"event_id", "EAP_IDENTITY_INVALID",
 				"trace_id", traceID,
-				"user_name", req.UserName,
+				"user_name", e.maskUserName(req.UserName),
 				"error", err,
 			)
 		}
@@ -418,7 +418,7 @@ func (e *EngineImpl) handleIdentityResponse(ctx context.Context, req *eap.Reques
 		slog.Warn("永続ID応答が仮名/再認証ID",
 			"event_id", "EAP_IDENTITY_INVALID",
 			"trace_id", traceID,
-			"user_name", req.UserName,
+			"user_name", e.maskUserName(req.UserName),
 		)
 		_ = e.ctxStore.Delete(ctx, traceID)
 		eapFailure, _ := eap.BuildEAPFailure(pkt.Identifier + 1)
@@ -822,4 +822,9 @@ func (e *EngineImpl) buildReject(identifier uint8) *eap.Result {
 // maskIMSI はIMSIマスキングのラッパー
 func (e *EngineImpl) maskIMSI(imsi string) string {
 	return logging.MaskIMSI(imsi, e.cfg.LogMaskIMSI)
+}
+
+// maskUserName はUser-Name（EAP Identity）内のIMSIをマスキングする
+func (e *EngineImpl) maskUserName(userName string) string {
+	return logging.MaskUserName(userName, e.cfg.LogMaskIMSI)
 }

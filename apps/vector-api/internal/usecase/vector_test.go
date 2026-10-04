@@ -1,14 +1,18 @@
 package usecase
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-api/internal/config"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-api/internal/dto"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-api/internal/milenage"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-api/internal/store"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/logging"
 	"go.uber.org/mock/gomock"
 )
 
@@ -734,5 +738,66 @@ func TestGenerateVector_Resync_Success(t *testing.T) {
 	}
 	if resp == nil {
 		t.Fatal("expected non-nil response")
+	}
+}
+
+// TestGenerateVector_TestMode_LogIMSIMasked はテストモードのログでIMSIがマスクされることを確認する
+func TestGenerateVector_TestMode_LogIMSIMasked(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	uc, mockRepo, mockCalc, mockSQNMgr, _, _, mockTestVP := setupUseCase(ctrl)
+	uc.cfg.LogMaskIMSI = true
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	defer slog.SetDefault(prev)
+
+	// 加入者なし（TEST_SQN_FALLBACK）かつSQN書き戻し失敗（TEST_SQN_PERSIST_ERR）
+	mockTestVP.EXPECT().IsTestIMSI(testIMSI).Return(true)
+	mockTestVP.EXPECT().GetTestCryptoParams().Return(testKi, testOPc, testAMF)
+	mockTestVP.EXPECT().GetDefaultSQN().Return(testDefaultSQN)
+	mockRepo.EXPECT().Get(gomock.Any(), testIMSI).Return(nil, nil)
+	mockSQNMgr.EXPECT().Increment(testDefaultSQN).Return(testDefaultSQN+0x20, nil)
+	mockCalc.EXPECT().GenerateVector(testKi, testOPc, testAMF, testDefaultSQN+0x20).Return(dummyVector(), nil)
+	mockSQNMgr.EXPECT().FormatHex(testDefaultSQN + 0x20).Return("ff9bb4d0b627")
+	mockRepo.EXPECT().UpdateSQN(gomock.Any(), testIMSI, "ff9bb4d0b627").Return(errors.New("valkey down"))
+
+	if _, err := uc.GenerateVector(context.Background(), &dto.VectorRequest{IMSI: testIMSI}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	logs := buf.String()
+	for _, eventID := range []string{"TEST_SQN_FALLBACK", "TEST_SQN_PERSIST_ERR"} {
+		if !strings.Contains(logs, `"event_id":"`+eventID+`"`) {
+			t.Errorf("%s not logged: %s", eventID, logs)
+		}
+	}
+	if strings.Contains(logs, testIMSI) {
+		t.Errorf("log contains unmasked IMSI: %s", logs)
+	}
+	if !strings.Contains(logs, `"imsi":"`+logging.MaskIMSI(testIMSI, true)+`"`) {
+		t.Errorf("masked IMSI not found in log: %s", logs)
+	}
+}
+
+func TestVectorUseCase_maskIMSI(t *testing.T) {
+	const imsi = "440101234567890"
+	tests := []struct {
+		name string
+		cfg  *config.Config
+		want string
+	}{
+		{"masking enabled", &config.Config{LogMaskIMSI: true}, "440101********0"},
+		{"masking disabled", &config.Config{LogMaskIMSI: false}, imsi},
+		{"nil config masks by default", nil, "440101********0"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			uc := &VectorUseCase{cfg: tt.cfg}
+			if got := uc.maskIMSI(imsi); got != tt.want {
+				t.Errorf("maskIMSI() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

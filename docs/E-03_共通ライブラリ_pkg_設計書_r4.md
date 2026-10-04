@@ -1,4 +1,4 @@
-# E-03 共通ライブラリ(pkg)設計書 (r3)
+# E-03 共通ライブラリ(pkg)設計書 (r4)
 
 ## 1. 概要
 
@@ -28,7 +28,7 @@
 |-------------|---------|
 | D-01 ミニPC版設計仕様書 (r9) | リポジトリ構成、パッケージ利用マップ |
 | D-02 Valkeyデータ設計仕様書 (r11) | Go構造体定義、ストア層変換方式 |
-| D-04 ログ仕様設計書 (r17) | IMSIマスキング仕様 |
+| D-04 ログ仕様設計書 (r20) | IMSIマスキング仕様（User-Nameのマスク規則を含む） |
 | D-06 エラーハンドリング詳細設計書 (r6) | エラー定義パターン |
 | D-11 Vector API詳細設計書 (r6) | RFC 7807 Problem Details |
 | E-02 コーディング規約（簡易版）(r1) | pkg配置方針、命名規則 |
@@ -80,7 +80,7 @@ pkg/
 │   ├── client.go             # クライアント初期化・ヘルパー関数
 │   └── options.go            # 接続オプション・BuildAddr
 ├── logging/                  # ログユーティリティ
-│   ├── masking.go            # IMSIマスキング・Masker構造体
+│   ├── masking.go            # IMSI・User-Nameマスキング・Masker構造体
 │   └── fields.go             # フィールド定数・CommonFields・AuthLogFields
 ├── model/                    # 共通データ構造体
 │   ├── subscriber.go         # Subscriber構造体・NewSubscriber
@@ -98,7 +98,7 @@ pkg/
 |-----------|------|---------------|
 | `apperr` | 共通エラー定義 | センチネルエラー、カスタムエラー型（ValidationError, BackendError, ValkeyError, EAPIdentityError） |
 | `valkey` | Valkeyクライアント初期化 | `NewClient()`, `Options`, `DefaultOptions()`, `TUIOptions()`, `BuildAddr()` |
-| `logging` | ログユーティリティ | `MaskIMSI()`, `CommonFields`, `AuthLogFields()`, フィールド定数8種 |
+| `logging` | ログユーティリティ | `MaskIMSI()`, `MaskUserName()`, `Masker`, `CommonFields`, `AuthLogFields()`, フィールド定数8種 |
 | `model` | 共通データ構造体 | `Subscriber`, `RadiusClient`, `Session`, `EAPContext`, `Policy`, `PolicyRule`, `Stage` |
 | `httputil` | HTTPユーティリティ | `ProblemDetail`, `ContentType`, `WriteError()`, `AbortWithError()` |
 
@@ -620,7 +620,7 @@ func main() {
 
 ### 5.1 責務
 
-- IMSIマスキング処理の提供
+- IMSIマスキング処理の提供（User-Name（EAP Identity）に含まれるIMSIのマスキングを含む）
 - 共通ログフィールドの定義
 - マスキング設定の一元管理
 
@@ -688,7 +688,7 @@ D-04「ログ仕様設計書」で定義されたマスキング仕様を実装�
 ```go
 // MaskIMSI はIMSIをマスキングする
 //
-// マスキング仕様（D-04 r17準拠）:
+// マスキング仕様（D-04 §4.4.2準拠）:
 //   - 先頭6桁を保持
 //   - 末尾1桁を保持
 //   - 中間部分をアスタリスク(*)でマスク
@@ -703,15 +703,34 @@ func MaskIMSI(imsi string, enabled bool) string
 // 文字列が keepPrefix+keepSuffix 以下の長さの場合はそのまま返す
 func MaskPartial(s string, keepPrefix, keepSuffix int, maskChar rune) string
 
+// MaskUserName はEAP Identity形式のユーザー名（User-Name属性）をマスキングする
+//
+// マスキング仕様（D-04 §4.4.2準拠）:
+//   - "@" より前（ローカル部）だけを対象とし、realm（"@" 以降）はそのまま残す
+//   - 種別1文字＋IMSI 15桁（16桁の数字）: 種別文字を残し、IMSI部分に MaskIMSI を適用
+//   - IMSI 15桁のみ: MaskIMSI を適用
+//   - それ以外（仮名・再認証ID・不正形式）: MaskPartial(local, 7, 1, '*')
+//     （先頭7文字と末尾1文字を保持。7+1文字以下はそのまま）
+//
+// 例: 0440101234567890@realm  → 0440101********0@realm
+//     440101234567890         → 440101********0
+//     2some-pseudonym@example → 2some-p*******m@example
+//
+// enabled=false の場合はマスキングせずそのまま返す
+func MaskUserName(userName string, enabled bool) string
+
 // Masker はマスキング設定を保持する構造体
 type Masker struct {
     enabled bool
 }
 
 func NewMasker(enabled bool) *Masker
-func (m *Masker) IMSI(imsi string) string
+func (m *Masker) IMSI(imsi string) string         // MaskIMSI(imsi, m.enabled)
+func (m *Masker) UserName(userName string) string // MaskUserName(userName, m.enabled)
 func (m *Masker) IsEnabled() bool
 ```
+
+**利用箇所（User-Name）:** Auth Serverの `EAP_UNSUPPORTED_TYPE` / `EAP_IDENTITY_INVALID` の `user_name` 属性、Acct Serverの課金ログでUser-NameからIMSIを抽出できない場合の `imsi` 属性（D-04 §4.5）。
 
 ### 5.6 使用例
 
@@ -728,6 +747,13 @@ slog.Info("EAP challenge sent",
     logging.WithEventID("EAP_CHALLENGE_SENT"),
     logging.WithTraceID(traceID),
     logFields.WithIMSI(imsi),
+)
+
+// User-Name（EAP Identity）のマスキング（realmは残る）
+slog.Warn("非対応のIdentity種別",
+    "event_id", "EAP_UNSUPPORTED_TYPE",
+    "trace_id", traceID,
+    "user_name", logging.MaskUserName(userName, cfg.LogMaskIMSI), // 1440101********0@realm
 )
 ```
 
@@ -1203,3 +1229,4 @@ func (h *GatewayHandler) handleBackendError(c *gin.Context, err error) {
 | r1 | 2026-01-25 | 初版作成。pkg/apperr, pkg/valkey, pkg/logging, pkg/model, pkg/httputil の設計を定義。 |
 | r2 | 2026-02-18 | 実装との整合: apperr/httputil ファイル分割反映、PolicyRule構造変更（SSID/Action/TimeMin/TimeMax）、model構造体をjsonタグのみに修正（redisタグ除去・ストア層変換方式）、Stage型（`type Stage string`）と8定数追加、全コンストラクタシグネチャを実装に合わせて更新、valkey DefaultOptions/TUIOptionsのデフォルト値明記、logging フィールド定数8種・nilガード・AuthLogFields追記、httputil ContentType定数・BadGateway/NotImplemented/ServiceUnavailable追記、関連ドキュメント版数更新。 |
 | r3 | 2026-03-01 | 実装・現行ドキュメントとの整合: IMSIマスキング仕様をD-04 r17準拠に修正（先頭6桁+末尾1桁）、関連ドキュメント版数更新 |
+| r4 | 2026-10-04 | ログのIMSIマスク漏れ修正に伴う pkg/logging の公開API追加の反映: §5.5に `MaskUserName()`（User-Name（EAP Identity）の "@" より前をマスクし realm を残す）と `Masker.UserName()` を追加し利用箇所を追記、§5.6に使用例を追加、§2.1 / §2.2 / §5.1を更新。§1.3関連ドキュメント参照版数更新（D-04 r17→r20） |

@@ -20,8 +20,11 @@
             "latency_ms": { "kind": "integer" },
             "input_octets": { "kind": "integer" },
             "output_octets": { "kind": "integer" },
-            "retry_count": { "kind": "integer" },
-            "downtime_ms": { "kind": "integer" },
+            "code": { "kind": "integer" },
+            "subtype": { "kind": "integer" },
+            "eap_type": { "kind": "integer" },
+            "acct_status_type": { "kind": "integer" },
+            "session_time": { "kind": "integer" },
             "failure_count": { "kind": "integer" },
             "resync_count": { "kind": "integer" },
             "http_status": { "kind": "integer" }
@@ -34,8 +37,8 @@
                 "line": "{\"time\":\"2026-02-28T23:00:07.393000000+09:00\",\"level\":\"INFO\",\"msg\":\"request completed\",\"app\":\"vector-api\",\"trace_id\":\"no-trace-id\",\"method\":\"GET\",\"path\":\"/health\",\"http_status\":200,\"latency_ms\":0}"
             },
             {
-                "line": "{\"time\":\"2026-02-28T23:00:08.845000000+09:00\",\"level\":\"ERROR\",\"msg\":\"authentication failed\",\"app\":\"auth-server\",\"imsi\":\"440101********0\",\"trace_id\":\"abc-123\",\"event_id\":\"AUTH_FAIL\"}",
-                "level": "error"
+                "line": "{\"time\":\"2026-02-28T23:00:08.845000000+09:00\",\"level\":\"WARN\",\"msg\":\"ポリシー拒否\",\"app\":\"auth-server\",\"event_id\":\"AUTH_POLICY_DENIED\",\"trace_id\":\"abc-123\",\"imsi\":\"440101********0\",\"reason\":\"no matching rule and default is deny\"}",
+                "level": "warning"
             }
         ],
         "line-format": [
