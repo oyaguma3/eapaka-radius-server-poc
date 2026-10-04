@@ -1,4 +1,4 @@
-# D-03 Vector-APIインターフェース定義書およびEAP-AKAステートマシン設計書 (r5)
+# D-03 Vector-APIインターフェース定義書およびEAP-AKAステートマシン設計書 (r6)
 
 ---
 
@@ -6,7 +6,7 @@
 
 Auth Server が Vector Gateway 経由で Vector API に対して行う「認証ベクター取得」および「再同期（Resync）」のリクエスト仕様です。
 
-> **注記:** Auth ServerはVector Gatewayに対してリクエストを送信する。Vector Gatewayは内部でVector APIにリクエストを転送し、応答を返却する。この構成により、将来的な外部API連携（PLMNベースルーティング）への拡張が可能となる。詳細はD-12を参照。
+> **注記:** Auth ServerはVector Gatewayに対してリクエストを送信する。Vector GatewayはIMSIのPLMNに応じて接続先を振り分け（PLMNベースルーティング）、内部Vector API（接続方式ID `00`）または外部の aka-only-server（接続方式ID `01`）からベクターを取得して応答を返却する。どちらに振り分けられても本章の内部IF（リクエスト/レスポンス形式）は同一である。詳細はD-12を参照。
 
 ### 基本情報
 
@@ -17,10 +17,11 @@ Auth Server が Vector Gateway 経由で Vector API に対して行う「認証�
 
 > **接続構成:**
 > ```
-> Auth Server → Vector Gateway → Vector API → Valkey
->                    ↓
->              (将来: 外部API)
+> Auth Server → Vector Gateway ─┬─ (00) → Vector API → Valkey
+>                                └─ (01) → aka-only-server（外部、mTLS/平文HTTP）
 > ```
+>
+> 接続方式 `01` は `VECTOR_GATEWAY_PLMN_MAP` で `01` を指定したPLMNにのみ適用される（未一致PLMNおよびpassthroughモードは `00`）。
 > 
 > Auth Serverは環境変数 `VECTOR_API_URL` で接続先を指定する。PoC環境では `http://vector-gateway:8080/api/v1/vector` を設定する。
 
@@ -34,7 +35,7 @@ Auth Server が Vector Gateway 経由で Vector API に対して行う「認証�
   - `Content-Type`: `application/json`
   - `X-Trace-ID`: **必須** (Auth Serverが生成したUUID)
 
-> **注記:** Vector GatewayはX-Trace-IDを内部Vector APIへ伝搬し、エンドツーエンドのトレーサビリティを確保する。
+> **注記:** Vector GatewayはX-Trace-IDを内部Vector APIへ伝搬し、エンドツーエンドのトレーサビリティを確保する。接続方式 `01` の場合もX-Trace-IDをベストエフォートで付与するが、aka-only-server はこれを記録しない（ログ突き合わせはD-04参照）。
 
 #### Request Body
 
@@ -72,21 +73,42 @@ RFC7807 (Problem Details) に準拠した形式で返します。
 | HTTPステータス | 説明 | 発生元 |
 |---------------|------|--------|
 | 400 Bad Request | IMSIのフォーマット不正、またはSQN同期計算に失敗（MAC検証失敗など） | Vector API |
+| 400 Bad Request | aka-only-server がリクエスト不正と判定（cause: INVALID_MSG_FORMAT ほか） | Vector Gateway（接続方式01） |
+| 403 Forbidden | aka-only-server が認証ベクター払い出しを拒否（cause: AUTHENTICATION_REJECTED。下表参照） | Vector Gateway（接続方式01） |
 | 404 Not Found | 指定されたIMSIがValkeyに存在しない | Vector API |
+| 404 Not Found | 指定されたIMSIが aka-only-server に登録されていない（cause: USER_NOT_FOUND） | Vector Gateway（接続方式01） |
 | 409 Conflict | SQN更新競合がリトライ上限を超過（D-11参照） | Vector API |
 | 500 Internal Server Error | Valkey接続エラー、Milenage計算の予期せぬエラー | Vector API |
 | 501 Not Implemented | 未実装の接続方式IDが指定された | Vector Gateway |
 | 502 Bad Gateway | Vector GatewayからVector APIへの通信エラー | Vector Gateway |
+| 502 Bad Gateway | aka-only-server との通信失敗（タイムアウト・接続失敗・TLSハンドシェイク失敗）、5xx/501応答、不正な応答 | Vector Gateway（接続方式01） |
 
 > **注記:** 
-> - 501 Not Implementedは、PLMNマップで未実装の接続方式ID（01〜99）が指定された場合にVector Gatewayが返却する。PoC段階では接続方式ID `00`（内部Vector API）のみ実装されている。
+> - 501 Not Implementedは、PLMNマップで未実装（または未設定）の接続方式IDが指定された場合にVector Gatewayが返却する（下記の接続方式 `01` の注記を参照）。
 > - 409 Conflictは、Phase 1で追加されたSQN競合制御（WATCH/MULTI CAS）のリトライ上限超過時に返却される。
+> - 接続方式 `01`（aka-only-server）は実装済み。`VECTOR_GATEWAY_AKAONLY_URL` が未設定の場合は `01` も未登録となり、`01` を指定したPLMNは501となる。`02`〜`99` は未実装（501）。
+> - 接続方式 `01` の 400/403/404 は、aka-only-server の ProblemDetails（title/status/detail/cause）を Vector Gateway が RFC7807 形式（`type: about:blank`、title/status/detail を引き継ぎ）に詰め替えたもの。`cause` は内部IFに含まれず、Vector Gatewayのログにのみ出力される（D-04参照）。
+
+**接続方式01で 403 Forbidden となるケース:**
+
+接続方式 `01` 経由の場合に限り、以下の3ケースで 403 が返る。`detail` で区別する。
+
+| # | ケース | detail |
+|---|--------|--------|
+| 1 | Vector Gateway のクライアント証明書が、当該加入者の許可クライアントに含まれていない | `client is not allowed for this subscriber` |
+| 2 | 再同期（`resync_info` あり）で AUTS 検証に失敗した | `AUTS verification failed` |
+| 3 | 平文HTTP接続で、当該加入者の平文HTTP許可フラグが立っていない | `client is not allowed for this subscriber`（#1と同じ） |
+
+> **注記:**
+> - 再同期時の AUTS 検証失敗は、内部Vector API（接続方式00）では **400**、接続方式01では **403** となる。
+> - Auth Server は 200 以外の 4xx（400/403/404 等）を Circuit Breaker 対象外の APIError として扱い、Access-Reject とする。403 は 404/400 と同様に扱われるため、Auth Server 側の変更は不要（ログは 403 → `VECTOR_API_ERR`（http_status=403）、404 → `VECTOR_IMSI_NOT_FOUND`）。
+> - 502 は Auth Server の Circuit Breaker の失敗回数に数えられる。Circuit Breaker は接続方式ごとに分かれていないため、`01` 向けの通信失敗が続いて開くと `00` 向けの認証も停止する。Vector Gateway は `01` 失敗時に `00` へのフォールバックを行わない（SQN競合回避のため）。エラー変換の詳細はD-06を参照。
 
 ```json
 {
   "type": "about:blank",
   "title": "User Not Found",
-  "detail": "IMSI 44010... does not exist in subscriber DB.",
+  "detail": "IMSI does not exist in subscriber DB",
   "status": 404
 }
 ```
@@ -236,12 +258,12 @@ Valkeyの `eap:{UUID}` 内の `stage` フィールドで管理します。
     4. RADIUS `Access-Challenge` 返信。
     5. **Next State:** `CHALLENGE_SENT`
   - **APIエラー (404 Not Found):**
-    1. ログ出力（`AUTH_IMSI_NOT_FOUND`）。
+    1. ログ出力（`VECTOR_IMSI_NOT_FOUND`）。
     2. `EAP-Failure` を作成。
     3. RADIUS `Access-Reject` 返信。
     4. **Next State:** `FAILURE`
-  - **APIエラー (400/500/502/タイムアウト):**
-    1. ログ出力（`VECTOR_API_ERR`）。
+  - **APIエラー (400/403/500/501/502等) / 接続失敗・タイムアウト / Circuit Breaker Open:**
+    1. ログ出力（HTTPエラー応答: `VECTOR_API_ERR`、接続失敗・タイムアウト: `VECTOR_CONN_ERR`、Circuit Breaker Open: `VECTOR_CB_OPEN`、その他: `VECTOR_UNKNOWN_ERR`）。
     2. `EAP-Failure` を作成。
     3. RADIUS `Access-Reject` 返信。
     4. **Next State:** `FAILURE`
@@ -251,7 +273,7 @@ Valkeyの `eap:{UUID}` 内の `stage` フィールドで管理します。
 - **Condition:** Identity先頭が `2`,`4`(EAP-AKA) または `7`,`8`(EAP-AKA')
 - **Current State制約:** `NEW` のみ（`WAITING_IDENTITY` で再度受信した場合は 2c へ）
 - **Action:**
-  1. Identity種別を記録（ログ出力: `EAP_PSEUDONYM_FALLBACK`）。
+  1. Identity種別を判定（フル認証誘導時の専用ログは出力しない。初回の EAP-Response/Identity 受信時の `EAP_IDENTITY_RECEIVED` のみ）。
   2. Valkey `eap:{UUID}` に `permanent_id_requested: true` をセット。
   3. `EAP-Request/AKA-Identity` または `EAP-Request/AKA'-Identity` を作成。
      - `AT_PERMANENT_ID_REQ` を含める（RFC 4187 Section 4.1.4）。
@@ -318,7 +340,7 @@ EAP認証成功後の認可処理。`policy:{IMSI}` を参照し、接続可否�
 | 取得結果 | 処理 | ログ | Next State |
 |---------|------|------|------------|
 | キー不在 | Access-Reject | `AUTH_POLICY_NOT_FOUND` | FAILURE |
-| JSONパース失敗 | Access-Reject | `POLICY_PARSE_ERR` | FAILURE |
+| JSONパース失敗 | Access-Reject | `AUTH_POLICY_NOT_FOUND`（専用のevent_idはなく、`error` 属性で区別） | FAILURE |
 | 取得成功 | ルール評価へ | - | - |
 
 3. **ルール評価:**
@@ -375,7 +397,8 @@ EAP認証成功後の認可処理。`policy:{IMSI}` を参照し、接続可否�
     3. **新しい** `EAP-Request/AKA-Challenge` を作成して送信。
     4. **Next State:** `CHALLENGE_SENT`
   - **APIエラー (MAC不正など):**
-    1. ログ出力（`SQN_RESYNC_MAC_ERR` 等）。
+    1. ログ出力（Auth Server: `VECTOR_API_ERR` 等。2a のAPIエラー時と同じ。接続方式00の場合は Vector API 側で `SQN_RESYNC_MAC_ERR` 等も出力される）。
+       - AUTS 検証失敗は、接続方式00では 400、接続方式01（aka-only-server）では 403 で返る。
     2. `EAP-Failure` 送信。
     3. **Next State:** `FAILURE`
 
@@ -389,11 +412,10 @@ EAP認証成功後の認可処理。`policy:{IMSI}` を参照し、接続可否�
 - **Current State:** `CHALLENGE_SENT` または `WAITING_IDENTITY`
 - **Trigger:** `EAP-Response/AKA-Client-Error`
 - **Action:**
-  1. `AT_CLIENT_ERROR_CODE` からエラーコードを抽出。
-  2. ログ出力（`EAP_CLIENT_ERROR`、エラーコード含む）。
+  1. ログ出力（`EAP_CLIENT_ERROR`。属性は `trace_id`, `imsi`。`AT_CLIENT_ERROR_CODE` のエラーコードは抽出・記録しない）。
      - エラーコードの詳細は RFC 4187 Section 10.20 を参照。
-  3. `EAP-Failure` 送信。
-  4. **Next State:** `FAILURE`
+  2. `EAP-Failure` 送信。
+  3. **Next State:** `FAILURE`
 
 ### 6. Authentication-Reject受信 (Receive Authentication Reject)
 
@@ -411,7 +433,11 @@ EAP認証成功後の認可処理。`policy:{IMSI}` を参照し、接続可否�
 - **Current State:** 期待される状態と異なる
 - **Trigger:** 現在の状態で受信すべきでないEAPメッセージを受信
 - **Action:**
-  1. ログ出力（`EAP_INVALID_STATE`、現在の状態と受信したメッセージ種別を含む）。
+  1. ログ出力（WARN。属性は `trace_id`, `stage`（現在の状態））。
+     - `CHALLENGE_SENT` 以外で Challenge 応答／再同期応答（Synchronization-Failure）を受信: `EAP_STATE_ERR`
+     - `WAITING_IDENTITY` 以外で AKA-Identity 応答を受信: `EAP_UNEXPECTED_IDENTITY`
+     - 未知の Subtype を受信: `EAP_UNKNOWN_SUBTYPE`（属性は `trace_id`, `subtype`）
+     - なお、状態遷移表による内部検証の失敗も `EAP_STATE_ERR`（ERROR、属性は `trace_id`, `error`）で出力される。
   2. `EAP-Failure` 送信。
   3. **Next State:** `FAILURE`
 
@@ -426,3 +452,4 @@ EAP認証成功後の認可処理。`policy:{IMSI}` を参照し、接続可否�
 | r3 | 2026-01-12 | 状態定義の整理: IDENTITY_RECEIVED状態追加、タイムアウト時の遷移先をFAILUREに統一（ABORTED/TIMEOUT廃止）、PoC対象外状態を表から削除。状態遷移図をテキストベースに変更。Policy評価タイミングをPost-Authのみに変更（Pre-Auth Policy Check削除）。WAITING_VECTORおよびRESYNC_SENT状態の使用を明確化。不正な状態遷移時の処理（EAP_INVALID_STATE）を追加。Post-Auth Policy Checkの詳細化: デフォルトポリシー（default=allow/deny）の評価ロジック追加、ポリシー未設定/パースエラー時の処理明記。WAITING_IDENTITY状態からFAILURE遷移を明記（非対応/不正ID受信時、Client-Error受信時）。 |
 | r4 | 2026-01-27 | API接続設計統一: セクション1のタイトルを「Vector Gateway経由」に変更、Base URLを`http://vector-gateway:8080/api/v1`に更新、接続構成図追加、Error Responseに409/501/502エラー追加（表形式に変更）、D-12参照追加 |
 | r5 | 2026-02-18 | PolicyRule新構造反映: Post-Auth Policy Checkのルール評価をSSID/Action/TimeMin/TimeMax構造に更新、関連ドキュメント版数更新 |
+| r6 | 2026-10-04 | 接続方式01（aka-only-server）対応: 接続構成図・注記を更新（内部IFは変更なし）、Error Responseに接続方式01由来の400/403/404/502を追加、403の3ケース（detailで区別）と再同期AUTS検証失敗が403となる点を明記、Auth ServerでのCB対象外扱い・502のCB計上を注記。既存記載の実装との不一致を修正（2a の404時ログを `AUTH_IMSI_NOT_FOUND` → `VECTOR_IMSI_NOT_FOUND`、APIエラー時ログに `VECTOR_CONN_ERR` / `VECTOR_CB_OPEN` / `VECTOR_UNKNOWN_ERR` を追記、再同期APIエラー時のAuth Server側ログを `VECTOR_API_ERR` 等に修正、404応答例の detail を実装の文言に修正）。D-04 r19 の event_id 全面整合に合わせて修正（2b の `EAP_PSEUDONYM_FALLBACK` を削除（フル認証誘導時は専用ログなし）、§7 不正な状態遷移の `EAP_INVALID_STATE` を `EAP_STATE_ERR` / `EAP_UNEXPECTED_IDENTITY` / `EAP_UNKNOWN_SUBTYPE` に修正、3a のJSONパース失敗時ログ `POLICY_PARSE_ERR` を `AUTH_POLICY_NOT_FOUND` に修正、§5 Client-Error受信時にエラーコードを記録しない旨を明記） |

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -63,7 +64,10 @@ func setupHandler(mock *mockBackend) *VectorHandler {
 		InternalTimeout: 5 * time.Second,
 		LogMaskIMSI:     true,
 	}
-	reg := backend.NewRegistry(cfg)
+	reg, err := backend.NewRegistry(cfg)
+	if err != nil {
+		panic(err)
+	}
 	r := router.NewRouter(map[string]string{}, reg, true) // passthrough → 常にデフォルト
 	return NewVectorHandler(r, cfg)
 }
@@ -76,7 +80,10 @@ func setupHandlerWithMockServer(srv *httptest.Server) *VectorHandler {
 		LogMaskIMSI:     true,
 		Mode:            "passthrough",
 	}
-	reg := backend.NewRegistry(cfg)
+	reg, err := backend.NewRegistry(cfg)
+	if err != nil {
+		panic(err)
+	}
 	r := router.NewRouter(map[string]string{}, reg, cfg.IsPassthrough())
 	return NewVectorHandler(r, cfg)
 }
@@ -264,7 +271,10 @@ func TestHandleVector_BackendConnectionError(t *testing.T) {
 		LogMaskIMSI:     true,
 		Mode:            "passthrough",
 	}
-	reg := backend.NewRegistry(cfg)
+	reg, err := backend.NewRegistry(cfg)
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
 	r := router.NewRouter(map[string]string{}, reg, cfg.IsPassthrough())
 	h := NewVectorHandler(r, cfg)
 
@@ -291,7 +301,10 @@ func TestHandleVector_RoutingError_BackendNotImplemented(t *testing.T) {
 		LogMaskIMSI:     true,
 		Mode:            "gateway", // gatewayモードでPLMNルーティングを有効化
 	}
-	reg := backend.NewRegistry(cfg)
+	reg, err := backend.NewRegistry(cfg)
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
 	// PLMNマップで "440101" を未登録のバックエンド "99" にルーティング
 	plmnMap := map[string]string{"440101": "99"}
 	r := router.NewRouter(plmnMap, reg, false) // passthrough=false
@@ -310,5 +323,90 @@ func TestHandleVector_RoutingError_BackendNotImplemented(t *testing.T) {
 
 	if w.Code != http.StatusNotImplemented {
 		t.Errorf("Status = %d, want %d", w.Code, http.StatusNotImplemented)
+	}
+}
+
+// setupAKAOnlyHandler はPLMN 44010を平文HTTPのaka-only-server（01）に向けるハンドラーを生成する。
+func setupAKAOnlyHandler(t *testing.T, akaOnly, internal *httptest.Server) *VectorHandler {
+	t.Helper()
+	cfg := &config.Config{
+		InternalURL:     internal.URL,
+		InternalTimeout: 5 * time.Second,
+		AKAOnlyURL:      akaOnly.URL,
+		AKAOnlyTimeout:  5 * time.Second,
+		LogMaskIMSI:     true,
+		Mode:            "gateway",
+	}
+	reg, err := backend.NewRegistry(cfg)
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+	r := router.NewRouter(map[string]string{"44010": "01"}, reg, false)
+	return NewVectorHandler(r, cfg)
+}
+
+func TestHandleVector_AKAOnly(t *testing.T) {
+	var akaOnlyPath string
+	akaOnly := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		akaOnlyPath = r.URL.Path
+		if r.URL.Path == "/nudm-ueau/v1/imsi-440109999999999/hss-security-information/eap-aka/generate-av" {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusForbidden)
+			io.WriteString(w, `{"title":"Forbidden","status":403,"detail":"client is not allowed for this subscriber","cause":"AUTHENTICATION_REJECTED"}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"hssAuthenticationVectors":[{"avType":"EAP_AKA","rand":"r1","xres":"x1","autn":"a1","ck":"c1","ik":"i1"}]}`)
+	}))
+	defer akaOnly.Close()
+	internal := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(&backend.VectorResponse{RAND: "r0", AUTN: "a0", XRES: "x0", CK: "c0", IK: "i0"})
+	}))
+	defer internal.Close()
+
+	h := setupAKAOnlyHandler(t, akaOnly, internal)
+
+	tests := []struct {
+		name       string
+		imsi       string
+		wantStatus int
+		wantRAND   string
+		wantDetail string
+	}{
+		{"routed to aka-only-server", "440101234567890", http.StatusOK, "r1", ""},
+		{"unmatched PLMN uses internal", "440201234567890", http.StatusOK, "r0", ""},
+		{"403 is propagated", "440109999999999", http.StatusForbidden, "", "client is not allowed for this subscriber"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request, _ = http.NewRequest("POST", "/api/v1/vector", bytes.NewBufferString(`{"imsi":"`+tt.imsi+`"}`))
+			c.Request.Header.Set("Content-Type", "application/json")
+			c.Set(TraceIDKey, "test-trace-id")
+
+			h.HandleVector(c)
+
+			if w.Code != tt.wantStatus {
+				t.Fatalf("Status = %d, want %d (body=%s)", w.Code, tt.wantStatus, w.Body.String())
+			}
+			if tt.wantStatus == http.StatusOK {
+				var resp backend.VectorResponse
+				json.Unmarshal(w.Body.Bytes(), &resp)
+				if resp.RAND != tt.wantRAND {
+					t.Errorf("RAND = %q, want %q", resp.RAND, tt.wantRAND)
+				}
+				return
+			}
+			var p httputil.ProblemDetail
+			json.Unmarshal(w.Body.Bytes(), &p)
+			if p.Status != tt.wantStatus || p.Detail != tt.wantDetail || p.Type != "about:blank" {
+				t.Errorf("Problem = %+v", p)
+			}
+		})
+	}
+	if akaOnlyPath == "" {
+		t.Error("aka-only-server was not called")
 	}
 }

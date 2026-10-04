@@ -16,7 +16,11 @@ func newTestRegistry() *backend.Registry {
 		InternalURL:     "http://localhost:8080",
 		InternalTimeout: 5 * time.Second,
 	}
-	return backend.NewRegistry(cfg)
+	r, err := backend.NewRegistry(cfg)
+	if err != nil {
+		panic(err)
+	}
+	return r
 }
 
 func TestSelectBackend_Passthrough(t *testing.T) {
@@ -155,3 +159,64 @@ func (m *mockBackend) GetVector(ctx context.Context, req *backend.VectorRequest)
 
 func (m *mockBackend) ID() string   { return m.id }
 func (m *mockBackend) Name() string { return m.name }
+
+func TestSelectBackend_AKAOnly(t *testing.T) {
+	cfg := &config.Config{
+		InternalURL:     "http://localhost:8080",
+		InternalTimeout: 5 * time.Second,
+		AKAOnlyURL:      "http://aka-only-server:8080",
+		AKAOnlyTimeout:  5 * time.Second,
+	}
+	reg, err := backend.NewRegistry(cfg)
+	if err != nil {
+		t.Fatalf("NewRegistry() error = %v", err)
+	}
+	plmnMap := map[string]string{"44010": "01"}
+	r := NewRouter(plmnMap, reg, false)
+
+	tests := []struct {
+		name   string
+		imsi   string
+		wantID string
+	}{
+		{"matched PLMN routes to 01", "440101234567890", "01"},
+		{"unmatched PLMN routes to 00", "440201234567890", "00"},
+		{"test vector PLMN routes to 00", "001011234567890", "00"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b, err := r.SelectBackend(tt.imsi)
+			if err != nil {
+				t.Fatalf("SelectBackend() error = %v", err)
+			}
+			if b.ID() != tt.wantID {
+				t.Errorf("ID() = %q, want %q", b.ID(), tt.wantID)
+			}
+		})
+	}
+
+	// passthroughモードでは01にマッチしても00
+	pr := NewRouter(plmnMap, reg, true)
+	b, err := pr.SelectBackend("440101234567890")
+	if err != nil {
+		t.Fatalf("SelectBackend() error = %v", err)
+	}
+	if b.ID() != "00" {
+		t.Errorf("passthrough ID() = %q, want %q", b.ID(), "00")
+	}
+}
+
+func TestSelectBackend_AKAOnlyNotConfigured(t *testing.T) {
+	// URL未設定なら01は未登録で、従来どおりBackendNotImplementedError
+	plmnMap := map[string]string{"44010": "01"}
+	r := NewRouter(plmnMap, newTestRegistry(), false)
+
+	_, err := r.SelectBackend("440101234567890")
+	var notImpl *backend.BackendNotImplementedError
+	if !errors.As(err, &notImpl) {
+		t.Fatalf("expected BackendNotImplementedError, got %v", err)
+	}
+	if notImpl.ID != "01" {
+		t.Errorf("ID = %q, want %q", notImpl.ID, "01")
+	}
+}

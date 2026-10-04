@@ -1,0 +1,23 @@
+# =============================================================================
+# aka-only-server を同一ホストで動かす場合のオーバーレイ
+# =============================================================================
+# aka-only-server の compose が作る共有ネットワーク（既定名 aka-av）に
+# vector-gateway だけを参加させる。共有ネットワークは aka-only-server 側が作るので、
+# 先に aka-only-server を起動しておくこと。
+#
+#   docker compose -f docker-compose.yml -f docker-compose.aka-av.yml up -d
+#
+# 参加後は https://aka-only-server:8443（平文なら http://aka-only-server:8080）で届く。
+# 別ホストの aka-only-server に接続する場合は、このファイルを重ねずに
+# VECTOR_GATEWAY_AKAONLY_URL を相手ホストのアドレスにする。
+# =============================================================================
+services:
+  vector-gateway:
+    networks:
+      - default
+      - aka-av
+
+networks:
+  aka-av:
+    external: true
+    name: ${AKA_SHARED_NETWORK:-aka-av}

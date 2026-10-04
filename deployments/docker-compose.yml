@@ -89,7 +89,16 @@ services:
       VECTOR_GATEWAY_INTERNAL_URL: http://vector-api:8080
       VECTOR_GATEWAY_PLMN_MAP: ${VECTOR_GATEWAY_PLMN_MAP:-}
       VECTOR_GATEWAY_INTERNAL_TIMEOUT: ${VECTOR_GATEWAY_INTERNAL_TIMEOUT:-5s}
+      # aka-only-server（接続方式ID:01）。URLが空なら01は無効
+      VECTOR_GATEWAY_AKAONLY_URL: ${VECTOR_GATEWAY_AKAONLY_URL:-}
+      VECTOR_GATEWAY_AKAONLY_CLIENT_CERT: ${VECTOR_GATEWAY_AKAONLY_CLIENT_CERT:-}
+      VECTOR_GATEWAY_AKAONLY_CLIENT_KEY: ${VECTOR_GATEWAY_AKAONLY_CLIENT_KEY:-}
+      VECTOR_GATEWAY_AKAONLY_SERVER_CERT: ${VECTOR_GATEWAY_AKAONLY_SERVER_CERT:-}
+      VECTOR_GATEWAY_AKAONLY_TIMEOUT: ${VECTOR_GATEWAY_AKAONLY_TIMEOUT:-5s}
       LOG_MASK_IMSI: ${LOG_MASK_IMSI:-true}
+    volumes:
+      # aka-only-server接続用の証明書（av-client.pem / av-server.pem）
+      - ./certs:/certs:ro
     depends_on:
       vector-api:
         condition: service_healthy
@@ -120,6 +129,9 @@ services:
       REDIS_PORT: "6379"
       REDIS_PASS: ${VALKEY_PASSWORD}
       LOG_MASK_IMSI: ${LOG_MASK_IMSI:-true}
+      # テストベクターモード（開発・テスト専用。本番では有効にしないこと）
+      TEST_VECTOR_ENABLED: ${TEST_VECTOR_ENABLED:-false}
+      TEST_VECTOR_IMSI_PREFIX: ${TEST_VECTOR_IMSI_PREFIX:-00101}
     depends_on:
       valkey:
         condition: service_healthy

@@ -1,3 +1,10 @@
+# INT-AUTH-AKA-004対応: EAP方式ミスマッチ拒否（method_mismatch_policy: strict）
+# config: config_testvector.yaml
+# 注意: Auth Server は identity の先頭文字（0=EAP-AKA、6=EAP-AKA'）で方式を選ぶため、
+#       現実装ではこの経路で方式ミスマッチは起きない。
+#       実際は IMSI 440100123456789（テストベクター対象外、Valkey 未登録）が Vector API で 404 になり、
+#       VECTOR_IMSI_NOT_FOUND で Reject される。reject_hint_check_presence: false のため
+#       Reject 理由の文言は検証されず PASS になるが、方式ミスマッチ拒否は現実装では検証できない。
 version: 1
 name: mismatch_strict_fail
 identity: "0440100123456789@wlan.mnc010.mcc440.3gppnetwork.org"

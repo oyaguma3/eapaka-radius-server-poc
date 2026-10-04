@@ -1,4 +1,4 @@
-# D-07 Admin TUI 詳細設計書【後半】(r7)
+# D-07 Admin TUI 詳細設計書【後半】(r8)
 
 ## 1. 概要
 
@@ -27,8 +27,8 @@
 | ドキュメント | 参照内容 |
 |-------------|---------|
 | D-05_Admin_TUI詳細設計書_前半_r9 | 共通仕様、キーバインド規約、ページネーション仕様、ページライフサイクル管理、tview Table Selectable状態管理、非同期データ取得パターン |
-| D-02_Valkeyデータ設計仕様書 (r10) | `sess:{UUID}`, `idx:user:{IMSI}` のデータ構造 |
-| D-06_エラーハンドリング詳細設計書 (r6) | TUIエラー表示仕様 |
+| D-02_Valkeyデータ設計仕様書 (r12) | `sess:{UUID}`, `idx:user:{IMSI}` のデータ構造 |
+| D-06_エラーハンドリング詳細設計書 (r7) | TUIエラー表示仕様 |
 
 ### 1.4 PoC対象外機能
 
@@ -807,95 +807,82 @@ func fetchSessionsByIMSI(ctx context.Context, rdb *redis.Client, imsi string) (*
 
 #### 6.10.1 処理フロー
 
+実装: `apps/admin-tui/internal/store/session.go` の `SessionStore.GetByIMSI`（抜粋）
+
 ```go
-func fetchSessionsByIMSIWithCleanup(ctx context.Context, rdb *redis.Client, imsi string) (*SessionDetailSummary, error) {
-    indexKey := "idx:user:" + imsi
-    
-    // 1. インデックスからセッションUUID一覧を取得
-    uuids, err := rdb.SMembers(ctx, indexKey).Result()
+// GetByIMSI は指定されたIMSIのセッションリストを取得する（idx:user経由）。
+// 存在しないセッションはインデックスからクリーンアップする。
+func (s *SessionStore) GetByIMSI(ctx context.Context, imsi string) ([]*model.Session, error) {
+    indexKey := UserIndexKey(imsi)
+
+    // 1. idx:user:{IMSI} から全セッションUUIDを取得
+    uuids, err := s.client.SMembers(ctx, indexKey).Result()
     if err != nil {
         return nil, err
     }
-    
+
+    // インデックスが空の場合は SCAN フォールバック（全セッションを走査してIMSIで絞り込む）
     if len(uuids) == 0 {
-        return &SessionDetailSummary{IMSI: imsi, SessionCount: 0}, nil
+        return s.getByIMSIScan(ctx, imsi)
     }
-    
-    // 2. Pipeline で各セッションを取得
-    pipe := rdb.Pipeline()
-    cmds := make(map[string]*redis.MapStringStringCmd, len(uuids))
-    for _, uuid := range uuids {
-        cmds[uuid] = pipe.HGetAll(ctx, "sess:"+uuid)
+
+    // 2. Pipeline で各セッションを取得し、存在しないUUIDを stale として分類
+    var sessions []*model.Session
+    var staleUUIDs []string
+    pipe := s.client.Pipeline()
+    cmds := make([]*redis.MapStringStringCmd, len(uuids))
+    for i, uuid := range uuids {
+        cmds[i] = pipe.HGetAll(ctx, SessionKey(uuid))
     }
-    _, err = pipe.Exec(ctx)
-    if err != nil {
+    if _, err = pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
         return nil, err
     }
-    
-    // 3. 存在するセッションと存在しないUUIDを分類
-    var sessions []SessionDetailItem
-    var orphanedUUIDs []string
-    
-    for uuid, cmd := range cmds {
-        data, err := cmd.Result()
+    for i, cmd := range cmds {
+        m, err := cmd.Result()
         if err != nil {
             continue
         }
-        
-        if len(data) == 0 {
+        if len(m) == 0 {
             // セッションが存在しない（TTL切れ等）→ クリーンアップ対象
-            orphanedUUIDs = append(orphanedUUIDs, uuid)
+            staleUUIDs = append(staleUUIDs, uuids[i])
             continue
         }
-        
-        sessions = append(sessions, parseSession(uuid, data))
-    }
-    
-    // 4. 孤立したUUIDをインデックスから削除（クリーンアップ）
-    if len(orphanedUUIDs) > 0 {
-        // SREMは可変長引数対応
-        args := make([]interface{}, len(orphanedUUIDs))
-        for i, uuid := range orphanedUUIDs {
-            args[i] = uuid
+        session, err := mapToSession(uuids[i], m)
+        if err != nil {
+            continue
         }
-        if err := rdb.SRem(ctx, indexKey, args...).Err(); err != nil {
-            // クリーンアップ失敗はログ出力のみ（表示処理は継続）
-            slog.Warn("failed to cleanup orphaned session uuids",
-                "event_id", "IDX_USER_CLEANUP_ERR",
-                "imsi", imsi,
-                "orphaned_count", len(orphanedUUIDs),
-                "error", err)
-        } else {
-            slog.Debug("cleaned up orphaned session uuids",
-                "event_id", "IDX_USER_CLEANUP",
-                "imsi", imsi,
-                "orphaned_count", len(orphanedUUIDs))
+        sessions = append(sessions, session)
+    }
+
+    // 3. 存在しないセッションをインデックスから削除（UUIDごとに SREM。失敗はログのみで表示は継続）
+    for _, uuid := range staleUUIDs {
+        if err := s.client.SRem(ctx, indexKey, uuid).Err(); err != nil {
+            log.Printf("failed to cleanup stale session from index: imsi=%s, uuid=%s, err=%v", imsi, uuid, err)
         }
     }
-    
-    // 5. ソート・サマリ計算
-    sortByStartTimeDesc(sessions)
-    
-    return &SessionDetailSummary{
-        IMSI:         imsi,
-        SessionCount: len(sessions),
-        TotalInput:   sumInputOctets(sessions),
-        TotalOutput:  sumOutputOctets(sessions),
-        Items:        sessions,
-    }, nil
+
+    return sessions, nil
 }
 ```
 
-#### 6.10.2 event_id定義
+#### 6.10.2 ログ出力
 
-| event_id | レベル | 発生条件 |
-|----------|--------|---------|
-| `IDX_USER_CLEANUP` | DEBUG | クリーンアップ成功時 |
-| `IDX_USER_CLEANUP_ERR` | WARN | クリーンアップ失敗時（表示は継続） |
+クリーンアップ処理は `event_id` 付きの構造化ログ（JSON）を出力しない（D-04 §3.5.1）。
+
+| 状況 | 出力 | 備考 |
+|------|------|------|
+| クリーンアップ成功 | なし | - |
+| クリーンアップ失敗（`SREM` エラー） | Go標準 `log.Printf` によるテキスト1行（標準エラー出力。JSONではない） | 画面表示は継続。UUIDごとに1行。IMSIは生値 |
+
+**ログ出力例（失敗時）:**
+
+```text
+2026/01/27 10:30:00 failed to cleanup stale session from index: imsi=440101234567890, uuid=550e8400-e29b-41d4-a716-446655440000, err=...
+```
 
 #### 6.10.3 注意事項
 
-- クリーンアップ処理の失敗は画面表示をブロックしない（ログ出力のみ）
+- クリーンアップ処理の失敗は画面表示をブロックしない（`log.Printf` によるテキスト出力のみ）
 - 大量のゴミデータがある場合、初回表示時にやや時間がかかる可能性がある
 - 将来的に定期バッチでのクリーンアップが必要になった場合は、別途検討する
 
@@ -1191,7 +1178,8 @@ Admin TUIの監査ログでは、**IMSIを常に生値（マスキングなし�
 
 | 項目 | 方針 |
 |------|------|
-| `target_imsi` フィールド | IMSI全桁を記録 |
+| `target_imsi` フィールド | IMSI全桁を記録（加入者・ポリシーの作成/更新/削除時） |
+| `details` フィールド | Session Detail検索（`search`）では検索したIMSIを全桁で記録（`target_imsi` は出力しない） |
 | 環境変数 | `LOG_MASK_IMSI` は参照しない |
 
 **設計意図:**
@@ -1202,19 +1190,19 @@ Admin TUIの監査ログでは、**IMSIを常に生値（マスキングなし�
 
 ```json
 {
-  "time": "2025-12-25T14:30:00.000Z",
+  "time": "2025-12-25T14:30:00Z",
   "level": "INFO",
   "app": "admin-tui",
   "event_id": "AUDIT_LOG",
-  "msg": "session search",
+  "msg": "session searched",
   "operation": "search",
   "target_type": "session",
-  "target_imsi": "440101234567890",
-  "result_count": 3,
-  "admin_user": "admin"
+  "target_key": "",
+  "admin_user": "admin",
+  "details": "440101234567890"
 }
 ```
-> **注記:** `target_imsi` は `440101********0` ではなく `440101234567890` と全桁が記録される。
+> **注記:** 検索したIMSIは `details` に `440101********0` ではなく `440101234567890` と全桁が記録される。`time` は RFC3339（秒精度・UTC）。検索結果件数は記録しない（D-04 §3.5）。
 
 ---
 
@@ -1241,3 +1229,4 @@ Admin TUIの監査ログでは、**IMSIを常に生値（マスキングなし�
 | r5 | 2026-02-21 | 実機検証不具合修正の反映: セッションデータ読み取りをString型(GET+JSON)からHash型(HGETALL+mapToSession)に修正しAuth/Acctサーバーとのデータ型整合性を確保（セクション5.8を5.8.1-5.8.4に再構成）、Statistics Dashboardフォーカス仕様追加（セクション4.6新設、旧4.6以降再ナンバリング）、Session ListにF5キー追加、ヘルプダイアログを2カラムFlexレイアウトに変更（セクション7.3更新）、関連ドキュメント版数更新 D-05 r6→r7 |
 | r6 | 2026-02-22 | Session Detail 不具合修正の反映: 検索ダイアログ仕様追加（セクション6.2拡充 — InputField幅20、Cancel時のSession List戻り動作）、データ取得方式を再構成（セクション6.9を6.9.1-6.9.3に再構成 — 非同期検索パターン、SCANフォールバック追加）、関連ドキュメント版数更新 D-05 r7→r8 |
 | r7 | 2026-02-23 | 実装スクリーンショットとの整合性修正: §3.1 モニタリングメニューのボーダータイトル・ショートカット括弧表記追加、§4.2-4.3 Statistics Dashboard レイアウト差替（4カウント項目構成）、§5.3-5.5 Session List レイアウト差替（6カラム構成・Start Time短縮形式・Duration/Traffic追加・Filter Sessionsダイアログ新設）、§6 Session Detail→Session Search改名・レイアウト差替（Sessionsボーダータイトル・UUID/Duration/In-Out形式変更）、§7.3 ヘルプダイアログ全面差替（22項目・F2-F6ファンクションキー+alt文字キー）、関連ドキュメント版数更新 D-05 r8→r9 |
+| r8 | 2026-10-04 | D-04 r19 の event_id 全面整合に合わせて修正: §6.10.1 クリーンアップ処理のコード例を実装（`SessionStore.GetByIMSI`。インデックス空時のSCANフォールバック、UUIDごとのSREM）に合わせて修正し、実装に存在しない event_id `IDX_USER_CLEANUP` / `IDX_USER_CLEANUP_ERR` を削除。§6.10.2 を「event_id定義」から「ログ出力」に改め、成功時はログなし・失敗時は `log.Printf` の非構造化テキスト（標準エラー出力）のみである旨と出力例を記載。§10.1.1/§10.2 の監査ログ（`AUDIT_LOG`）の検索時の記録内容を実装に合わせて修正（検索IMSIは `details` に記録、`target_imsi`・`result_count` なし、msg `session searched`、`time` は秒精度）。§1.3 関連ドキュメントの版数を現行版に更新（D-02 r12、D-06 r7） |

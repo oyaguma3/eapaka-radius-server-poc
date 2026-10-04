@@ -42,10 +42,17 @@ func main() {
 		"log_level", cfg.LogLevel,
 		"mode", cfg.Mode,
 		"plmn_map_entries", len(plmnMap),
+		"akaonly_enabled", cfg.AKAOnlyEnabled(),
+		"akaonly_transport", akaOnlyTransport(cfg),
 	)
 
 	// 4. バックエンドレジストリ
-	registry := backend.NewRegistry(cfg)
+	registry, err := backend.NewRegistry(cfg)
+	if err != nil {
+		slog.Error("failed to initialize backends", "error", err)
+		os.Exit(1)
+	}
+	warnBackendConfig(cfg, plmnMap, registry)
 
 	// 5. ルーター
 	r := router.NewRouter(plmnMap, registry, cfg.IsPassthrough())
@@ -79,6 +86,38 @@ func main() {
 	}
 
 	slog.Info("server stopped")
+}
+
+// akaOnlyTransport はaka-only-serverへの接続方式（mtls / plain / disabled）を返す。
+func akaOnlyTransport(cfg *config.Config) string {
+	switch {
+	case !cfg.AKAOnlyEnabled():
+		return "disabled"
+	case cfg.AKAOnlyUseTLS():
+		return "mtls"
+	default:
+		return "plain"
+	}
+}
+
+// warnBackendConfig は起動を止めるほどではない設定上の注意をWARNログに出す。
+func warnBackendConfig(cfg *config.Config, plmnMap map[string]string, registry *backend.Registry) {
+	if cfg.AKAOnlyEnabled() && !cfg.AKAOnlyUseTLS() {
+		slog.Warn("aka-only-server is connected over plain HTTP; CK/IK are transmitted unencrypted",
+			"akaonly_url", cfg.AKAOnlyURL,
+		)
+	}
+	if cfg.IsPassthrough() {
+		return
+	}
+	for plmn, id := range plmnMap {
+		if _, err := registry.Get(id); err != nil {
+			slog.Warn("PLMN map refers to a backend that is not configured; requests will fail with 501",
+				"plmn", plmn,
+				"backend_id", id,
+			)
+		}
+	}
 }
 
 // initLogger はロガーを初期化する。

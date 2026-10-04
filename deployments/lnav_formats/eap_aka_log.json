@@ -16,6 +16,7 @@
             "event_id": { "kind": "string", "identifier": true },
             "backend_id": { "kind": "string", "identifier": true },
             "plmn": { "kind": "string", "identifier": true },
+            "cause": { "kind": "string", "identifier": true },
             "latency_ms": { "kind": "integer" },
             "input_octets": { "kind": "integer" },
             "output_octets": { "kind": "integer" },

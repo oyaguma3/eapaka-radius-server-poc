@@ -12,15 +12,18 @@ Wi-Fi 認証 (WPA2/WPA3-Enterprise) 向けの RADIUS 認証・課金機能、AKA
 
 ![アーキテクチャ図](docs/material/architecture.png)
 
+> 図には接続方式01の aka-only-server（外部・任意）は含まれていません。
+
 | コンポーネント | 役割 | ポート |
 |---|---|---|
 | **auth-server** | RADIUS 認証 + EAP-AKA/AKA' ステートマシン制御 | UDP 1812 |
 | **acct-server** | RADIUS 課金 (Accounting) | UDP 1813 |
-| **vector-gateway** | 認証ベクター生成リクエストのルーティング | HTTP 8080 |
+| **vector-gateway** | 認証ベクター生成リクエストのルーティング（PLMN 単位で接続方式 00: vector-api / 01: aka-only-server に振り分け） | HTTP 8080 |
 | **vector-api** | Milenage アルゴリズム計算 + SQN 管理 | HTTP 8081 |
 | **admin-tui** | 加入者・セッション管理用ターミナル UI | - |
 | **valkey** | データストア (加入者情報・セッション等) | 6379 |
 | **fluent-bit** | ログ収集・転送 | 24224 |
+| **aka-only-server**（外部・任意） | 接続方式01。指定 PLMN の AKA 認証ベクターを払い出す外部サーバー（3GPP TS 29.503 Nudm_UEAU GenerateAv ベース、[aka-only-server](https://github.com/oyaguma3/aka-only-server)）。mTLS で接続 | HTTPS 8443（平文 HTTP 8080） |
 
 ## 技術スタック
 
@@ -53,7 +56,9 @@ eapaka-radius-server-poc/
 │   └── fluent-bit/         # Fluent Bit 設定 (YAML)
 ├── deployments/
 │   ├── docker-compose.yml  # Docker Compose 定義
+│   ├── docker-compose.aka-av.yml  # aka-only-server 共有ネットワーク用オーバーレイ
 │   ├── .env.example        # 環境変数テンプレート
+│   ├── certs/              # aka-only-server 接続用証明書の配置先（中身は .gitignore 対象）
 │   └── lnav_formats/       # lnav ログフォーマット定義
 ├── docs/                   # 設計・運用ドキュメント (27ファイル)
 ├── go.work                 # Go Workspace 定義
@@ -90,10 +95,25 @@ docker compose up -d
 | `VALKEY_PASSWORD` | Yes | Valkey 接続パスワード |
 | `RADIUS_SECRET` | Yes | RADIUS 共有シークレット |
 | `VECTOR_GATEWAY_MODE` | No | 動作モード (`gateway` / `passthrough`) |
+| `VECTOR_GATEWAY_PLMN_MAP` | No | PLMN と接続方式 ID の対応 (例: `44010:01`。未一致 PLMN は `00` = 内部 vector-api) |
+| `VECTOR_GATEWAY_AKAONLY_URL` | No | aka-only-server のベース URL (空なら接続方式01は無効。`https://` で mTLS、`http://` で平文) |
+| `VECTOR_GATEWAY_AKAONLY_CLIENT_CERT` / `_CLIENT_KEY` | No | aka-only-server 用クライアント証明書・秘密鍵 (例: `/certs/av-client.pem`。鍵は省略時 CLIENT_CERT から読む) |
+| `VECTOR_GATEWAY_AKAONLY_SERVER_CERT` | No | aka-only-server の AV 用サーバー証明書 (例: `/certs/av-server.pem`) |
+| `VECTOR_GATEWAY_AKAONLY_TIMEOUT` | No | aka-only-server 呼び出しタイムアウト (デフォルト: `5s`) |
 | `LOG_MASK_IMSI` | No | IMSI マスキング有効化 (デフォルト: `true`) |
 | `TEST_VECTOR_ENABLED` | No | テストベクターモード (デフォルト: `false`、本番では無効のこと) |
 
 詳細は `deployments/.env.example` を参照してください。
+
+### aka-only-server への接続（任意）
+
+接続方式01を使う場合は、aka-only-server でクライアント証明書の発行・登録と加入者登録を行い、証明書を `deployments/certs/` に置いて `.env` を設定します。同一ホストの場合は aka-only-server を先に起動し、オーバーレイを重ねて起動します。
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.aka-av.yml up -d
+```
+
+手順の詳細は B-02 アプリケーションデプロイ手順書 §14 を参照してください。
 
 ## テスト実行
 
@@ -184,7 +204,7 @@ go test ./apps/auth-server/...
 |---|---|---|
 | S-01 | eapaka_test 利用ノウハウ | eapaka_test の設定・テストケース解説・トラブルシューティング |
 
-詳細は [ドキュメント一覧](docs/EAP-AKA_RADIUS_PoC環境_ドキュメント一覧_r29.md) を参照してください。
+詳細は [ドキュメント一覧](docs/EAP-AKA_RADIUS_PoC環境_ドキュメント一覧_r35.md) を参照してください。
 
 ## ライセンス
 

@@ -1,6 +1,8 @@
 package backend
 
 import (
+	"fmt"
+
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-gateway/internal/config"
 )
 
@@ -14,7 +16,8 @@ type Registry struct {
 
 // NewRegistry は新しいRegistryを生成する。
 // 内部Vector API（ID:00）をデフォルトバックエンドとして登録する。
-func NewRegistry(cfg *config.Config) *Registry {
+// aka-only-serverのURLが設定されている場合はID:01も登録する。
+func NewRegistry(cfg *config.Config) (*Registry, error) {
 	r := &Registry{
 		backends:  make(map[string]Backend),
 		defaultID: defaultBackendID,
@@ -24,7 +27,23 @@ func NewRegistry(cfg *config.Config) *Registry {
 	internal := NewInternalBackend(cfg.InternalURL, cfg.InternalTimeout)
 	r.backends[internalBackendID] = internal
 
-	return r
+	// aka-only-serverバックエンドを登録（URL設定時のみ）
+	if cfg.AKAOnlyEnabled() {
+		akaOnly, err := NewAKAOnlyBackend(AKAOnlyOptions{
+			BaseURL:        cfg.AKAOnlyURL,
+			ClientCertFile: cfg.AKAOnlyClientCert,
+			ClientKeyFile:  cfg.AKAOnlyClientKey,
+			ServerCertFile: cfg.AKAOnlyServerCert,
+			Timeout:        cfg.AKAOnlyTimeout,
+			MaskIMSI:       cfg.LogMaskIMSI,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create aka-only-server backend: %w", err)
+		}
+		r.backends[akaOnlyBackendID] = akaOnly
+	}
+
+	return r, nil
 }
 
 // Get は指定IDのバックエンドを取得する。
