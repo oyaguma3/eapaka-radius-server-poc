@@ -1,4 +1,4 @@
-# D-03 Vector-APIインターフェース定義書およびEAP-AKAステートマシン設計書 (r6)
+# D-03 Vector-APIインターフェース定義書およびEAP-AKAステートマシン設計書 (r7)
 
 ---
 
@@ -344,20 +344,18 @@ EAP認証成功後の認可処理。`policy:{IMSI}` を参照し、接続可否�
 | 取得成功 | ルール評価へ | - | - |
 
 3. **ルール評価:**
-   - RADIUSリクエストから `Called-Station-Id`（SSID）を抽出。
-   - ポリシー内の `rules` 配列を順次評価（最初に一致したルールを適用）。
-   - 各ルールで `ssid`（ワイルドカード`"*"`は全SSID対象）を照合。
-   - 一致したルールの `action`（`"allow"` or `"deny"`）で許可/拒否を判定。
-   - `time_min` / `time_max` が設定されている場合、現在時刻が指定時間帯内かを評価。
+   - RADIUSリクエストから `NAS-Identifier` と `Called-Station-Id`（SSID: 最初の `:` より後ろ、`:` が無ければ全体）を取得。
+   - ポリシー内の `rules` 配列を配列順に評価し、`nas_id` と `allowed_ssids` の両方に一致した最初のルールを採用する（採用したルールで許可）。
+   - `nas_id`: `"*"` 単独は任意の NAS-Identifier（属性が無い場合を含む）に一致。部分一致は行わない。それ以外は完全一致（大文字小文字を区別）。
+   - `allowed_ssids`: 要素に `"*"` があれば全SSIDに一致。それ以外は大文字小文字を区別しない完全一致。
+   - 一致するルールが無ければ `default`（`allow` / `deny`）で判定する。詳細は D-02 セクション2.C を参照。
 
 4. **評価結果による分岐:**
 
 | 評価結果 | 処理 | ログ | Next State |
 |---------|------|------|------------|
-| ルール一致 + `action=allow` + 時間帯内 | Access-Accept | - | SUCCESS |
-| ルール一致 + `action=deny` | Access-Reject | `AUTH_POLICY_DENIED` | FAILURE |
-| ルール一致 + `action=allow` + 時間帯外 | Access-Reject | `AUTH_POLICY_DENIED` | FAILURE |
-| ルール不一致 + `default=allow` | Access-Accept（AVP最小限） | - | SUCCESS |
+| ルール一致 | Access-Accept（ルールの `vlan_id` / `session_timeout` を付与） | - | SUCCESS |
+| ルール不一致 + `default=allow` | Access-Accept（VLAN・Session-Timeoutなし） | - | SUCCESS |
 | ルール不一致 + `default=deny` | Access-Reject | `AUTH_POLICY_DENIED` | FAILURE |
 
 5. **Access-Accept時の処理:**
@@ -366,6 +364,7 @@ EAP認証成功後の認可処理。`policy:{IMSI}` を参照し、接続可否�
    - RADIUS `Access-Accept` 返信。
      - `Class` 属性: Session UUID
      - `MS-MPPE-Recv-Key`, `MS-MPPE-Send-Key`: MSKから導出
+     - ルール一致時のみ: `vlan_id` が空でなければ `Tunnel-Type`=13 / `Tunnel-Medium-Type`=6 / `Tunnel-Private-Group-Id`、`session_timeout` > 0 なら `Session-Timeout`
    - **Next State:** `SUCCESS`
 
 6. **Access-Reject時の処理:**
@@ -453,3 +452,4 @@ EAP認証成功後の認可処理。`policy:{IMSI}` を参照し、接続可否�
 | r4 | 2026-01-27 | API接続設計統一: セクション1のタイトルを「Vector Gateway経由」に変更、Base URLを`http://vector-gateway:8080/api/v1`に更新、接続構成図追加、Error Responseに409/501/502エラー追加（表形式に変更）、D-12参照追加 |
 | r5 | 2026-02-18 | PolicyRule新構造反映: Post-Auth Policy Checkのルール評価をSSID/Action/TimeMin/TimeMax構造に更新、関連ドキュメント版数更新 |
 | r6 | 2026-10-04 | 接続方式01（aka-only-server）対応: 接続構成図・注記を更新（内部IFは変更なし）、Error Responseに接続方式01由来の400/403/404/502を追加、403の3ケース（detailで区別）と再同期AUTS検証失敗が403となる点を明記、Auth ServerでのCB対象外扱い・502のCB計上を注記。既存記載の実装との不一致を修正（2a の404時ログを `AUTH_IMSI_NOT_FOUND` → `VECTOR_IMSI_NOT_FOUND`、APIエラー時ログに `VECTOR_CONN_ERR` / `VECTOR_CB_OPEN` / `VECTOR_UNKNOWN_ERR` を追記、再同期APIエラー時のAuth Server側ログを `VECTOR_API_ERR` 等に修正、404応答例の detail を実装の文言に修正）。D-04 r19 の event_id 全面整合に合わせて修正（2b の `EAP_PSEUDONYM_FALLBACK` を削除（フル認証誘導時は専用ログなし）、§7 不正な状態遷移の `EAP_INVALID_STATE` を `EAP_STATE_ERR` / `EAP_UNEXPECTED_IDENTITY` / `EAP_UNKNOWN_SUBTYPE` に修正、3a のJSONパース失敗時ログ `POLICY_PARSE_ERR` を `AUTH_POLICY_NOT_FOUND` に修正、§5 Client-Error受信時にエラーコードを記録しない旨を明記） |
+| r7 | 2026-10-04 | ポリシーの `nas_id` で `"*"` を任意の NAS に一致させた Auth Server の実装修正に合わせ、3a Post-Auth Policy Check のルール評価を実装の PolicyRule 構造（`nas_id` / `allowed_ssids` / `vlan_id` / `session_timeout`）に修正（r5 で記載した `ssid` / `action` / `time_min` / `time_max` による評価は実装に存在しないため削除）。`nas_id` は `"*"` 単独で任意の NAS に一致（部分一致なし）、それ以外は完全一致であることを明記。評価結果の分岐表を「ルール一致 → Accept（VLAN・Session-Timeout 付与）／不一致 → default で判定」に整理し、Access-Accept 時の VLAN・Session-Timeout 属性を追記 |

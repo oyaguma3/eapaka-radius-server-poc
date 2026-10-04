@@ -1,4 +1,4 @@
-﻿# D-09 Auth Server詳細設計書 (r12)
+﻿# D-09 Auth Server詳細設計書 (r13)
 
 ## ■セクション1: 概要
 
@@ -24,7 +24,7 @@
 | No. | ドキュメント | 参照内容 |
 |-----|-------------|---------|
 | D-01 | ミニPC版設計仕様書 (r10) | システム構成、パッケージ利用マップ |
-| D-02 | Valkeyデータ設計仕様書 (r10) | データ構造、キー設計、Go構造体 |
+| D-02 | Valkeyデータ設計仕様書 (r15) | データ構造、キー設計、Go構造体 |
 | D-03 | Vector-API/ステートマシン設計書 (r6) | API仕様、EAP状態遷移、Vector Gateway経由接続 |
 | D-04 | ログ仕様設計書 (r20) | event_id定義、ログフォーマット、IMSIマスキング |
 | D-05 | Acct Server詳細設計書 (r5) | セッション管理連携、Accounting処理 |
@@ -2623,32 +2623,29 @@ Challenge応答検証成功
 ```json
 [
     {
-        "ssid": "Staff",
-        "action": "allow",
-        "time_min": "08:00",
-        "time_max": "22:00"
+        "nas_id": "AP-OFFICE-01",
+        "allowed_ssids": ["CORP-WIFI", "GUEST-WIFI"],
+        "vlan_id": "100",
+        "session_timeout": 3600
     },
     {
-        "ssid": "Guest",
-        "action": "allow"
-    },
-    {
-        "ssid": "*",
-        "action": "deny"
+        "nas_id": "*",
+        "allowed_ssids": ["GUEST-WIFI"],
+        "vlan_id": "300"
     }
 ]
 ```
 
 #### 8.3.3 ルールフィールド定義
 
-| フィールド   | 型     | 必須 | 説明                                          |
-| ------------ | ------ | ---- | --------------------------------------------- |
-| `ssid`       | String | Yes  | 対象SSID（完全一致、`"*"` でワイルドカード）  |
-| `action`     | String | Yes  | 動作（`"allow"` or `"deny"`）                 |
-| `time_min`   | String | No   | 許可開始時刻（`"HH:MM"` 形式、省略時は制限なし） |
-| `time_max`   | String | No   | 許可終了時刻（`"HH:MM"` 形式、省略時は制限なし） |
+| フィールド        | 型       | 必須 | 説明 |
+| ----------------- | -------- | ---- | ---- |
+| `nas_id`          | String   | Yes  | NAS識別子。`"*"` 単独は任意の NAS-Identifier（属性が無い場合を含む）に一致。部分一致は行わない（`"AP-*"` などは文字どおりの値としか一致しない）。それ以外は NAS-Identifier と完全一致（大文字小文字を区別） |
+| `allowed_ssids`   | []String | Yes  | 許可SSIDリスト。要素に `"*"` があれば全SSIDに一致。それ以外は大文字小文字を区別しない完全一致。空配列・省略はどのSSIDにも一致しない |
+| `vlan_id`         | String   | No   | VLAN ID（JSON文字列）。空文字・省略は未設定 |
+| `session_timeout` | Int      | No   | セッションタイムアウト秒。0以下・省略は未設定 |
 
-> **注記（r9変更）：** 旧仕様のPolicyRule（`nas_id`, `allowed_ssids`, `vlan_id`, `session_timeout`）は廃止された。新仕様ではSSIDマッチングとAction（allow/deny）、時間帯条件（time_min/time_max）による判定に変更された。VLAN IDやSession Timeoutの設定はポリシールール外で管理される。
+> **注記（r13変更）：** r9 で記載した `ssid` / `action` / `time_min` / `time_max` によるルール構造は実装されておらず、実装（`internal/policy/types.go`）は D-02 セクション2.C の構造（`nas_id` / `allowed_ssids` / `vlan_id` / `session_timeout`）である。本セクションを実装に合わせて修正した。
 
 ### 8.4 ポリシー取得
 
@@ -2670,10 +2667,10 @@ type Policy struct {
 }
 
 type PolicyRule struct {
-    SSID    string `json:"ssid"`
-    Action  string `json:"action"`           // "allow" or "deny"
-    TimeMin string `json:"time_min,omitempty"` // "HH:MM" 形式
-    TimeMax string `json:"time_max,omitempty"` // "HH:MM" 形式
+    NasID          string   `json:"nas_id"`
+    AllowedSSIDs   []string `json:"allowed_ssids"`
+    VlanID         string   `json:"vlan_id,omitempty"`
+    SessionTimeout int      `json:"session_timeout,omitempty"`
 }
 ```
 
@@ -2691,8 +2688,8 @@ type PolicyRule struct {
 
 | パラメータ        | 取得元               | 説明                   |
 | ----------------- | -------------------- | ---------------------- |
+| NAS-Identifier    | RADIUS AVP (Type 32) | 属性が無い場合は空文字 |
 | Called-Station-Id | RADIUS AVP (Type 30) | BSSID:SSID形式が一般的 |
-| 現在時刻          | システム時刻         | 時間帯条件の判定に使用 |
 
 #### 8.5.2 SSID抽出
 
@@ -2707,25 +2704,23 @@ type PolicyRule struct {
 ```
 評価開始
     │
-    ├── SSID抽出（Called-Station-Id）
-    │       └── [取得失敗] → default判定へ
+    ├── SSID抽出（Called-Station-Id。属性が無ければ空文字）
     │
     ├── ルール配列を順次評価
     │       │
     │       └── 各ルール:
     │               │
-    │               ├── ssid一致チェック
-    │               │       ├── "*" → 一致（ワイルドカード）
-    │               │       ├── SSIDが一致 → 一致
+    │               ├── nas_id一致チェック（matchNasID）
+    │               │       ├── "*" → 一致（ワイルドカード。空のNAS-IDにも一致）
+    │               │       ├── NAS-IDが完全一致（大文字小文字区別）→ 一致
     │               │       └── [不一致] → 次のルールへ
     │               │
-    │               ├── 時間帯条件チェック（time_min/time_max指定時）
-    │               │       ├── 現在時刻が範囲内 → 条件成立
-    │               │       └── 範囲外 → 次のルールへ
+    │               ├── allowed_ssids一致チェック（matchSSID）
+    │               │       ├── 要素に "*" → 一致（ワイルドカード）
+    │               │       ├── いずれかの要素とSSIDが一致（大文字小文字無視）→ 一致
+    │               │       └── [不一致] → 次のルールへ
     │               │
-    │               └── action判定
-    │                       ├── action="allow" → 結果: Allow
-    │                       └── action="deny"  → 結果: Deny
+    │               └── 結果: Allow（MatchedRule = このルール）
     │
     └── [一致ルールなし]
             │
@@ -2746,11 +2741,12 @@ type EvaluationResult struct {
 
 #### 8.5.5 注意点
 
-- ルールは配列順に評価、最初にSSIDと時間帯条件が一致したルールを適用
+- ルールは配列順に評価し、`nas_id` と `allowed_ssids` の両方に一致した最初のルールを適用する（一致したルールは常に許可）
+- `nas_id: "*"` は任意のNAS-IDに一致するワイルドカード（`"*"` 単独のみ。部分一致は行わない）。任意のNASに一致するため、個別のNASのルールより後ろに置く
+- `nas_id` の比較（`"*"` 以外）は完全一致で、大文字小文字を区別する
+- `allowed_ssids` の `"*"` はワイルドカード（全SSID一致）
 - SSIDの比較は大文字小文字を区別しない（一般的なWi-Fi実装に合わせる）
-- `ssid: "*"` はワイルドカード（全SSID一致）
-- `time_min`/`time_max` が省略された場合は時間帯制限なし（常時適用）
-- `time_min`/`time_max` は `"HH:MM"` 形式（24時間表記）
+- Deny時の `DenyReason` は `no matching rule and default is deny`
 
 ### 8.6 AVP生成
 
@@ -2769,7 +2765,7 @@ type EvaluationResult struct {
 | vlan_id設定時         | Tunnel-Private-Group-Id | 81   | VLAN ID文字列  |
 | session_timeout設定時 | Session-Timeout         | 27   | タイムアウト秒 |
 
-> **注記（r9変更）：** VLAN IDやSession Timeoutの設定はポリシールール（PolicyRule）から分離された。これらの値はポリシールール外の設定（加入者情報等）から取得される。
+> **注記（r13変更）：** VLAN ID・Session Timeout は、評価で一致したルール（`MatchedRule`）の `vlan_id` / `session_timeout` から取得する。default=allow による許可（`MatchedRule` が nil）では付与しない。
 
 #### 8.6.2 VLAN AVP生成
 
@@ -2874,7 +2870,7 @@ func generateMPPEKeys(
 | ポリシー不正        | JSONパース失敗                  | Reject      | WARN: `AUTH_POLICY_NOT_FOUND`（`error` 属性で区別） |
 | Valkeyエラー        | ポリシー取得時のValkeyエラー    | Reject      | WARN: `AUTH_POLICY_NOT_FOUND`（`error` 属性で区別） |
 | ルール不一致        | 全ルール評価後マッチなし + deny | Reject      | WARN: `AUTH_POLICY_DENIED`    |
-| NAS-ID/SSID取得失敗 | AVP不在                         | default判定 | なし                          |
+| NAS-ID/SSID取得失敗 | AVP不在                         | 空文字として評価（`nas_id` `"*"`・`allowed_ssids` `["*"]` のルールには一致。一致しなければdefault判定） | なし |
 
 ### 8.9 処理フロー図
 
@@ -2941,10 +2937,10 @@ Challenge応答検証成功
 
 **ルール評価：**
 
-- 配列順の評価を厳守（最初にSSID・時間帯が一致したルールを適用）
+- 配列順の評価を厳守（最初に `nas_id`・`allowed_ssids` が一致したルールを適用）
+- `nas_id` は `"*"` 単独で任意のNASに一致、それ以外は完全一致（大文字小文字区別）
 - SSID比較は大文字小文字区別なし（`strings.EqualFold`使用）
-- ワイルドカード `"*"` の判定を忘れずに
-- 時間帯条件（time_min/time_max）省略時は制限なし
+- `allowed_ssids` のワイルドカード `"*"` の判定を忘れずに
 
 **Called-Station-Id解析：**
 
@@ -3886,10 +3882,10 @@ type Policy struct {
 
 // PolicyRule は個別の認可ルールを表す
 type PolicyRule struct {
-    SSID    string `json:"ssid"`
-    Action  string `json:"action"`             // "allow" or "deny"
-    TimeMin string `json:"time_min,omitempty"` // "HH:MM" 形式
-    TimeMax string `json:"time_max,omitempty"` // "HH:MM" 形式
+    NasID          string   `json:"nas_id"`                    // "*" 単独で任意のNASに一致。それ以外は完全一致
+    AllowedSSIDs   []string `json:"allowed_ssids"`             // "*" で全SSID。それ以外は大文字小文字を無視して比較
+    VlanID         string   `json:"vlan_id,omitempty"`         // 空文字は未設定
+    SessionTimeout int      `json:"session_timeout,omitempty"` // 0以下は未設定
 }
 
 // EvaluationResult はポリシー評価結果を表す
@@ -4547,3 +4543,4 @@ Auth Server内で直接参照する外部パッケージの型：
 | r10 | 2026-10-04 | 既存記載の実装との不一致を修正: Vector Gateway 404時のevent_idを `AUTH_IMSI_NOT_FOUND` → `VECTOR_IMSI_NOT_FOUND` に修正（§3.5.4、§7.8.3）、§7.8.3の呼び出し元でのevent_id表を実装（engine.go `logVectorError`）に合わせて更新（`VECTOR_CONN_ERR` / `VECTOR_CB_OPEN` / `VECTOR_UNKNOWN_ERR` 追加、HTTPクライアント層との2行出力を注記）、§7.8.1に403/409を追加、§7.10のCBログ属性を実装に合わせて修正（`CB_CLOSE` の `recovery_time_ms` 削除、`failure_count` は常に0）、§7.4.2のエラー応答例（404）のdetailを実装の文言に修正、関連ドキュメント版数更新（D-01 r10、D-03 r6、D-04 r19、D-06 r7、D-08 r14、D-12 r5、E-02 r3）。D-04 r19 の event_id 全面整合に合わせて修正（§3.5.4 マスキング適用表・実装例の `AUTH_OK` を `AUTH_SUCCESS`（属性 `trace_id`, `imsi`, `session_id`）に修正し実装にない `SESSION_CREATED` を削除、imsi を出力する event_id を追加、§4.6 の `AUTH_OK` を `AUTH_SUCCESS` に修正、§5.2 Secret解決ログに `RADIUS_IP_EXTRACT_ERR` / `RADIUS_SECRET_ERR` を追加、§5.10 の `RADIUS_AUTH_ERR` / `RADIUS_UNKNOWN_CODE` を `PKT_MA_INVALID` / `PKT_UNKNOWN_CODE` に修正し `PKT_RECV` の属性を `code` に修正、`PKT_NO_EAP` / `PKT_DROP` / `PKT_SEND_ERR` / `EAP_ENGINE_ERR` / `RADIUS_STATUS_OK` / `RADIUS_STATUS_AUTH_FAIL` を追加、§6.5.3 の `EAP_INVALID_STATE` を `EAP_STATE_ERR` / `EAP_UNEXPECTED_IDENTITY` に修正、§6.10 の `EAP_PSEUDONYM_FALLBACK` を削除（専用ログなし）、§8.7〜§8.10 の `POLICY_PARSE_ERR` を `AUTH_POLICY_NOT_FOUND` に統合し `AUTH_POLICY_NOT_FOUND` / `AUTH_POLICY_DENIED` を WARN・実装の属性に修正、§9.5.3 の `EAP_CONTEXT_NOT_FOUND` / `ACCT_SESSION_EXPIRED` を `EAP_CTX_NOT_FOUND` / `ACCT_SESSION_NOT_FOUND` に修正、§9.8.2/§9.9 の `EAP_CONTEXT_NOT_FOUND` / `EAP_CONTEXT_INVALID` / 実行時 `VALKEY_CONN_ERR` / `SESSION_CREATED` / `VALKEY_CONN_RESTORED` を実装の event_id に修正、起動時 `VALKEY_CONN_ERR` の msg を実装に合わせ、`slog.With` による trace_id 付与の記述を D-04 §4.1 に合わせて修正） |
 | r11 | 2026-10-04 | ログのIMSIマスク漏れ修正の反映: §3.5.2にUser-Name（EAP Identity）のマスク規則（pkg/logging.MaskUserName）を追記、§3.5.3の実装を pkg/logging の MaskIMSI / MaskUserName を使う認証エンジンのラッパーメソッド（maskIMSI / maskUserName）に更新、§3.5.4適用箇所にEAP_UNSUPPORTED_TYPE / EAP_IDENTITY_INVALIDの `user_name` を追加し「マスクせず出力」の注記を修正。関連ドキュメント参照版数更新（D-04 r19→r20、D-06 r7→r8）。あわせて、廃止済みの internal/logging（mask.go）のパッケージ構成記載を削除し、pkg/logging を使う旨に修正 |
 | r12 | 2026-10-04 | §9.5 のセッションTTL超過時の Acct Server の挙動を、Interim 時も `ACCT_SESSION_NOT_FOUND` を出力し不在のキーを作らない実装に合わせて修正 |
+| r13 | 2026-10-04 | ポリシーの `nas_id` で `"*"` を任意の NAS に一致させた実装修正の反映（セクション8）: 8.3.2/8.3.3 のルール構造・8.4.2 と 10.4.3 の `PolicyRule` 型・8.5 の評価入力・評価ロジック・注意点・8.6.1 の注記・8.8 の NAS-ID/SSID 不在時の扱い・8.11 を、実装の構造（`nas_id` / `allowed_ssids` / `vlan_id` / `session_timeout`）と評価（`nas_id` は `"*"` 単独で任意の NAS に一致・部分一致なし・それ以外は完全一致、`allowed_ssids` は `"*"` で全SSID・大文字小文字無視、両方に一致した最初のルールで許可、VLAN・Session-Timeout は一致したルールから付与）に修正。r9 で記載した `ssid` / `action` / `time_min` / `time_max` によるルール評価は実装に存在しないため削除。関連ドキュメントの D-02 参照版数を更新（r10→r15） |

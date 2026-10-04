@@ -1,4 +1,4 @@
-# E-03 共通ライブラリ(pkg)設計書 (r4)
+# E-03 共通ライブラリ(pkg)設計書 (r5)
 
 ## 1. 概要
 
@@ -27,7 +27,7 @@
 | ドキュメント | 参照内容 |
 |-------------|---------|
 | D-01 ミニPC版設計仕様書 (r9) | リポジトリ構成、パッケージ利用マップ |
-| D-02 Valkeyデータ設計仕様書 (r11) | Go構造体定義、ストア層変換方式 |
+| D-02 Valkeyデータ設計仕様書 (r15) | Go構造体定義、ストア層変換方式 |
 | D-04 ログ仕様設計書 (r20) | IMSIマスキング仕様（User-Nameのマスク規則を含む） |
 | D-06 エラーハンドリング詳細設計書 (r6) | エラー定義パターン |
 | D-11 Vector API詳細設計書 (r6) | RFC 7807 Problem Details |
@@ -939,10 +939,10 @@ type Policy struct {
 
 // PolicyRule はポリシールールを表す。
 type PolicyRule struct {
-    SSID    string `json:"ssid"`     // 対象SSID（ワイルドカード可）
-    Action  string `json:"action"`   // アクション（"allow" or "deny"）
-    TimeMin string `json:"time_min"` // 許可開始時刻（HH:MM形式、空で制限なし）
-    TimeMax string `json:"time_max"` // 許可終了時刻（HH:MM形式、空で制限なし）
+    NasID          string   `json:"nas_id"`                    // NAS識別子（"*" 単独で任意のNASに一致。それ以外は完全一致）
+    AllowedSSIDs   []string `json:"allowed_ssids"`             // 許可SSIDリスト
+    VlanID         string   `json:"vlan_id,omitempty"`         // VLAN ID（空文字は未設定）
+    SessionTimeout int      `json:"session_timeout,omitempty"` // セッションタイムアウト秒（0は未設定）
 }
 
 // NewPolicy は新しいPolicyを生成する。
@@ -984,11 +984,12 @@ func (p *Policy) IsAllowByDefault() bool {
 
 ```json
 [
-  {"ssid": "CORP-WIFI", "action": "allow", "time_min": "09:00", "time_max": "18:00"},
-  {"ssid": "GUEST-WIFI", "action": "allow", "time_min": "", "time_max": ""},
-  {"ssid": "*", "action": "deny", "time_min": "", "time_max": ""}
+  {"nas_id": "AP-OFFICE-01", "allowed_ssids": ["CORP-WIFI", "GUEST-WIFI"], "vlan_id": "100", "session_timeout": 3600},
+  {"nas_id": "*", "allowed_ssids": ["GUEST-WIFI"], "vlan_id": "300"}
 ]
 ```
+
+> ルールの評価（`nas_id` / `allowed_ssids` の一致判定、評価順、default）は pkg/model ではなく Auth Server（`internal/policy/evaluator.go`）が行う。評価仕様は D-02 セクション2.C を参照。
 
 ### 6.5 使用例
 
@@ -1230,3 +1231,4 @@ func (h *GatewayHandler) handleBackendError(c *gin.Context, err error) {
 | r2 | 2026-02-18 | 実装との整合: apperr/httputil ファイル分割反映、PolicyRule構造変更（SSID/Action/TimeMin/TimeMax）、model構造体をjsonタグのみに修正（redisタグ除去・ストア層変換方式）、Stage型（`type Stage string`）と8定数追加、全コンストラクタシグネチャを実装に合わせて更新、valkey DefaultOptions/TUIOptionsのデフォルト値明記、logging フィールド定数8種・nilガード・AuthLogFields追記、httputil ContentType定数・BadGateway/NotImplemented/ServiceUnavailable追記、関連ドキュメント版数更新。 |
 | r3 | 2026-03-01 | 実装・現行ドキュメントとの整合: IMSIマスキング仕様をD-04 r17準拠に修正（先頭6桁+末尾1桁）、関連ドキュメント版数更新 |
 | r4 | 2026-10-04 | ログのIMSIマスク漏れ修正に伴う pkg/logging の公開API追加の反映: §5.5に `MaskUserName()`（User-Name（EAP Identity）の "@" より前をマスクし realm を残す）と `Masker.UserName()` を追加し利用箇所を追記、§5.6に使用例を追加、§2.1 / §2.2 / §5.1を更新。§1.3関連ドキュメント参照版数更新（D-04 r17→r20） |
+| r5 | 2026-10-04 | ポリシーの `nas_id` で `"*"` を任意の NAS に一致させた Auth Server の実装修正に伴う pkg/model のコメント更新の反映: §6.4 の `PolicyRule` を実装（`NasID` / `AllowedSSIDs` / `VlanID` / `SessionTimeout`、`NasID` のコメント「`"*"` 単独で任意のNASに一致。それ以外は完全一致」）に合わせて修正（r2 で記載した `SSID` / `Action` / `TimeMin` / `TimeMax` は実装に存在しないため削除）。PolicyRule JSONサンプルを実装の形式に修正し、評価仕様は D-02 セクション2.C を参照する旨を追記。関連ドキュメントの D-02 参照版数を更新（r11→r15） |

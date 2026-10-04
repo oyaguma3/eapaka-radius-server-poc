@@ -1,4 +1,4 @@
-# D-02 Valkey データ設計仕様書 (r14)
+# D-02 Valkey データ設計仕様書 (r15)
 
 ## 1. 全体方針
 
@@ -113,15 +113,20 @@ NAS-IDとSSIDのマッチング条件に加え、VLAN・セッションパラメ
   {
     "nas_id": "AP-OFFICE-02",
     "allowed_ssids": ["*"]
+  },
+  {
+    "nas_id": "*",
+    "allowed_ssids": ["GUEST-WIFI"],
+    "vlan_id": "300"
   }
 ]
 ```
 
-上記の例は「`AP-OFFICE-01` では `CORP-WIFI` / `GUEST-WIFI` を許可して VLAN 100・Session-Timeout 3600秒を付与」「`AP-OFFICE-02` では全SSIDを許可（VLAN・Session-Timeoutなし）」を表す。どのNASからでも許可したい場合は、`nas_id` でワイルドカードを使うのではなく `default` を `allow` にする（ただし default による許可では VLAN・Session-Timeout は付与されない）。
+上記の例は「`AP-OFFICE-01` では `CORP-WIFI` / `GUEST-WIFI` を許可して VLAN 100・Session-Timeout 3600秒を付与」「`AP-OFFICE-02` では全SSIDを許可（VLAN・Session-Timeoutなし）」「それ以外のNASでは `GUEST-WIFI` だけを許可して VLAN 300 を付与」を表す。ルールは配列順に評価されるため、`AP-OFFICE-01` の `GUEST-WIFI` は先に一致する1番目のルール（VLAN 100）が採用される。`nas_id` の `"*"` は任意のNASに一致するので、個別のNASのルールより後ろに置く。SSIDを問わずどのNASからでも許可したい場合は `nas_id` `"*"`・`allowed_ssids` `["*"]` のルールを置くか、`default` を `allow` にする（default による許可では VLAN・Session-Timeout は付与されない）。
 
 | フィールド | 型 | 説明 | 備考 |
 |-----------|-----|------|------|
-| `nas_id` | string | NAS識別子 | RADIUS `NAS-Identifier` 属性と**完全一致**（大文字小文字を区別）。**ワイルドカード不可**（`"*"` は文字どおり NAS-Identifier が `*` の場合のみ一致）。NAS-Identifier が無いリクエストは空文字として比較される。Admin TUIでは必須（1〜253文字の印字可能ASCII） |
+| `nas_id` | string | NAS識別子 | `"*"` 単独は**任意の NAS-Identifier に一致**するワイルドカード（NAS-Identifier が無いリクエストを含む）。部分一致は行わない（`"AP-*"` などは文字どおりの値としか一致しない）。それ以外は RADIUS `NAS-Identifier` 属性と**完全一致**（大文字小文字を区別）。NAS-Identifier が無いリクエストは空文字として比較される。Admin TUIでは必須（1〜253文字の印字可能ASCII） |
 | `allowed_ssids` | []string | 許可SSIDリスト | 要素に `"*"` が含まれていれば全SSID（Called-Station-Id が無い場合を含む）に一致。それ以外は大文字小文字を区別しない完全一致。空配列・省略はどのSSIDにも一致しない。Admin TUIでは1件以上必須（各1〜32文字） |
 | `vlan_id` | string | VLAN ID | **JSON文字列**で指定（数値で書くとJSONパースエラーとなり Reject）。空文字・省略は未設定。Auth Serverは値を検証しない（Admin TUIは 0〜4094 の数字のみ受け付ける） |
 | `session_timeout` | int | セッションタイムアウト秒 | JSON数値。0以下・省略は未設定。Admin TUIは 0〜86400 を受け付ける |
@@ -129,7 +134,7 @@ NAS-IDとSSIDのマッチング条件に加え、VLAN・セッションパラメ
 #### 評価ロジック（Auth Server `internal/policy/evaluator.go`）
 
 1. SSIDは `Called-Station-Id` から抽出する。最初の `:` より後ろをSSIDとし（例: `AA-BB-CC-DD-EE-FF:CORP-WIFI` → `CORP-WIFI`）、`:` が無い場合は値全体をSSIDとする
-2. `rules` を**配列順に**評価し、`nas_id` と `allowed_ssids` の**両方に一致した最初のルール**を採用する → 許可
+2. `rules` を**配列順に**評価し、`nas_id` と `allowed_ssids` の**両方に一致した最初のルール**を採用する → 許可（`nas_id` は `"*"` なら任意のNASに一致、それ以外は完全一致。`allowed_ssids` は `"*"` なら任意のSSIDに一致、それ以外は大文字小文字を区別しない完全一致）
 3. 一致するルールが無い場合は `default` で判定する
    - `allow` → 許可（採用ルールなし）
    - `deny` → **Access-Reject**（`AUTH_POLICY_DENIED` WARN、reason: `no matching rule and default is deny`）
@@ -431,7 +436,7 @@ func (p *Policy) EncodeRules() error       // RulesをJSON文字列にエンコ�
 func (p *Policy) IsAllowByDefault() bool   // デフォルトアクションが許可か判定
 
 type PolicyRule struct {
-    NasID          string   `json:"nas_id"`                    // NAS識別子（完全一致。ソースコメントの「ワイルドカード可」はAuth Serverの評価と不一致）
+    NasID          string   `json:"nas_id"`                    // NAS識別子（"*" 単独で任意のNASに一致。それ以外は完全一致）
     AllowedSSIDs   []string `json:"allowed_ssids"`             // 許可SSIDリスト
     VlanID         string   `json:"vlan_id,omitempty"`         // VLAN ID（空文字は未設定）
     SessionTimeout int      `json:"session_timeout,omitempty"` // セッションタイムアウト秒（0は未設定）
@@ -571,3 +576,4 @@ type Subscriber struct {
 | r12 | 2026-10-04 | 実装コードとの突き合わせによる修正: (1) 2.C 認可ポリシー: `nas_id` はワイルドカード不可の完全一致（大文字小文字区別）に訂正し、JSON例の `nas_id` "*" を削除。`allowed_ssids` の `"*"`・大文字小文字無視、評価順序（配列順で最初の一致）、SSID抽出、`default` の欠落・不正値（deny扱い）、ポリシー不在・JSON不正時のReject、`vlan_id`（JSON文字列、Tunnel属性3種）・`session_timeout`（>0で付与）、default allow時は属性なし、を明記 (2) 2.A: SQN更新は CAS ではなく単純な HSET（+32、再同期は SQN_MS+32、12桁小文字hex）であることに訂正し、テストベクターモード時のSQN扱い（`sqn` のみの Hash 作成を含む）を追記。`created_at` の形式を明記 (3) 2.B: name/vendor はサーバー未使用、Valkeyエラー時もフォールバックすることを明記 (4) 3.D: stage は大文字の `EAPState` 値で保存されることに訂正（実際に書かれる値を明記）、格納形式・TTLリセット・削除タイミング・書き込みの流れを追記 (5) 3.E: 各フィールドの書き込みタイミングを Auth Accept 時の作成を含めて訂正、実装に無い `ACCT_SESSION_EXPIRED` を削除し Start/Interim/Stop の不在時動作を実装どおりに記載 (6) 3.F: SADD は Auth Server の Accept 時であることを明記、Admin TUI の SCAN フォールバックを追記 (7) 3.G: 重複検出ロジックを実装どおりに訂正（Interim の `no_start_received` が実質出力されない点、Stop重複時は以降の処理をスキップ） (8) 4: 各サーバーのフローを実装に合わせて修正（Acct Server は idx:user に SADD しない、Accounting-On/Off を追記） (9) 1: 接続・認証・永続化設定を compose に合わせて修正、Type列追加、`stats:global` 未使用を注記 (10) 5: `pkg/model` の利用状況を明記し、Valkey と直接対応する各アプリの redis タグ付き構造体を追記。D-04 r19 の event_id 全面整合に合わせて修正（2.E の不在時動作の注記から実装に存在しない event_id 名 `ACCT_SESSION_EXPIRED` を削除し、TTL超過・未作成とも `ACCT_SESSION_NOT_FOUND` である旨に修正） |
 | r13 | 2026-10-04 | acct-server の Interim シーケンス判定修正の反映: 3.E Acct Server のセッション処理で、Interim も `sess:{UUID}` の存在を確認し、不在時は `ACCT_SESSION_NOT_FOUND` を出力してセッションを作成しない（`imsi` を持たない Hash が作られる問題を解消）ことに修正、TTLの記述を補足。3.G 重複検出ロジックの Interim を実装どおりに修正（1回の GET で判定してから SET、値なしは `no_start_received`、`stop` は新設の `interim_after_stop` として `ACCT_SEQUENCE_ERR` を出力し処理継続。「`no_start_received` が出力されない」実装上の制約の記載を削除）。4 Acct Server の Interim フローを更新。D-10 の参照セクション番号を修正（5.6→5.8） |
 | r14 | 2026-10-04 | テストベクターモードでも加入者登録を必須にした Vector API の実装修正の反映（2.A）: テストベクターモードで置き換えるのは Ki/OPc/AMF だけで、`sub:{IMSI}` の取得・`sqn` の解析と書き戻し・エラー処理は通常モードと同じ（未登録は404、Valkeyエラー・書き戻し失敗は500、`sqn` 解析エラーも500）に修正。既定 SQN `ff9bb4d0b607` へのフォールバック、`sqn` だけを持つ Hash の作成、`TEST_SQN_PERSIST_ERR` の記述を削除し、旧実装で作られた `sqn` だけの Hash の扱いを注記。SQN更新方式の注記に、書き戻し失敗時・未登録時の扱いがテストベクターモードでも同じである旨を追記 |
+| r15 | 2026-10-04 | ポリシーの `nas_id` で `"*"` を任意の NAS に一致させた Auth Server の実装修正の反映（2.C）: `nas_id` の説明を「`"*"` 単独は任意の NAS-Identifier（NAS-Identifier が無い場合を含む）に一致、部分一致は行わない、それ以外は完全一致（大文字小文字区別）」に改め、r12 で記載した「ワイルドカード不可」を削除。JSON 例に `nas_id` `"*"` のルールを追加し、評価順（個別のNASのルールを前に置く）を説明。評価ロジック2に `nas_id` / `allowed_ssids` の一致条件を追記。5 の `PolicyRule.NasID` のコメントを `pkg/model` の更新後のコメントに合わせて修正 |
