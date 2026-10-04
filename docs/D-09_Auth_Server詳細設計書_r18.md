@@ -1,4 +1,4 @@
-﻿# D-09 Auth Server詳細設計書 (r17)
+﻿# D-09 Auth Server詳細設計書 (r18)
 
 ## ■セクション1: 概要
 
@@ -640,7 +640,7 @@ func main() {
         SessionManager:  sessionManager,
         Config:          cfg,
     })
-    srv := server.New(cfg.ListenAddr, secretSource, handler)
+    srv := server.NewServer(cfg.ListenAddr, handler, secretSource)
 
     go func() {
         slog.Info("starting RADIUS server", "addr", cfg.ListenAddr)
@@ -4678,3 +4678,4 @@ Auth Server内で直接参照する外部パッケージの型：
 | r15 | 2026-10-04 | vector-gateway のバックエンド向けタイムアウトを auth-server より短くした実装修正の反映: §7.2 タイムアウト設定に、Vector Gateway 側のタイムアウト（既定 3秒）を `VectorRequestTimeout`（5秒）より短くしている理由と、Vector Gateway の定数 `authServerVectorTimeout` を `VectorRequestTimeout` と同じ値に保つ必要がある旨の注記を追加（Auth Server の実装は変更なし） |
 | r16 | 2026-10-04 | インターネット公開（VPS 等）に向けた安全面の修正の反映: §3.1 環境変数一覧の `RADIUS_SECRET` を任意（既定は空）・空を推奨とし、フォールバックの意味（登録のない送信元IPのパケットも受け付ける。インターネットに公開するサーバーでは空にする。空なら `RADIUS_NO_SECRET` で破棄）の注記を追加。§3.2 / §10.3.1 設定構造体に `RadiusSecret` が任意で空ならフォールバック無効である旨を注記。§3.3 初期化シーケンス・§3.4 main.go に起動ログの `radius_secret_fallback` と `warnFallbackSecret`（`RADIUS_SECRET` 設定時の WARN）を追加。§3.8 起動ログの例に `radius_secret_fallback` を追加し、WARN の msg と公開サーバーでの確認方法を追記。§4.2 / §4.3 / §5.2 Shared Secret解決にフォールバックが空のときの動作（パケット破棄）とフォールバックの注意を追記。§1.3 参照版数更新（D-01 r10→r16、D-04 r23→r30、D-06 r8→r16、D-08 r14→r19） |
 | r17 | 2026-10-04 | RADIUSパケットの検証をハンドラーに一本化し、RADIUSライブラリのログをJSONにした実装修正の反映: §4.3 に「PacketServerの設定（パケットの認証とライブラリのログ）」を新設（`InsecureSkipVerify: true` と `ErrorLog: logging.NewRADIUSLibraryLogger()`、`NewServer` のコード、方針と理由）。§4.2 / §5.9 の処理フローのライブラリ内部処理を「デコード（失敗時は `RADIUS_LIB_ERR`）、認証は行わない」に修正し、その他のCodeを `PKT_UNKNOWN_CODE` と明記。§5.3 Code別処理に、Accounting-Request や未知のCodeもハンドラーに届く旨の注記を追加。§4.6 / §5.10 のログ表に `RADIUS_LIB_ERR`（WARN、Secret不明で破棄したときはDEBUG）を追加し、`PKT_UNKNOWN_CODE` の条件を修正、§5.10 注記の「デコード失敗はログを出力しない」を修正。§2.7 / §4.7 の `server.go` の記述を更新。§1.3 参照版数更新（D-04 r30→r31、D-06 r16→r17） |
+| r18 | 2026-10-04 | §3.4 の main.go の例で、RADIUS サーバーの生成を実装どおり `server.NewServer(cfg.ListenAddr, handler, secretSource)` に訂正（r17 までは `server.New(cfg.ListenAddr, secretSource, handler)` と、関数名と引数の順序が実装と異なっていた） |

@@ -1,4 +1,4 @@
-# EAP-AKA RADIUS PoC環境 ドキュメント一覧 (r51)
+# EAP-AKA RADIUS PoC環境 ドキュメント一覧 (r52)
 
 **作成日:** 2025-12-30
 **最終更新:** 2026-10-04
@@ -12,7 +12,7 @@
 
 | No. | ドキュメント名 | 版数 | 最終更新 | 内容 |
 |-----|---------------|------|---------|------|
-| D-01 | ミニPC版 EAP-AKA RADIUS PoC環境 設計仕様書 | r16 | 2026-10-04 | システム概要、アーキテクチャ、ノード構成、パッケージマップ、Vector Gateway追加、Valkeyバージョン9.0統一、Fluent Bit統一、環境変数名統一、実装コードとの不整合20件修正（データモデル注記・Valkeyキースキーマ・パッケージマップ・docker-compose.yml完全同期・healthcheck・テストベクターモード）、外部aka-only-server（接続方式01）を構成図・環境変数に追加、テストベクターモードの説明を実装に整合（固定 Ki/OPc/AMF で計算、加入者登録必須）、compose の LOG_LEVEL（auth-server / vector-gateway / vector-api）を実ファイルに同期、compose の LOG_LEVEL を acct-server にも渡す（4サーバー）よう実ファイルに同期、Valkeyキースキーマを実装に整合（存在しない audit:log・acct:{ID} を削除し sess:・idx:user:・acct:seen: を追加、監査ログは Admin TUI の標準出力）、vector-gateway のバックエンド向けタイムアウトの既定値を 3s に（auth-server の5秒より短く。§3.5・compose・環境変数表）、ファイアウォールの記述を訂正（Docker の公開ポートは UFW を素通りする）、インターネット越しに RADIUS を受ける場合の注意、fluent-bit の公開を 127.0.0.1 に、RADIUS_SECRET を任意（空を推奨）に |
+| D-01 | ミニPC版 EAP-AKA RADIUS PoC環境 設計仕様書 | r17 | 2026-10-04 | システム概要、アーキテクチャ、ノード構成、パッケージマップ、Vector Gateway追加、Valkeyバージョン9.0統一、Fluent Bit統一、環境変数名統一、実装コードとの不整合20件修正（データモデル注記・Valkeyキースキーマ・パッケージマップ・docker-compose.yml完全同期・healthcheck・テストベクターモード）、外部aka-only-server（接続方式01）を構成図・環境変数に追加、テストベクターモードの説明を実装に整合（固定 Ki/OPc/AMF で計算、加入者登録必須）、compose の LOG_LEVEL（auth-server / vector-gateway / vector-api）を実ファイルに同期、compose の LOG_LEVEL を acct-server にも渡す（4サーバー）よう実ファイルに同期、Valkeyキースキーマを実装に整合（存在しない audit:log・acct:{ID} を削除し sess:・idx:user:・acct:seen: を追加、監査ログは Admin TUI の標準出力）、vector-gateway のバックエンド向けタイムアウトの既定値を 3s に（auth-server の5秒より短く。§3.5・compose・環境変数表）、ファイアウォールの記述を訂正（Docker の公開ポートは UFW を素通りする）、インターネット越しに RADIUS を受ける場合の注意、fluent-bit の公開を 127.0.0.1 に、RADIUS_SECRET を任意（空を推奨）に、Acct Server の検証方式（Request Authenticator）を訂正 |
 | D-02 | Valkeyデータ設計仕様書 | r19 | 2026-10-04 | データ構造、キー設計、TTL、Go構造体、CK/IK非保存方針、UUID仕様明記、Acct重複検出キャッシュ、stageフィールド値明記、SQN競合制御（WATCH/MULTI CAS）、idx:userクリーンアップ方針、PolicyRule構造を実装コードに整合（NasID/AllowedSSIDs/VlanID/SessionTimeout）、実装との突き合わせによる修正（SQN競合制御は設計のみで現行未実装、セッション/インデックス/重複検出/EAPコンテキストの実態）、Interimのセッション不在時に作成しない・重複検出のInterim判定（no_start_received / interim_after_stop）を実装に整合、テストベクターモードでも加入者登録必須・既定SQNフォールバック廃止（`sqn` だけの Hash を作らない）を実装に整合、nas_idの`*`単独で任意のNASに一致（部分一致なし、それ以外は完全一致）を実装に整合、Trace ID は初回に生成し以降は State 属性の UUID を引き継ぐ旨を実装に整合、重複Interimの event_id を ACCT_DUPLICATE_INTERIM に分離、SQN競合制御を実装に整合（Lua による `sqn` の比較・置き換え、競合時のやり直し最大3回・409、Admin TUI による `sqn` 上書きの制約）、Admin TUI の加入者編集による `sqn` の書き込みを実装に整合（SQN を変えたときだけ編集開始時の値と比較して書き換え、Hex は大文字に正規化して保存） |
 | D-03 | Vector-APIインターフェース定義書およびEAP-AKAステートマシン設計書 | r8 | 2026-10-04 | API仕様、8状態定義、Policy評価Post-Authのみ、接続先をVector Gatewayに変更、接続方式01経由時の403応答、Post-Authのルール評価を実装のPolicyRule（nas_id/allowed_ssids、nas_idの`*`は任意のNASに一致）に整合、409 Conflict を実装に整合（Lua による SQN の比較・置き換えで3回とも競合した場合、detail は固定文、Circuit Breaker 対象外） |
 | D-04 | ログ仕様設計書 | r31 | 2026-10-04 | ログフォーマット、event_id定義、Vector Gateway対応、EAP_INVALID_STATE追加、IMSIマスキング（4コンポーネント対応、Admin TUI除外明記）、Acct Server PKT_RECV追加、SQN_CONFLICT_ERR追加、lnavフォーマット全面改訂（bunyan競合回避・timestamp-format削除・file-pattern・sample追加）、ACCT_ON/ACCT_OFF追加、ヘルスチェックログ分離記述追加、BACKEND_EXTERNAL_CALL/BACKEND_EXTERNAL_ERR実装済み化・causeフィールド追加、IMSIマスク漏れ修正の反映（user_name等のマスク、User-Nameマスク規則追加）・lnavフォーマットのvalue整理（code/subtype/eap_type/acct_status_type/session_time追加、retry_count/downtime_ms削除）、ACCT_SEQUENCE_ERRのInterim側msg変更・interim_after_stop追加、ACCT_SESSION_NOT_FOUNDをStart/Interimに拡大、テストベクターモードのTEST_SQN_FALLBACK/TEST_SQN_PARSE_ERR/TEST_SQN_PERSIST_ERRを削除（エラーログは通常モードと同じ）、auth-server の trace_id を認証単位で引き継ぎ（2回目以降の PKT_RECV 等も同一 trace_id）、EAP_ENGINE_ERR 削除、LOG_LEVEL（§4.6新設、DEBUG で vector api success）、Vector API のログ整理（SQN_RESYNC に trace_id・imsi、SQN_RESYNC_DELTA_ERR とテストモードの CALC_OK を1行化・CALC_OK に test_mode、ProblemError 経路のログに error 属性、Vector Gateway / Vector API も ParseLevel で WARNING を WARN）、Acct Server の重複Interimを ACCT_DUPLICATE_INTERIM に分離・SYS_ERR 削除・LOG_LEVEL 対応（4コンポーネント、起動ログに log_level）、Admin TUI の監査ログに件数（import / export の record_count、search の result_count）を追加し検索IMSIを target_imsi に記録、Vector Gateway の起動時 WARN（バックエンド向けタイムアウトが auth-server の5秒以上）を追加、SQN競合制御の実装で SQN_CONFLICT_RETRY（attempt）/ SQN_CONFLICT_ERR を §3.4.7 に再追加・SQN_RESYNC を書き換え成功後に1回（msg 2種）、lnav フォーマットに attempt、Admin TUI の加入者編集が `sqn` を上書きしなくなったことを §3.4.7 に反映、auth-server / acct-server の起動ログに radius_secret_fallback と RADIUS_SECRET 設定時の WARN、RADIUS_NO_SECRET の条件を明記、RADIUS_LIB_ERR（ライブラリのエラーを JSON で）を追加し、Accounting-Request のシークレット不一致の RADIUS_AUTH_ERR・未知の Code のログを実装に整合 |
@@ -20,7 +20,7 @@
 | D-06 | エラーハンドリング詳細設計書 | r17 | 2026-10-04 | 異常系処理、タイムアウト、リトライ、Circuit Breaker、Vector Gateway追加、SQN競合エラー（409）追加、Vector Gateway経由フロー明記、接続方式01（aka-only-server）のエラー変換、EAP Identity系ログのuser_nameマスク反映、Interimのセッション不在・順序異常の扱いを実装に整合、テストベクターモードのエラー処理を通常モードと同一化、EAPエンジンが error を返さない実装に合わせ EAP_ENGINE_ERR を削除、Vector API の Valkey リトライなし（未使用の GetWithRetry 削除）・SQN_RESYNC_DELTA_ERR の1行化・定義済みエラーのログに error 属性、重複Interimの ACCT_DUPLICATE_INTERIM 分離、Accounting処理が error を返さない実装に合わせ SYS_ERR を削除、Vector Gateway → バックエンドのタイムアウトを 3秒に（auth-server の5秒より短くする理由、バックエンド障害時は VECTOR_API_ERR（502））・起動時 WARN を追加、SQN競合上限超過（409）を実装済みに（待機中の期限切れも 409、409 を 5xx にしない理由）、Valkey 接続断時の動作をフォールバックが空の場合（応答なし）と分けて記載、RADIUS パケットの認証をハンドラーで行う扱い（シークレット不一致は RADIUS_AUTH_ERR、形の壊れたパケットは RADIUS_LIB_ERR） |
 | D-07 | Admin TUI詳細設計書【後半】 | r10 | 2026-10-04 | モニタリング画面、ヘルプダイアログ、IMSI記録方針（監査ログに生値）、idx:userクリーンアップ処理、実装スクリーンショットとのASCIIレイアウト整合性修正（5画面）、event_idを実装に整合、Session Detail 検索の監査ログを実装に整合（検索IMSIを target_imsi、結果件数を result_count、検索失敗時は details に理由）、Session List のソートを現行の s キーによる3項目の切り替えに整合（Start Time ▼ → NAS IP ▲ → IMSI ▲、同値は start_time 降順 → UUID 順）、入力ダイアログを Esc で閉じる・ヘルプは F1 / ?、キー操作・画面遷移を実装に整合（Session Search へは Session List の Enter、ページ切替は PgUp / PgDn、Session Search はページ分割・r キーなしで Esc / q は Session List へ、IMSI 入力は検証しない）、Session Search の検索結果は画面側で start_time 降順に並べ替え、Session List のフィルタ（IMSI・NAS IP・Client IP の部分一致）に合わせて PoC 対象外・将来課題を修正、Statistics Dashboard の統計キャッシュ（件数のみ、要求時更新の1分キャッシュ）を実装に整合、Go構造体定義・フォーマット関数・セッション取得のコード片を実装（model.Session、SessionListScreen / SessionDetailScreen、internal/format の BytesShort 等）に整合 |
 | D-08 | インフラ設定・運用設計書 | r20 | 2026-10-04 | Docker Compose設定、Valkey設定、Fluent Bit設定（fluent/fluent-bit:4.2、YAML形式、rewrite_tagによるヘルスチェックログ分離、キャッチオール廃止による重複出力解消）、UFW設定、運用手順、IMSIマスキング環境変数（4コンポーネント限定）、Valkeyバージョン9.0、ヘルスチェック方針（curl -fsS）、テストベクターモード環境変数、B-02スコープ修正（B-01境界整合）、aka-only-server接続（compose環境変数・証明書マウント・共有ネットワークaka-av用オーバーレイ）、テストベクターモードの.env.example説明を実装に整合（加入者登録必須）、compose / .env.example の LOG_LEVEL（auth-server / vector-gateway / vector-api）を実ファイルに同期、compose / .env.example の LOG_LEVEL を acct-server にも渡す（4サーバー）よう実ファイルに同期、compose / .env.example の vector-gateway のタイムアウト既定値（3s）と説明を実ファイルに同期、compose / .env.example の写しを更新（fluent-bit を 127.0.0.1 に、RADIUS_SECRET を任意）、Docker と UFW の関係、インターネット越しの RADIUS の注意（§5.7）、セキュリティチェックリストを更新、リストア手順を訂正（docker compose run でボリュームの中身を入れ替え）、バックアップスクリプトの改善、「RDB併用なし」を訂正 |
-| D-09 | Auth Server詳細設計書 | r17 | 2026-10-04 | パッケージ構成、RADIUS受信処理、EAP制御フロー、Vector Gateway連携、セッション管理、IMSIマスキング、UUID仕様明記、互換性エイリアス削除、ベースイメージ方針、Vector関連event_id（VECTOR_IMSI_NOT_FOUND等）を実装に整合、user_nameのマスキング（MaskUserName）追加、Acct ServerのInterim時のセッション不在の扱いを修正、認可ポリシー評価（セクション8）を実装のPolicyRule構造とnas_idの`*`（任意のNASに一致）に整合、Trace ID の決定（State 属性の UUID 引き継ぎ）、EAPProcessor の Process(ctx, req) *Result・EAP_ENGINE_ERR 削除、LOG_LEVEL（pkg/logging.ParseLevel）対応、Vector Gateway 側のタイムアウト（3秒）を VectorRequestTimeout（5秒）より短くする理由と定数を合わせる必要の注記、RADIUS_SECRET を任意（空を推奨）に、起動ログの radius_secret_fallback と WARN、PacketServer の設定（InsecureSkipVerify、ErrorLog）とパケット認証をハンドラーで行う方針 |
+| D-09 | Auth Server詳細設計書 | r18 | 2026-10-04 | パッケージ構成、RADIUS受信処理、EAP制御フロー、Vector Gateway連携、セッション管理、IMSIマスキング、UUID仕様明記、互換性エイリアス削除、ベースイメージ方針、Vector関連event_id（VECTOR_IMSI_NOT_FOUND等）を実装に整合、user_nameのマスキング（MaskUserName）追加、Acct ServerのInterim時のセッション不在の扱いを修正、認可ポリシー評価（セクション8）を実装のPolicyRule構造とnas_idの`*`（任意のNASに一致）に整合、Trace ID の決定（State 属性の UUID 引き継ぎ）、EAPProcessor の Process(ctx, req) *Result・EAP_ENGINE_ERR 削除、LOG_LEVEL（pkg/logging.ParseLevel）対応、Vector Gateway 側のタイムアウト（3秒）を VectorRequestTimeout（5秒）より短くする理由と定数を合わせる必要の注記、RADIUS_SECRET を任意（空を推奨）に、起動ログの radius_secret_fallback と WARN、PacketServer の設定（InsecureSkipVerify、ErrorLog）とパケット認証をハンドラーで行う方針、main.go の例の NewServer を訂正 |
 | D-10 | Acct Server詳細設計書 | r12 | 2026-10-04 | パッケージ構成、Accounting処理フロー、セッション更新ロジック、重複検出、IMSIマスキング、Status-Server対応、ベースイメージ方針、Accounting-On/Off対応（ProcessOn/ProcessOff、NAS-Identifier処理）、event_idを実装に整合、IMSI抽出不可時のUser-Nameをマスクして出力、Interimのシーケンス判定（CheckInterim、interim_after_stop）とセッション存在確認、重複Interimの ACCT_DUPLICATE_INTERIM 分離、AccountingProcessor の戻り値から error を外し SYS_ERR を削除、LOG_LEVEL 対応（環境変数・設定構造体・main.go のロガー初期化）、RADIUS_SECRET を任意（空を推奨）に、起動ログの radius_secret_fallback と WARN、PacketServer の設定（InsecureSkipVerify、ErrorLog）、Accounting-Request の Request Authenticator 検証をハンドラーで行う |
 | D-11 | Vector API詳細設計書 | r11 | 2026-10-04 | パッケージ構成、HTTPサーバー設定、Milenage計算、SQN管理、SQN競合制御（WATCH/MULTI CAS）、エラーハンドリング、ベースイメージ方針、テストベクターモード本番無効化注記、event_idを実装に整合、SQN競合制御（CAS）は設計済み・現行未実装と明記、テストベクターモードを実装に整合（Ki/OPc/AMFのみ固定値、加入者登録必須、既定SQNフォールバックとTEST_SQN_*ログ廃止）、ログ整理（ContextWithTraceID で SQN_RESYNC に trace_id・imsi、ユースケース層のデルタ超過・test vector generated ログ削除、CALC_OK に test_mode、ProblemError 経路の error 属性、IsTestMode 追加）、未使用の GetWithRetry / ErrInvalidIMSI を削除、SQN競合制御を実装（方式を WATCH/MULTI から Lua による `sqn` の比較・置き換えに変更、CompareAndSetSQN、最大3回の試行と 1〜10ms の待ち、ErrSQNConflict（409）、再同期のやり直しで同期済みとみなす扱い、SQN の書き換え後にベクター生成）、Admin TUI の `sqn` 上書きの制約を解消済みに（§13.3、§13.6.9） |
 | D-12 | Vector Gateway詳細設計書 | r9 | 2026-10-04 | 外部API連携設計、PLMNルーティング、接続方式管理、トレーサビリティ、IMSIマスキング、ベースイメージ方針（debian:bookworm-slim）、接続方式01（aka-only-server、mTLS/平文HTTP、GenerateAv変換）実装、compose抜粋・環境変数にLOG_LEVELを追加、LOG_LEVEL の変換を pkg/logging.ParseLevel に統一、compose の LOG_LEVEL を acct-server にも渡す旨に修正、バックエンド向けタイムアウトの既定値を 3s に変更（auth-server の5秒より短く）、5秒以上なら起動時 WARN |
@@ -80,12 +80,13 @@
 
 | No. | ドキュメント名 | 版数 | 最終更新 | 内容 |
 |-----|---------------|------|---------|------|
-| B-01 | ホストOS構築手順書 | r4 | 2026-02-23 | Ubuntu Serverインストール、初期設定、セキュリティ設定、Docker導入、systemdサービス登録、UFW は Docker の公開ポートに及ばない注意（送信元の制限はクラウド側ファイアウォールか DOCKER-USER） |
-| B-02 | アプリケーションデプロイ手順書 | r17 | 2026-10-04 | リポジトリクローン、.env作成、Docker Compose起動、Admin TUI配置、logrotate設定、バックアップスクリプト配置、lnavフォーマット配置・全面改訂、lnavカスタムフォーマット適用失敗トラブルシューティング、aka-only-server接続手順、lnavフォーマットのvalue整理、オプション項目にLOG_LEVEL追加、LOG_LEVEL の対象に acct-server を追加、vector-gateway のタイムアウト既定値（3s）と5秒より短くする旨の注記、lnav フォーマットの写しに attempt を追加、RADIUS_SECRET を任意（空を推奨）に、RADIUS クライアント登録（送信元IP）の節を新設、デプロイ後チェックリストにテストベクターモード・フォールバックの無効と公開ポートの確認を追加、ポート競合確認を TCP/UDP に、バックアップスクリプトの改善（失敗時に空のファイルを残さない、600） |
+| B-01 | ホストOS構築手順書 | r5 | 2026-10-04 | Ubuntu Serverインストール、初期設定、セキュリティ設定、Docker導入、systemdサービス登録、UFW は Docker の公開ポートに及ばない注意（送信元の制限はクラウド側ファイアウォールか DOCKER-USER）、Ubuntu 24.04 の SSH ポート変更の反映手順を訂正（ssh.socket、ss での確認） |
+| B-02 | アプリケーションデプロイ手順書 | r18 | 2026-10-04 | リポジトリクローン、.env作成、Docker Compose起動、Admin TUI配置、logrotate設定、バックアップスクリプト配置、lnavフォーマット配置・全面改訂、lnavカスタムフォーマット適用失敗トラブルシューティング、aka-only-server接続手順、lnavフォーマットのvalue整理、オプション項目にLOG_LEVEL追加、LOG_LEVEL の対象に acct-server を追加、vector-gateway のタイムアウト既定値（3s）と5秒より短くする旨の注記、lnav フォーマットの写しに attempt を追加、RADIUS_SECRET を任意（空を推奨）に、RADIUS クライアント登録（送信元IP）の節を新設、デプロイ後チェックリストにテストベクターモード・フォールバックの無効と公開ポートの確認を追加、ポート競合確認を TCP/UDP に、バックアップスクリプトの改善（失敗時に空のファイルを残さない、600）、クローン URL、ログディレクトリを 755 に（logrotate）、コンテナ名を訂正、VPS は B-03 を参照 |
+| B-03 | VPSデプロイ手順書（AWS Lightsail） | r1 | 2026-10-04 | VPS（AWS Lightsail の Ubuntu 24.04 LTS）に1から構築・デプロイする手順（机上確認）。インスタンス作成、静的IP、IPv4 / IPv6 ファイアウォール（SSH は 22 のまま管理端末のIPに限定、RADIUS は AP のグローバルIPに限定）、スワップ、admin ユーザー、B-01 / B-02 との差分、golang コンテナでの Admin TUI のビルド、自動スナップショット、VPS 固有のチェックリストとトラブルシューティング |
 
 ### 4.2 未作成
 
-なし（構築・デプロイドキュメント全2件完了）
+なし（構築・デプロイドキュメント全3件完了）
 
 ---
 
@@ -127,7 +128,7 @@
 ```
 [設計ドキュメント] ─────────────────────────────────────────────────────┐
     │                                                                   │
-    ├─ D-01: ミニPC版設計仕様書 (r16) ✓                                  │
+    ├─ D-01: ミニPC版設計仕様書 (r17) ✓                                  │
     ├─ D-02: Valkeyデータ設計仕様書 (r19) ✓                              │
     ├─ D-03: Vector-API/ステートマシン設計書 (r8) ✓                     │
     ├─ D-04: ログ仕様設計書 (r31) ✓                                     │
@@ -135,7 +136,7 @@
     ├─ D-06: エラーハンドリング詳細設計書 (r17) ✓                       │
     ├─ D-07: Admin TUI詳細設計書【後半】(r10) ✓                         │
     ├─ D-08: インフラ設定・運用設計書 (r20) ✓                            │
-    ├─ D-09: Auth Server詳細設計書 (r17) ✓                               │
+    ├─ D-09: Auth Server詳細設計書 (r18) ✓                               │
     ├─ D-10: Acct Server詳細設計書 (r12) ✓                              │
     ├─ D-11: Vector API詳細設計書 (r11) ✓                                │
     └─ D-12: Vector Gateway詳細設計書 (r9) ✓                            │
@@ -158,8 +159,9 @@
                     ▼                                                   │
 [構築・デプロイドキュメント] ───────────────────────────────────────────┤
     │                                                                   │
-    ├─ B-01: ホストOS構築手順書 (r4) ✓                                   │
-    └─ B-02: アプリケーションデプロイ手順書 (r17) ✓                        │
+    ├─ B-01: ホストOS構築手順書 (r5) ✓                                   │
+    ├─ B-02: アプリケーションデプロイ手順書 (r18) ✓                        │
+    └─ B-03: VPSデプロイ手順書（AWS Lightsail） (r1) ✓                    │
                     │                                                   │
                     ▼                                                   │
 [運用ドキュメント] ◄────────────────────────────────────────────────────┘
@@ -182,7 +184,7 @@
 | 1 | D-07 | Admin TUI詳細設計書【後半】 | **完了 (r10)** |
 | 2 | D-12 | Vector Gateway詳細設計書 | **完了 (r9)** |
 | 3 | D-08 | インフラ設定・運用設計書 | **完了 (r20)** |
-| 4 | D-09 | Auth Server詳細設計書 | **完了 (r17)** |
+| 4 | D-09 | Auth Server詳細設計書 | **完了 (r18)** |
 | 5 | D-11 | Vector API詳細設計書 | **完了 (r11)** |
 | 6 | D-10 | Acct Server詳細設計書 | **完了 (r12)** |
 
@@ -207,8 +209,9 @@
 
 | 順序 | ドキュメントID | ドキュメント名 | ステータス |
 |-----|---------------|---------------|-----------|
-| 14 | B-01 | ホストOS構築手順書 | **完了 (r4)** |
-| 15 | B-02 | アプリケーションデプロイ手順書 | **完了 (r17)** |
+| 14 | B-01 | ホストOS構築手順書 | **完了 (r5)** |
+| 15 | B-02 | アプリケーションデプロイ手順書 | **完了 (r18)** |
+| 15a | B-03 | VPSデプロイ手順書（AWS Lightsail） | **完了 (r1)** |
 
 ### フェーズ5: 運用準備（実装完了後）
 
@@ -229,10 +232,10 @@
 | 設計ドキュメント | 12 | 12 | 0 | 100% |
 | 開発ドキュメント | 3 | 3 | 0 | 100% |
 | テストドキュメント | 4 | 4 | 0 | 100% |
-| 構築・デプロイドキュメント | 2 | 2 | 0 | 100% |
+| 構築・デプロイドキュメント | 3 | 3 | 0 | 100% |
 | 運用ドキュメント | 5 | 5 | 0 | 100% |
 | 補足資料 | 1 | 1 | 0 | 100% |
-| **合計** | **27** | **27** | **0** | **100%** |
+| **合計** | **28** | **28** | **0** | **100%** |
 
 ---
 
@@ -293,3 +296,4 @@
 | r49 | 2026-10-04 | インターネット公開（VPS 等）に向けた安全面の修正（fluent-bit の 24224 を 127.0.0.1 だけに公開、RADIUS_SECRET（フォールバックの共有シークレット）を任意にして空を推奨（空なら登録のない送信元IPのパケットは破棄）、auth-server / acct-server の起動ログに radius_secret_fallback と設定時の WARN を追加）と、文書の訂正（Docker が公開したポートは UFW を素通りすること、インターネット越しに RADIUS を受ける場合の注意（共有シークレット、送信元IPとクライアント登録、NAT・動的IP、クラウド側ファイアウォール）、デプロイ後・セキュリティのチェックリストにテストベクターモード・フォールバックの無効と公開ポートの確認を追加）に伴う版数更新: B-01(r3→r4)、B-02(r15→r16)、D-01(r15→r16)、D-04(r29→r30)、D-06(r15→r16)、D-08(r18→r19)、D-09(r15→r16)、D-10(r10→r11)、E-01(r7→r8)、O-01(r6→r7)、O-03(r9→r10)、T-02(r14→r15。テストケース 1,314→1,318件) |
 | r50 | 2026-10-04 | バックアップ・リストア手順の訂正（2026-10-04 に simwifi 実機で、旧手順が失敗すること・新手順で戻せることを確認。リストアは `docker compose stop valkey` → `docker compose run` で valkey サービスのボリュームの中身をバックアップと入れ替え → `start`。旧手順はボリューム名が実際の `deployments_valkey_data` と異なり、停止しただけのコンテナが参照するボリュームの `volume rm` は失敗していた。バックアップスクリプトは失敗時に 0バイトのファイルを残さず、バックアップを 600 で作る）と、運用手順の誤りの訂正（加入者キー `sub:*`、Vector Gateway/API のヘルスチェックはコンテナ内で curl、logrotate・systemd の名前、D-08 の「RDB併用なし」）に伴う版数更新: B-02(r16→r17)、D-08(r19→r20)、O-03(r10→r11)、O-04(r1→r2) |
 | r51 | 2026-10-04 | RADIUS パケットの認証をハンドラーに一本化し、ライブラリのログを JSON にした実装修正（auth-server / acct-server の PacketServer に InsecureSkipVerify: true と ErrorLog（pkg/logging.NewRADIUSLibraryLogger）を設定。シークレットが一致しない Accounting-Request は、ライブラリが素のテキスト「bad secret」を出して捨てていたため RADIUS_AUTH_ERR が出ていなかったが、ハンドラーが送信元IP付きの RADIUS_AUTH_ERR を出して捨てるようになった。未知の Code もハンドラーに届き PKT_UNKNOWN_CODE / RADIUS_UNKNOWN_CODE で記録。形の壊れたパケット等のライブラリのエラーは RADIUS_LIB_ERR（WARN）、シークレットが空の重複ログは DEBUG）に伴う版数更新: D-04(r30→r31)、D-06(r16→r17)、D-09(r16→r17)、D-10(r11→r12)、E-03(r8→r9)、O-03(r11→r12)、O-05(r17→r18)、T-02(r15→r16。テストケース 1,318→1,329件) |
+| r52 | 2026-10-04 | VPS 向けのデプロイ手順書 B-03（AWS Lightsail、r1、机上確認）を追加（構築・デプロイドキュメント 2→3件、総数 27→28件）。あわせて B-01 / B-02 の誤りを訂正（Ubuntu 24.04 の SSH はソケット起動のためポート変更は daemon-reload と ssh.socket の再起動で反映し ss で確認、git clone したログディレクトリは 775 で logrotate が処理を飛ばすため 755 に、クローン URL、コンテナ名）、D-01 の Acct Server の検証方式、D-09 の main.go の例の NewServer を訂正: B-01(r4→r5)、B-02(r17→r18)、B-03(r1 新規)、D-01(r16→r17)、D-09(r17→r18) |

@@ -1,4 +1,4 @@
-# D-01 ミニPC版 EAP-AKA RADIUS PoC環境 設計仕様書 (r16)
+# D-01 ミニPC版 EAP-AKA RADIUS PoC環境 設計仕様書 (r17)
 
 ## 1. システム概要
 
@@ -64,7 +64,7 @@
 | **ノード名**           | **ディレクトリ**       | **役割**                                | **機能要件・処理フロー**                                     |
 | ---------------------- | ---------------------- | --------------------------------------- | ------------------------------------------------------------ |
 | **1. Auth Server**     | `apps/auth-server`     | **[RADIUS認証 & EAP制御]** 認証の司令塔 | 1. **設定読込:** `envconfig` で環境変数ロード。Shared SecretはValkey優先、環境変数はフォールバックとして使用。`EAP_AKA_PRIME_NETWORK_NAME` 環境変数でEAP-AKA'のネットワーク名を設定（デフォルト: "WLAN"）。 2. **受信:** UDP 1812で受信。 3. **Trace ID:** 受信時にUUID生成。これを`trace_id`ログ、Valkeyキー(`eap:{UUID}`)、RADIUS `State`属性として統一利用。 4. **API連携:** `resty` + `gobreaker` (Circuit Breaker) でVector Gatewayへ計算リクエスト (Header `X-Trace-ID` 付与)。 5. **EAP制御:** `go-eapaka` 利用。 6. **保存:** `go-redis` 利用。 7. **ログ:** `slog` で構造化出力。 |
-| **2. Acct Server**     | `apps/acct-server`     | **[RADIUS課金]** 利用実績の記録         | 1. **設定読込:** `envconfig` でロード。SecretはAuth Server同様の優先順位。 2. **受信:** UDP 1813で受信。 3. **検証:** Shared SecretによるMessage-Authenticator検証。 4. **ログ:** 課金ログの構造化出力。 5. **更新:** Valkeyセッション状態更新。 |
+| **2. Acct Server**     | `apps/acct-server`     | **[RADIUS課金]** 利用実績の記録         | 1. **設定読込:** `envconfig` でロード。SecretはAuth Server同様の優先順位。 2. **受信:** UDP 1813で受信。 3. **検証:** Shared Secret による Request Authenticator の検証（Accounting-Request。Status-Server は Message-Authenticator）。失敗時は `RADIUS_AUTH_ERR` を出して破棄。 4. **ログ:** 課金ログの構造化出力。 5. **更新:** Valkeyセッション状態更新。 |
 | **3. Vector Gateway**  | `apps/vector-gateway`  | **[ルーティング]** ベクター取得先振分け | 1. **設定読込:** `envconfig` でロード。 2. **API提供:** REST API (`POST /api/v1/vector`)。Auth Serverとの互換性維持。`GET /health` エンドポイントでヘルスチェック応答を提供。 3. **ルーティング:** PLMNベースでバックエンド選択。接続方式ID `00`: 内部Vector API（PLMN未一致・passthroughモードの既定先）、`01`: 外部の aka-only-server（`VECTOR_GATEWAY_AKAONLY_URL` 設定時のみ。mTLSまたは平文HTTP、GenerateAv形式との変換を行う）、`02`〜`99`: 将来実装（501）。 4. **Trace ID:** Header `X-Trace-ID` を読み取り、内部APIへ伝搬（aka-only-serverへはベストエフォート）。 5. **ログ:** `slog` で構造化出力。 |
 | **4. Vector API**      | `apps/vector-api`      | **[暗号計算サービス]** AKAベクター生成  | 1. **設定読込:** `envconfig` でロード。`TEST_VECTOR_ENABLED` 環境変数（デフォルト: false）を有効にすると、テストベクターモードが有効化され、特定IMSIプレフィックス（`TEST_VECTOR_IMSI_PREFIX`、デフォルト: "00101"）に対しては Ki/OPc/AMF をテスト用固定値（3GPP TS 35.208 Test Set 1）に置き換えてベクターを計算する（加入者の登録・SQN管理は通常どおり必要）。 2. **API提供:** REST API (`POST /api/v1/vector`)。`GET /health` エンドポイントでヘルスチェック応答を提供。 3. **Trace ID:** Header `X-Trace-ID` を読み取りログコンテキストに設定。 4. **DB取得:** ValkeyからSIM鍵情報取得。 5. **計算:** `milenage` 実行。 6. **更新:** SQNインクリメントとValkey更新。 |
 | **5. Admin TUI**       | `apps/admin-tui`       | **[管理コンソール]** データ操作UI       | 1. **設定読込:** `os.Getenv("VALKEY_PASSWORD")` でDB PASS取得。 2. **UI表示:** `tview` + `tcell` 利用。 3. **DB操作:** 加入者CRUD、RADIUSクライアント管理、ポリシー管理、CSV I/O。 4. **監視:** Valkey接続確認およびセッション閲覧。 5. **監査ログ:** 操作履歴を標準出力にJSONで1行ずつ記録（`event_id`=`AUDIT_LOG`。Valkeyには保存しない）。 |
@@ -244,7 +244,7 @@ my-radius-project/
 │
 ├── docs/                         # ドキュメント
 │   ├── D-01〜D-12                # 設計仕様書群
-│   ├── B-01〜B-02                # セットアップ手引書群
+│   ├── B-01〜B-03                # セットアップ手引書群（B-03 は VPS 向け）
 │   ├── E-01〜E-03                # 開発環境・規約ドキュメント群
 │   ├── T-01〜T-04                # テスト戦略・仕様書群
 │   ├── subdocs/                  # 補助ドキュメント（テスト詳細仕様、実装ガイド等）
@@ -575,3 +575,4 @@ VECTOR_GATEWAY_PLMN_MAP=""
 | r14 | 2026-10-04 | §3.3 Valkeyキースキーマ概要を実装（D-02 r17）に合わせて修正: 実装に存在しない `audit:log`（監査ログ）と `acct:{ID}`（課金セッション）を削除し、`sess:{UUID}`（アクティブセッション）・`idx:user:{IMSI}`（ユーザー検索インデックス）・`acct:seen:{Acct-Session-Id}`（Accounting重複検出キャッシュ）を追加。`sub:{IMSI}` の使用コンポーネントから Auth Server を削除（参照するのは Vector API と Admin TUI）、`eap:{UUID}` の用途を EAP認証コンテキストに修正。監査ログは Valkey に保存せず Admin TUI の標準出力に JSON で出力する旨の注記を追加し、§3.1 Admin TUI の監査ログの説明も同様に修正 |
 | r15 | 2026-10-04 | vector-gateway のバックエンド向けタイムアウトを auth-server より短くした実装修正の反映: §3.5 Vector Gateway接続設定の Vector Gateway → Vector API / aka-only-server のタイムアウトを 5秒 → 3秒に修正し、Auth Server（5秒）より短くする理由の注記を追加。§7 docker-compose.yml の `VECTOR_GATEWAY_INTERNAL_TIMEOUT` / `VECTOR_GATEWAY_AKAONLY_TIMEOUT` の既定値を `3s` に修正（実ファイルと一致）、§8 環境変数表の既定値を `3s` に修正 |
 | r16 | 2026-10-04 | インターネット公開（VPS 等）に向けた安全面の実装修正の反映: §4 ファイアウォールの「Block: 上記以外全て」を、UFW の受信規則としての記載であり Docker の公開ポートには及ばない旨に訂正し、Docker と UFW の関係の注記（公開ポートは UFW を素通りする、内部向けは 127.0.0.1 にバインド、RADIUS の送信元はクラウド側のファイアウォールまたは `DOCKER-USER` で絞る）を追加。§4 に「インターネット越しに RADIUS を受ける場合（VPS 等）」を新設（共有シークレットの強度、RadSec はスコープ外、`RADIUS_SECRET` を空にしてクライアント登録、NAT 配下の AP と送信元IP、クラウド側のファイアウォール、同一ホストからの試験の送信元IP）。§4 シークレット管理の `RADIUS_SECRET` を任意（空を推奨）とし、空の場合の動作（`RADIUS_NO_SECRET` で破棄）、Valkey エラー時等のフォールバック、compose の `${RADIUS_SECRET:-}`、起動ログの `radius_secret_fallback` と WARN を追記。§5 の fluent-bit の公開ポートを `127.0.0.1:24224/tcp, 127.0.0.1:24224/udp` に修正し、公開ポートの注記を追加。§7 docker-compose.yml を実ファイルと一致させた（auth-server / acct-server の `RADIUS_SECRET: ${RADIUS_SECRET:-}`、fluent-bit の `127.0.0.1:24224` バインドとコメント）。§9 の FW設定・デプロイに注記を追加 |
+| r17 | 2026-10-04 | §2 の Acct Server の検証を「Message-Authenticator検証」から実装どおり「Request Authenticator の検証（Accounting-Request。Status-Server は Message-Authenticator）」に訂正。§6 のディレクトリ構成のセットアップ手引書群を B-01〜B-03 に（VPS 向けのデプロイ手順書 B-03 を追加） |
