@@ -75,8 +75,3 @@ func (p *TestVectorProvider) GetTestCryptoParams() (ki, opc, amf []byte) {
 	copy(amf, testAMF)
 	return
 }
-
-// GetDefaultSQN はテストベクターのデフォルトSQN値を返す。
-func (p *TestVectorProvider) GetDefaultSQN() uint64 {
-	return testSQN
-}

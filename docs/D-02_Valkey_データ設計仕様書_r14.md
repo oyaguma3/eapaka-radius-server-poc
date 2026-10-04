@@ -1,4 +1,4 @@
-# D-02 Valkey データ設計仕様書 (r13)
+# D-02 Valkey データ設計仕様書 (r14)
 
 ## 1. 全体方針
 
@@ -49,13 +49,15 @@ Vector APIがEAP-AKA認証ベクターを計算するための鍵情報。
 >   - 再同期: AUTS から取り出した SQN_MS を検証（SQN_MS > SQN_HE かつ差が 2^28 以下）し、SQN_MS + 32
 >   - 48bit 上限を超える場合は `SQN_OVERFLOW_ERR`（HTTP 500）
 > - `sqn` は12桁でなければ解析エラーとなる
-> - 通常モードで書き戻しに失敗した場合は HTTP 500（`VALKEY_CONN_ERR`）とし、ベクターは返さない
+> - 書き戻しに失敗した場合は HTTP 500（`VALKEY_CONN_ERR`）とし、ベクターは返さない（テストベクターモードも同じ）
+> - `sub:{IMSI}` が存在しない場合は HTTP 404（`CALC_ERR` "subscriber not found"）を返し、キーは作成しない（テストベクターモードも同じ）
 > - **WATCH/MULTI による CAS・リトライ・HTTP 409 は実装していない**（単純な HSET による後勝ち）。同一IMSIへの並行リクエストでは SQN が同値になる・飛ぶ可能性がある（PoCの制約）。D-11「Vector API詳細設計書」セクション13.6 の CAS 方式は現行実装には未反映
 >
 > **テストベクターモード（`TEST_VECTOR_ENABLED=true`）時:**
 > - IMSI が `TEST_VECTOR_IMSI_PREFIX`（既定 `00101`）で始まる場合、Ki/OPc/AMF は Vector API 内蔵の固定値（3GPP TS 35.208 Test Set 1、AMF `b9b9`）を使い、`sub:{IMSI}` の `ki` / `opc` / `amf` は参照しない
-> - SQN のみ `sub:{IMSI}` の `sqn` を使用する。キーが無い・Valkey エラー・`sqn` 解析エラーの場合は既定値 `ff9bb4d0b607` を現SQNとする
-> - 新SQNは同じく HSET で書き戻すため、`sub:{IMSI}` が存在しない場合は **`sqn` フィールドだけを持つ Hash が作成される**。書き戻し失敗は WARN（`TEST_SQN_PERSIST_ERR`）のみでベクターは返却する
+> - それ以外（`sub:{IMSI}` の取得、`sqn` の解析・+32・書き戻し、再同期、エラー処理）は通常モードと同じ。**テストベクター対象の IMSI でも `sub:{IMSI}` の登録が必要**で、未登録なら HTTP 404、Valkey エラー・書き戻し失敗は HTTP 500、`sqn` の解析エラーも HTTP 500 になる（既定 SQN へのフォールバックはしない）
+> - `ki` / `opc` / `amf` は参照しないが、Admin TUI・投入スクリプトで登録する場合は通常どおり全フィールドを設定する（テスト用加入者は Test Set 1 の値で登録する）
+> - r13 以前の実装では、キーが無い場合に既定 SQN `ff9bb4d0b607` から計算して **`sqn` フィールドだけを持つ Hash を作成していた**が、現行実装では作成しない。旧実装で作られた `sqn` だけの `sub:{IMSI}` が残っている場合、テストベクターモードでは登録済みとして扱われる（不要なら DEL で削除する）
 
 ### B. RADIUSクライアント設定 (Client Config)
 
@@ -568,3 +570,4 @@ type Subscriber struct {
 | r11 | 2026-02-27 | PolicyRule構造を実装コードに合わせて修正: フィールドをNasID/AllowedSSIDs/VlanID/SessionTimeoutに変更、JSONサンプルをNAS-ID/SSIDマッチング＋VLAN・セッションパラメータ形式に更新、Go構造体定義例も同期 |
 | r12 | 2026-10-04 | 実装コードとの突き合わせによる修正: (1) 2.C 認可ポリシー: `nas_id` はワイルドカード不可の完全一致（大文字小文字区別）に訂正し、JSON例の `nas_id` "*" を削除。`allowed_ssids` の `"*"`・大文字小文字無視、評価順序（配列順で最初の一致）、SSID抽出、`default` の欠落・不正値（deny扱い）、ポリシー不在・JSON不正時のReject、`vlan_id`（JSON文字列、Tunnel属性3種）・`session_timeout`（>0で付与）、default allow時は属性なし、を明記 (2) 2.A: SQN更新は CAS ではなく単純な HSET（+32、再同期は SQN_MS+32、12桁小文字hex）であることに訂正し、テストベクターモード時のSQN扱い（`sqn` のみの Hash 作成を含む）を追記。`created_at` の形式を明記 (3) 2.B: name/vendor はサーバー未使用、Valkeyエラー時もフォールバックすることを明記 (4) 3.D: stage は大文字の `EAPState` 値で保存されることに訂正（実際に書かれる値を明記）、格納形式・TTLリセット・削除タイミング・書き込みの流れを追記 (5) 3.E: 各フィールドの書き込みタイミングを Auth Accept 時の作成を含めて訂正、実装に無い `ACCT_SESSION_EXPIRED` を削除し Start/Interim/Stop の不在時動作を実装どおりに記載 (6) 3.F: SADD は Auth Server の Accept 時であることを明記、Admin TUI の SCAN フォールバックを追記 (7) 3.G: 重複検出ロジックを実装どおりに訂正（Interim の `no_start_received` が実質出力されない点、Stop重複時は以降の処理をスキップ） (8) 4: 各サーバーのフローを実装に合わせて修正（Acct Server は idx:user に SADD しない、Accounting-On/Off を追記） (9) 1: 接続・認証・永続化設定を compose に合わせて修正、Type列追加、`stats:global` 未使用を注記 (10) 5: `pkg/model` の利用状況を明記し、Valkey と直接対応する各アプリの redis タグ付き構造体を追記。D-04 r19 の event_id 全面整合に合わせて修正（2.E の不在時動作の注記から実装に存在しない event_id 名 `ACCT_SESSION_EXPIRED` を削除し、TTL超過・未作成とも `ACCT_SESSION_NOT_FOUND` である旨に修正） |
 | r13 | 2026-10-04 | acct-server の Interim シーケンス判定修正の反映: 3.E Acct Server のセッション処理で、Interim も `sess:{UUID}` の存在を確認し、不在時は `ACCT_SESSION_NOT_FOUND` を出力してセッションを作成しない（`imsi` を持たない Hash が作られる問題を解消）ことに修正、TTLの記述を補足。3.G 重複検出ロジックの Interim を実装どおりに修正（1回の GET で判定してから SET、値なしは `no_start_received`、`stop` は新設の `interim_after_stop` として `ACCT_SEQUENCE_ERR` を出力し処理継続。「`no_start_received` が出力されない」実装上の制約の記載を削除）。4 Acct Server の Interim フローを更新。D-10 の参照セクション番号を修正（5.6→5.8） |
+| r14 | 2026-10-04 | テストベクターモードでも加入者登録を必須にした Vector API の実装修正の反映（2.A）: テストベクターモードで置き換えるのは Ki/OPc/AMF だけで、`sub:{IMSI}` の取得・`sqn` の解析と書き戻し・エラー処理は通常モードと同じ（未登録は404、Valkeyエラー・書き戻し失敗は500、`sqn` 解析エラーも500）に修正。既定 SQN `ff9bb4d0b607` へのフォールバック、`sqn` だけを持つ Hash の作成、`TEST_SQN_PERSIST_ERR` の記述を削除し、旧実装で作られた `sqn` だけの Hash の扱いを注記。SQN更新方式の注記に、書き戻し失敗時・未登録時の扱いがテストベクターモードでも同じである旨を追記 |

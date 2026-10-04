@@ -1,6 +1,6 @@
-# S-01 eapaka_test 利用ノウハウ (r2)
+# S-01 eapaka_test 利用ノウハウ (r3)
 
-**版数:** r2
+**版数:** r3
 **作成日:** 2026-02-24
 **改版日:** 2026-10-04
 **分類:** 補足資料
@@ -33,7 +33,7 @@ eapaka_test は、RADIUS 経由で EAP-AKA / EAP-AKA' を実行するサーバ�
 
 ```
 docs/supplement/eapaka_test/
-├── S-01_eapaka_test利用ノウハウ_r2.md    # 本ドキュメント
+├── S-01_eapaka_test利用ノウハウ_r3.md    # 本ドキュメント
 ├── configs/                               # 設定ファイル（5件）
 │   ├── example.yaml                       # サンプル設定ファイル
 │   ├── config_testvector.yaml             # テストベクターモード用（AMF=B9B9。IMSI 003 を含む全ケース）
@@ -113,7 +113,7 @@ eapaka_test の設定ファイルは以下のセクションで構成される:
 
 テストベクターモード用の設定ファイル。3GPP TS 35.208 Test Set 1 のパラメータを使用する。テストベクターモード（`TEST_VECTOR_ENABLED=true`）では、IMSI 003 を使うケースを含め T-03 の全ケースでこの config を使う（セクション7.1）。
 
-> **テストベクターモードの動作（r2追記。実装: `apps/vector-api/internal/usecase/vector.go`）**: IMSI が `TEST_VECTOR_IMSI_PREFIX`（既定 `00101`）で始まると、Vector API は Ki / OPc / AMF を固定値（Test Set 1、AMF `B9B9`）にして計算し、`sub:{IMSI}` の `ki` / `opc` / `amf` は使わない。`sub:{IMSI}` は SQN の管理にだけ使い、キーがなければ既定 SQN `FF9BB4D0B607` から計算して（`TEST_SQN_FALLBACK`）`sqn` だけを書き込む。そのため、テストベクター対象の IMSI は Valkey に未登録でも 404 にならない。
+> **テストベクターモードの動作（r2追記、r3改訂。実装: `apps/vector-api/internal/usecase/vector.go`）**: IMSI が `TEST_VECTOR_IMSI_PREFIX`（既定 `00101`）で始まると、Vector API は Ki / OPc / AMF を固定値（Test Set 1、AMF `B9B9`）にして計算し、`sub:{IMSI}` の `ki` / `opc` / `amf` は使わない。それ以外（`sub:{IMSI}` の取得、`sqn` の +32 と書き戻し、再同期、エラー処理）は通常モードと同じで、**テストベクター対象の IMSI でも `sub:{IMSI}` の登録が必要**である。未登録なら 404（Auth Server の `VECTOR_IMSI_NOT_FOUND`）で Reject される。テスト用加入者は T-03 の事前準備（test_subscriber_data_scripts の `load_test_subscribers.sh`）で登録する。r2 時点の実装にあった「未登録なら既定 SQN `FF9BB4D0B607` から計算して `sqn` だけを書き込む（`TEST_SQN_FALLBACK`）」動作は廃止された。
 
 | パラメータ | 値 | 備考 |
 |:---------|:----|:-----|
@@ -211,7 +211,7 @@ EAP-AKA / AKA' 認証の基本フローを検証する。`identity` フィール
 
 認証失敗パターンを検証する:
 - `mismatch_strict_fail.yaml`: `method_mismatch_policy: "strict"` でEAP方式ミスマッチ時にRejectを期待するケース。ただし Auth Server は identity の先頭文字（`0` = EAP-AKA、`6` = EAP-AKA'）で方式を選ぶため、現実装ではこの経路で方式ミスマッチは起きない。実際には identity の IMSI `440100123456789`（テストベクター対象外、Valkey 未登録）が 404 になり `VECTOR_IMSI_NOT_FOUND` で Reject される。ケースは `reject_hint_check_presence: false` で Reject 理由の文言を検証しないため PASS するが、**方式ミスマッチ拒否は検証できていない**（r2追記）
-- `reject_imsi_not_found.yaml`: Valkey 未登録 IMSI での認証試行。テストベクター対象外の IMSI `001029999999999`（identity `0001029999999999@wlan.mnc002.mcc001.3gppnetwork.org`）を使い、Vector API の 404 → `VECTOR_IMSI_NOT_FOUND` で Reject されることを確認する。r1 の IMSI `001019999999999` はテストベクター対象（`00101` 始まり）のため、テストベクターモードでは未登録でもベクターが生成され、`AUTH_POLICY_NOT_FOUND` で Reject されていた（理由が違う。r2で変更）
+- `reject_imsi_not_found.yaml`: Valkey 未登録 IMSI での認証試行。テストベクター対象外の IMSI `001029999999999`（identity `0001029999999999@wlan.mnc002.mcc001.3gppnetwork.org`）を使い、Vector API の 404 → `VECTOR_IMSI_NOT_FOUND` で Reject されることを確認する。r1 の IMSI `001019999999999` はテストベクター対象（`00101` 始まり）のため、r2 時点の実装のテストベクターモードでは未登録でもベクターが生成され、`AUTH_POLICY_NOT_FOUND` で Reject されていた（理由が違う。r2で変更）。現行実装ではテストベクター対象の IMSI も未登録なら 404 になるが、本ケースは引き続きテストベクター対象外の IMSI で実行し、404 → `VECTOR_IMSI_NOT_FOUND` を期待する（r3追記）
 
 #### ポリシー（7件）
 
@@ -395,7 +395,7 @@ eapaka_test のテストケースで `identity` を指定すると、config の 
 | 原因 | 確認方法 | 対処 |
 |:-----|:--------|:-----|
 | `TEST_VECTOR_ENABLED` 設定不整合 | `docker compose exec vector-api env \| grep TEST_VECTOR` | `.env` の設定を確認し `docker compose up -d` |
-| 加入者データ未登録 | `docker compose exec valkey valkey-cli -a "$VALKEY_PASSWORD" --no-auth-warning HGETALL sub:{IMSI}` | Valkey にデータ投入（テストベクター対象 IMSI は未登録でもベクターが生成されるため、この原因にはならない） |
+| 加入者データ未登録 | `docker compose exec valkey valkey-cli -a "$VALKEY_PASSWORD" --no-auth-warning HGETALL sub:{IMSI}` | Valkey にデータ投入（テストベクター対象 IMSI も未登録なら 404 → `VECTOR_IMSI_NOT_FOUND` で Reject される。r3改訂） |
 | Ki/OPc 不一致 | eapaka_test のパラメータと Valkey 登録値を比較 | 値を統一 |
 | ポリシー設定 | `docker compose exec valkey valkey-cli -a "$VALKEY_PASSWORD" --no-auth-warning HGETALL policy:{IMSI}` | ポリシー修正 |
 
@@ -444,8 +444,8 @@ radclient -x -r 1 -t 3 127.0.0.1:1812 status TESTSECRET123 < /tmp/status.attrs
 
 - **テストベクターモード**（`TEST_VECTOR_ENABLED=true`）で実行
 - 全シナリオで `config_testvector.yaml` を使用（IMSI 003 も AMF `B9B9` になるため。`config_testvector_imsi003.yaml` は実計算モード専用。r2改訂）
-- テストベクター対象 IMSI（`00101` 始まり）は Valkey 未登録でもベクターが生成されるため、未登録 IMSI のテストにはテストベクター対象外の IMSI（`001029999999999`）を使う
-- テスト実行前にテストデータ（加入者・クライアント・ポリシー）を Valkey に投入する必要がある
+- 未登録 IMSI のテスト（`reject_imsi_not_found.yaml`）にはテストベクター対象外の IMSI（`001029999999999`）を使う。テストベクター対象 IMSI（`00101` 始まり）も未登録なら同じく 404 になる（r3改訂）
+- テスト実行前にテストデータ（加入者・クライアント・ポリシー）を Valkey に投入する必要がある。テストベクター対象 IMSI も加入者データ（`sub:{IMSI}`）の登録が必須（Ki/OPc/AMF の登録値は使われず、`sqn` だけを使う）。T-03 の事前準備（test_subscriber_data_scripts）で登録される
 - G1〜G7 は AI 自動実行可能、G8（PLMN）は環境変更を伴い、G9（障害系）は人間介在が必要
 
 ### 9.2 T-04 擬似 E2E テストでの利用パターン
@@ -467,7 +467,7 @@ radclient -x -r 1 -t 3 127.0.0.1:1812 status TESTSECRET123 < /tmp/status.attrs
 
 ### 9.4 aka-only-server（接続方式01）相手での利用パターン（r2追記）
 
-- 対象は T-03 G10（INT-GW-AKAONLY-001〜015）と T-04 E2E-301〜316。事前準備・設定例・実行手順は T-03 (r8) セクション5.10 を参照
+- 対象は T-03 G10（INT-GW-AKAONLY-001〜015）と T-04 E2E-301〜316。事前準備・設定例・実行手順は T-03 (r9) セクション5.10 を参照
 - SIM パラメータ（Ki/OPc、AMF `8000`）は aka-only-server 側に登録し、eapaka_test の `sim.ki` / `sim.opc` / `sim.amf` をそれに合わせる（PoC の Valkey には `sub:` を登録しない。ポリシーは登録が必要）
 - `identity.realm` は PLMN に合わせる（PLMN 44010 なら `wlan.mnc010.mcc440.3gppnetwork.org`）
 - SQN ストアは config の `sim.imsi` をキーにするため、IMSI ごと・用途（通常 / 再同期）ごとに config と `sqn_store.path` を分ける
@@ -482,3 +482,4 @@ radclient -x -r 1 -t 3 127.0.0.1:1812 status TESTSECRET123 < /tmp/status.attrs
 |:----:|:-----|:-----|
 | r1 | 2026-02-24 | 初版作成 |
 | r2 | 2026-10-04 | Vector Gateway 接続方式01（aka-only-server）対応: 6.5「IND と再同期（aka-only-server 相手の場合）」・9.4「aka-only-server 相手での利用パターン」を追加、3.5 に AKA' の `net_name` は AT_KDF_INPUT が優先される旨を追記、4.3 の INT-GW-PLMN-010 の前提を `441999:02` に変更、8.3 に再同期不発の行を追加、1.2/1.3 を更新。テストベクターモードの実動作（2026-10-04 確認）に合わせて修正: 3.2 にテストベクターモードの動作（Ki/OPc/AMF は Test Set 1 固定・AMF `B9B9`、`sub:{IMSI}` は SQN 管理のみ）を追記し、IMSI 003 のケースもテストベクターモードでは `config_testvector.yaml` を使い `config_testvector_imsi003.yaml` は実計算モード専用とした（1.3・3.3・4.3・5.4・6.3・7.1・7.2・8.1・8.2・9.1・9.2）。4.3 で `reject_imsi_not_found.yaml` の IMSI をテストベクター対象外の `001029999999999` に変更した旨と、`mismatch_strict_fail.yaml` は現実装では IMSI 未登録で Reject になり方式ミスマッチを検証できない旨を追記。Valkey 操作を `valkey-cli -a "$VALKEY_PASSWORD" --no-auth-warning` 形式に統一、`EAP_RESYNC` を `EAP_RESYNC_CHALLENGE` に修正 |
+| r3 | 2026-10-04 | テストベクターモードでも加入者登録を必須にした Vector API の実装修正の反映: 3.2 のテストベクターモードの動作を修正（テストベクター対象の IMSI も `sub:{IMSI}` の登録が必要で未登録なら 404。既定 SQN へのフォールバック・`sqn` だけの書き込みは廃止）。4.3 `reject_imsi_not_found.yaml`（テストベクター対象外の IMSI）は引き続き 404 を期待する旨を追記。8.1 の加入者データ未登録の行、9.1 の未登録 IMSI・テストデータ投入の記述を修正。9.4 の T-03 参照を r9 に更新。`testdata/cases/reject_imsi_not_found.yaml`・`policy_not_found_testvector.yaml` のコメントを更新 |

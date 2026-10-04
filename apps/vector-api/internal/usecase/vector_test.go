@@ -1,18 +1,14 @@
 package usecase
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"log/slog"
-	"strings"
 	"testing"
 
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-api/internal/config"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-api/internal/dto"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-api/internal/milenage"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-api/internal/store"
-	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/logging"
 	"go.uber.org/mock/gomock"
 )
 
@@ -119,55 +115,33 @@ func TestGenerateVector_TestMode(t *testing.T) {
 	}
 }
 
-func TestGenerateVector_TestMode_FallbackDefaultSQN(t *testing.T) {
+func TestGenerateVector_TestMode_SubscriberNotFound(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	uc, mockRepo, mockCalc, mockSQNMgr, _, _, mockTestVP := setupUseCase(ctrl)
+	uc, mockRepo, _, _, _, _, mockTestVP := setupUseCase(ctrl)
 
-	// Valkeyに加入者なし → デフォルトSQNにフォールバック
+	// テストモードでも加入者登録は必須 → 未登録なら404相当のエラー
 	mockTestVP.EXPECT().IsTestIMSI(testIMSI).Return(true)
-	mockTestVP.EXPECT().GetTestCryptoParams().Return(testKi, testOPc, testAMF)
-	mockTestVP.EXPECT().GetDefaultSQN().Return(testDefaultSQN)
 	mockRepo.EXPECT().Get(gomock.Any(), testIMSI).Return(nil, nil)
-	mockSQNMgr.EXPECT().Increment(testDefaultSQN).Return(testDefaultSQN+0x20, nil)
-	mockCalc.EXPECT().GenerateVector(testKi, testOPc, testAMF, testDefaultSQN+0x20).Return(dummyVector(), nil)
-	mockSQNMgr.EXPECT().FormatHex(testDefaultSQN + 0x20).Return("ff9bb4d0b627")
-	mockRepo.EXPECT().UpdateSQN(gomock.Any(), testIMSI, "ff9bb4d0b627").Return(nil)
 
-	req := &dto.VectorRequest{IMSI: testIMSI}
-	resp, err := uc.GenerateVector(context.Background(), req)
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp == nil {
-		t.Fatal("expected non-nil response")
+	_, err := uc.GenerateVector(context.Background(), &dto.VectorRequest{IMSI: testIMSI})
+	if !errors.Is(err, ErrSubscriberNotFound) {
+		t.Errorf("expected ErrSubscriberNotFound, got: %v", err)
 	}
 }
 
 func TestGenerateVector_TestMode_ValkeyError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	uc, mockRepo, mockCalc, mockSQNMgr, _, _, mockTestVP := setupUseCase(ctrl)
+	uc, mockRepo, _, _, _, _, mockTestVP := setupUseCase(ctrl)
 
-	// Valkeyエラー → デフォルトSQNにフォールバック
+	// Valkeyエラーは通常モードと同じく接続エラー（500相当）
 	mockTestVP.EXPECT().IsTestIMSI(testIMSI).Return(true)
-	mockTestVP.EXPECT().GetTestCryptoParams().Return(testKi, testOPc, testAMF)
-	mockTestVP.EXPECT().GetDefaultSQN().Return(testDefaultSQN)
 	mockRepo.EXPECT().Get(gomock.Any(), testIMSI).Return(nil, errors.New("connection refused"))
-	mockSQNMgr.EXPECT().Increment(testDefaultSQN).Return(testDefaultSQN+0x20, nil)
-	mockCalc.EXPECT().GenerateVector(testKi, testOPc, testAMF, testDefaultSQN+0x20).Return(dummyVector(), nil)
-	mockSQNMgr.EXPECT().FormatHex(testDefaultSQN + 0x20).Return("ff9bb4d0b627")
-	mockRepo.EXPECT().UpdateSQN(gomock.Any(), testIMSI, "ff9bb4d0b627").Return(nil)
 
-	req := &dto.VectorRequest{IMSI: testIMSI}
-	resp, err := uc.GenerateVector(context.Background(), req)
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp == nil {
-		t.Fatal("expected non-nil response")
+	_, err := uc.GenerateVector(context.Background(), &dto.VectorRequest{IMSI: testIMSI})
+	if !errors.Is(err, ErrValkeyConnection) {
+		t.Errorf("expected ErrValkeyConnection, got: %v", err)
 	}
 }
 
@@ -219,18 +193,13 @@ func TestGenerateVector_TestMode_CalcError(t *testing.T) {
 	// ベクター生成失敗
 	mockTestVP.EXPECT().IsTestIMSI(testIMSI).Return(true)
 	mockTestVP.EXPECT().GetTestCryptoParams().Return(testKi, testOPc, testAMF)
-	mockTestVP.EXPECT().GetDefaultSQN().Return(testDefaultSQN)
-	mockRepo.EXPECT().Get(gomock.Any(), testIMSI).Return(nil, nil)
+	mockRepo.EXPECT().Get(gomock.Any(), testIMSI).Return(&store.Subscriber{IMSI: testIMSI, SQN: "ff9bb4d0b607"}, nil)
+	mockSQNMgr.EXPECT().ParseHex("ff9bb4d0b607").Return(testDefaultSQN, nil)
 	mockSQNMgr.EXPECT().Increment(testDefaultSQN).Return(testDefaultSQN+0x20, nil)
 	mockCalc.EXPECT().GenerateVector(testKi, testOPc, testAMF, testDefaultSQN+0x20).
 		Return(nil, errors.New("calculation failed"))
 
-	req := &dto.VectorRequest{IMSI: testIMSI}
-	_, err := uc.GenerateVector(context.Background(), req)
-
-	if err == nil {
-		t.Fatal("expected error")
-	}
+	_, err := uc.GenerateVector(context.Background(), &dto.VectorRequest{IMSI: testIMSI})
 	if !errors.Is(err, ErrMilenageCalculation) {
 		t.Errorf("expected ErrMilenageCalculation, got: %v", err)
 	}
@@ -239,30 +208,16 @@ func TestGenerateVector_TestMode_CalcError(t *testing.T) {
 func TestGenerateVector_TestMode_SQNParseError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	uc, mockRepo, mockCalc, mockSQNMgr, _, _, mockTestVP := setupUseCase(ctrl)
+	uc, mockRepo, _, mockSQNMgr, _, _, mockTestVP := setupUseCase(ctrl)
 
-	// Valkey上に加入者ありだがSQNパースエラー → デフォルトSQNにフォールバック
+	// SQNパースエラーは通常モードと同じくエラー（フォールバックしない）
 	mockTestVP.EXPECT().IsTestIMSI(testIMSI).Return(true)
 	mockTestVP.EXPECT().GetTestCryptoParams().Return(testKi, testOPc, testAMF)
-	mockTestVP.EXPECT().GetDefaultSQN().Return(testDefaultSQN)
-	mockRepo.EXPECT().Get(gomock.Any(), testIMSI).Return(&store.Subscriber{
-		IMSI: testIMSI,
-		SQN:  "INVALID_HEX",
-	}, nil)
+	mockRepo.EXPECT().Get(gomock.Any(), testIMSI).Return(&store.Subscriber{IMSI: testIMSI, SQN: "INVALID_HEX"}, nil)
 	mockSQNMgr.EXPECT().ParseHex("INVALID_HEX").Return(uint64(0), errors.New("parse error"))
-	mockSQNMgr.EXPECT().Increment(testDefaultSQN).Return(testDefaultSQN+0x20, nil)
-	mockCalc.EXPECT().GenerateVector(testKi, testOPc, testAMF, testDefaultSQN+0x20).Return(dummyVector(), nil)
-	mockSQNMgr.EXPECT().FormatHex(testDefaultSQN + 0x20).Return("ff9bb4d0b627")
-	mockRepo.EXPECT().UpdateSQN(gomock.Any(), testIMSI, "ff9bb4d0b627").Return(nil)
 
-	req := &dto.VectorRequest{IMSI: testIMSI}
-	resp, err := uc.GenerateVector(context.Background(), req)
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp == nil {
-		t.Fatal("expected non-nil response")
+	if _, err := uc.GenerateVector(context.Background(), &dto.VectorRequest{IMSI: testIMSI}); err == nil {
+		t.Fatal("expected error for invalid SQN")
 	}
 }
 
@@ -271,28 +226,22 @@ func TestGenerateVector_TestMode_SQNPersistError(t *testing.T) {
 
 	uc, mockRepo, mockCalc, mockSQNMgr, _, _, mockTestVP := setupUseCase(ctrl)
 
-	// SQN書き戻し失敗 → エラーにはならずログ警告のみ
+	// SQN書き戻し失敗は通常モードと同じく接続エラー（ベクターは返さない）
 	mockTestVP.EXPECT().IsTestIMSI(testIMSI).Return(true)
 	mockTestVP.EXPECT().GetTestCryptoParams().Return(testKi, testOPc, testAMF)
-	mockRepo.EXPECT().Get(gomock.Any(), testIMSI).Return(&store.Subscriber{
-		IMSI: testIMSI,
-		SQN:  "ff9bb4d0b607",
-	}, nil)
+	mockRepo.EXPECT().Get(gomock.Any(), testIMSI).Return(&store.Subscriber{IMSI: testIMSI, SQN: "ff9bb4d0b607"}, nil)
 	mockSQNMgr.EXPECT().ParseHex("ff9bb4d0b607").Return(testDefaultSQN, nil)
 	mockSQNMgr.EXPECT().Increment(testDefaultSQN).Return(testDefaultSQN+0x20, nil)
 	mockCalc.EXPECT().GenerateVector(testKi, testOPc, testAMF, testDefaultSQN+0x20).Return(dummyVector(), nil)
 	mockSQNMgr.EXPECT().FormatHex(testDefaultSQN + 0x20).Return("ff9bb4d0b627")
 	mockRepo.EXPECT().UpdateSQN(gomock.Any(), testIMSI, "ff9bb4d0b627").Return(errors.New("persist failed"))
 
-	req := &dto.VectorRequest{IMSI: testIMSI}
-	resp, err := uc.GenerateVector(context.Background(), req)
-
-	// SQN書き戻し失敗はエラーにならない（ログ警告のみ）
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	resp, err := uc.GenerateVector(context.Background(), &dto.VectorRequest{IMSI: testIMSI})
+	if !errors.Is(err, ErrValkeyConnection) {
+		t.Errorf("expected ErrValkeyConnection, got: %v", err)
 	}
-	if resp == nil {
-		t.Fatal("expected non-nil response")
+	if resp != nil {
+		t.Error("expected nil response when SQN persist fails")
 	}
 }
 
@@ -304,15 +253,35 @@ func TestGenerateVector_TestMode_IncrementOverflow(t *testing.T) {
 	// テストモードでSQN Incrementオーバーフロー
 	mockTestVP.EXPECT().IsTestIMSI(testIMSI).Return(true)
 	mockTestVP.EXPECT().GetTestCryptoParams().Return(testKi, testOPc, testAMF)
-	mockTestVP.EXPECT().GetDefaultSQN().Return(testDefaultSQN)
-	mockRepo.EXPECT().Get(gomock.Any(), testIMSI).Return(nil, nil)
-	mockSQNMgr.EXPECT().Increment(testDefaultSQN).Return(uint64(0), errors.New("overflow"))
+	mockRepo.EXPECT().Get(gomock.Any(), testIMSI).Return(&store.Subscriber{IMSI: testIMSI, SQN: "ffffffffffe0"}, nil)
+	mockSQNMgr.EXPECT().ParseHex("ffffffffffe0").Return(uint64(0xffffffffffe0), nil)
+	mockSQNMgr.EXPECT().Increment(uint64(0xffffffffffe0)).Return(uint64(0), errors.New("overflow"))
 
-	req := &dto.VectorRequest{IMSI: testIMSI}
-	_, err := uc.GenerateVector(context.Background(), req)
-
+	_, err := uc.GenerateVector(context.Background(), &dto.VectorRequest{IMSI: testIMSI})
 	if !errors.Is(err, ErrSQNOverflow) {
 		t.Errorf("expected ErrSQNOverflow, got: %v", err)
+	}
+}
+
+func TestGenerateVector_TestMode_IgnoresSubscriberKeys(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	uc, mockRepo, mockCalc, mockSQNMgr, _, _, mockTestVP := setupUseCase(ctrl)
+
+	// 加入者データの Ki/OPc/AMF は使わず、テスト用の固定値で計算する（SQN は加入者データを使う）
+	sub := validSubscriber()
+	sub.IMSI = testIMSI
+	mockTestVP.EXPECT().IsTestIMSI(testIMSI).Return(true)
+	mockTestVP.EXPECT().GetTestCryptoParams().Return(testKi, testOPc, testAMF)
+	mockRepo.EXPECT().Get(gomock.Any(), testIMSI).Return(sub, nil)
+	mockSQNMgr.EXPECT().ParseHex(sub.SQN).Return(uint64(0x20), nil)
+	mockSQNMgr.EXPECT().Increment(uint64(0x20)).Return(uint64(0x40), nil)
+	mockCalc.EXPECT().GenerateVector(testKi, testOPc, testAMF, uint64(0x40)).Return(dummyVector(), nil)
+	mockSQNMgr.EXPECT().FormatHex(uint64(0x40)).Return("000000000040")
+	mockRepo.EXPECT().UpdateSQN(gomock.Any(), testIMSI, "000000000040").Return(nil)
+
+	if _, err := uc.GenerateVector(context.Background(), &dto.VectorRequest{IMSI: testIMSI}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -738,66 +707,5 @@ func TestGenerateVector_Resync_Success(t *testing.T) {
 	}
 	if resp == nil {
 		t.Fatal("expected non-nil response")
-	}
-}
-
-// TestGenerateVector_TestMode_LogIMSIMasked はテストモードのログでIMSIがマスクされることを確認する
-func TestGenerateVector_TestMode_LogIMSIMasked(t *testing.T) {
-	ctrl := gomock.NewController(t)
-
-	uc, mockRepo, mockCalc, mockSQNMgr, _, _, mockTestVP := setupUseCase(ctrl)
-	uc.cfg.LogMaskIMSI = true
-
-	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
-	defer slog.SetDefault(prev)
-
-	// 加入者なし（TEST_SQN_FALLBACK）かつSQN書き戻し失敗（TEST_SQN_PERSIST_ERR）
-	mockTestVP.EXPECT().IsTestIMSI(testIMSI).Return(true)
-	mockTestVP.EXPECT().GetTestCryptoParams().Return(testKi, testOPc, testAMF)
-	mockTestVP.EXPECT().GetDefaultSQN().Return(testDefaultSQN)
-	mockRepo.EXPECT().Get(gomock.Any(), testIMSI).Return(nil, nil)
-	mockSQNMgr.EXPECT().Increment(testDefaultSQN).Return(testDefaultSQN+0x20, nil)
-	mockCalc.EXPECT().GenerateVector(testKi, testOPc, testAMF, testDefaultSQN+0x20).Return(dummyVector(), nil)
-	mockSQNMgr.EXPECT().FormatHex(testDefaultSQN + 0x20).Return("ff9bb4d0b627")
-	mockRepo.EXPECT().UpdateSQN(gomock.Any(), testIMSI, "ff9bb4d0b627").Return(errors.New("valkey down"))
-
-	if _, err := uc.GenerateVector(context.Background(), &dto.VectorRequest{IMSI: testIMSI}); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	logs := buf.String()
-	for _, eventID := range []string{"TEST_SQN_FALLBACK", "TEST_SQN_PERSIST_ERR"} {
-		if !strings.Contains(logs, `"event_id":"`+eventID+`"`) {
-			t.Errorf("%s not logged: %s", eventID, logs)
-		}
-	}
-	if strings.Contains(logs, testIMSI) {
-		t.Errorf("log contains unmasked IMSI: %s", logs)
-	}
-	if !strings.Contains(logs, `"imsi":"`+logging.MaskIMSI(testIMSI, true)+`"`) {
-		t.Errorf("masked IMSI not found in log: %s", logs)
-	}
-}
-
-func TestVectorUseCase_maskIMSI(t *testing.T) {
-	const imsi = "440101234567890"
-	tests := []struct {
-		name string
-		cfg  *config.Config
-		want string
-	}{
-		{"masking enabled", &config.Config{LogMaskIMSI: true}, "440101********0"},
-		{"masking disabled", &config.Config{LogMaskIMSI: false}, imsi},
-		{"nil config masks by default", nil, "440101********0"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			uc := &VectorUseCase{cfg: tt.cfg}
-			if got := uc.maskIMSI(imsi); got != tt.want {
-				t.Errorf("maskIMSI() = %q, want %q", got, tt.want)
-			}
-		})
 	}
 }

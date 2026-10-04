@@ -2,6 +2,8 @@
 # config: config_testvector.yaml
 # 前提: IMSI 001010000000007 のポリシーが未登録であること
 #   policy:001010000000007 キーが存在しないこと
+#   加入者 sub:001010000000007 は登録済みであること（テストベクターモードでも必須。
+#   未登録だとベクター取得が 404 になり VECTOR_IMSI_NOT_FOUND で Reject される）
 # 動作: ポリシー取得失敗 → AUTH_POLICY_NOT_FOUND → Reject
 version: 1
 name: policy_not_found_testvector

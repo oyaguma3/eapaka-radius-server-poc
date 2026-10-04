@@ -46,8 +46,6 @@ type TestVectorProvider interface {
 	GetTestVector(imsi string) (*milenage.Vector, error)
 	// GetTestCryptoParams はテスト用の暗号パラメータを返す（Ki, OPc, AMF）
 	GetTestCryptoParams() (ki, opc, amf []byte)
-	// GetDefaultSQN はテストベクターのデフォルトSQN値を返す
-	GetDefaultSQN() uint64
 }
 
 // VectorUseCaseInterface はベクター生成ユースケースのインターフェース。
