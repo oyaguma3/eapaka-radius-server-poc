@@ -1,4 +1,4 @@
-# E-03 共通ライブラリ(pkg)設計書 (r6)
+# E-03 共通ライブラリ(pkg)設計書 (r7)
 
 ## 1. 概要
 
@@ -750,7 +750,7 @@ func (m *Masker) IsEnabled() bool
 func ParseLevel(s string) slog.Level
 ```
 
-**利用箇所:** Auth Serverのロガー初期化（`apps/auth-server/main.go`。`slog.HandlerOptions.Level` に `logging.ParseLevel(cfg.LogLevel)` を渡す）。Vector Gateway / Vector API は各 `main.go` の `initLogger` で独自に変換しており、現時点では本関数を使っていない（D-04 §4.6）。
+**利用箇所:** Auth Server / Vector Gateway / Vector API のロガー初期化（`apps/auth-server/main.go`、`apps/vector-gateway/main.go` と `apps/vector-api/main.go` の `initLogger`。いずれも `slog.HandlerOptions.Level` に `logging.ParseLevel(cfg.LogLevel)` を渡す）。このため3コンポーネントとも `LOG_LEVEL` の解釈（大文字小文字を区別しない、前後の空白を無視、`WARNING` も `WARN`、未知の値は `INFO`）は同じである（D-04 §4.6）。Acct Server は `LOG_LEVEL` に対応しておらず使っていない。
 
 ### 5.7 使用例
 
@@ -1259,3 +1259,4 @@ func (h *GatewayHandler) handleBackendError(c *gin.Context, err error) {
 | r4 | 2026-10-04 | ログのIMSIマスク漏れ修正に伴う pkg/logging の公開API追加の反映: §5.5に `MaskUserName()`（User-Name（EAP Identity）の "@" より前をマスクし realm を残す）と `Masker.UserName()` を追加し利用箇所を追記、§5.6に使用例を追加、§2.1 / §2.2 / §5.1を更新。§1.3関連ドキュメント参照版数更新（D-04 r17→r20） |
 | r5 | 2026-10-04 | ポリシーの `nas_id` で `"*"` を任意の NAS に一致させた Auth Server の実装修正に伴う pkg/model のコメント更新の反映: §6.4 の `PolicyRule` を実装（`NasID` / `AllowedSSIDs` / `VlanID` / `SessionTimeout`、`NasID` のコメント「`"*"` 単独で任意のNASに一致。それ以外は完全一致」）に合わせて修正（r2 で記載した `SSID` / `Action` / `TimeMin` / `TimeMax` は実装に存在しないため削除）。PolicyRule JSONサンプルを実装の形式に修正し、評価仕様は D-02 セクション2.C を参照する旨を追記。関連ドキュメントの D-02 参照版数を更新（r11→r15） |
 | r6 | 2026-10-04 | auth-server の LOG_LEVEL 対応に伴う pkg/logging の公開API追加の反映: §5.6 ログレベル変換を新設し `ParseLevel()`（`pkg/logging/level.go`。DEBUG / INFO / WARN（WARNING）/ ERROR を大文字小文字を区別せず変換、前後の空白を除去、未知の値・空文字は INFO）と利用箇所（Auth Server のロガー初期化。Vector Gateway / Vector API は未使用）を追加、旧 §5.6 使用例を §5.7 に繰り下げてロガー初期化の例を追加、§2.1 ディレクトリ構造に `level.go`、§2.2 パッケージ一覧・§5.1 責務に `ParseLevel()` / ログレベル変換を追加。§1.3 参照版数更新（D-04 r20→r23） |
+| r7 | 2026-10-04 | vector-api / vector-gateway のログレベル変換を `pkg/logging.ParseLevel` に統一した実装修正の反映: §5.6 の利用箇所に Vector Gateway / Vector API（各 `main.go` の `initLogger`）を追加し、「Vector Gateway / Vector API は独自に変換しており本関数を使っていない」旨の記述を削除（3コンポーネントで `LOG_LEVEL` の解釈が同じになった。`WARNING` も `WARN`） |
