@@ -1,4 +1,4 @@
-# D-10 Acct Server詳細設計書 (r10)
+# D-10 Acct Server詳細設計書 (r12)
 
 ## ■セクション1: 概要
 
@@ -23,16 +23,16 @@
 
 | No. | ドキュメント | 参照内容 |
 |-----|-------------|---------|
-| D-01 | ミニPC版設計仕様書 (r10) | システム構成、パッケージ利用マップ |
+| D-01 | ミニPC版設計仕様書 (r16) | システム構成、パッケージ利用マップ |
 | D-02 | Valkeyデータ設計仕様書 (r13) | データ構造、キー設計、Go構造体 |
 | D-03 | Vector-APIインターフェース定義書およびEAP-AKAステートマシン設計書 (r6) | 認証フロー |
-| D-04 | ログ仕様設計書 (r25) | event_id定義、ログフォーマット、IMSIマスキング |
-| D-06 | エラーハンドリング詳細設計書 (r13) | エラー分類、タイムアウト、リトライ戦略 |
+| D-04 | ログ仕様設計書 (r31) | event_id定義、ログフォーマット、IMSIマスキング |
+| D-06 | エラーハンドリング詳細設計書 (r17) | エラー分類、タイムアウト、リトライ戦略 |
 | D-11 | Vector API詳細設計書 (r7) | AKA認証ベクター生成 |
-| D-08 | インフラ設定・運用設計書 (r17) | Docker Compose設定、環境変数 |
-| D-09 | Auth Server詳細設計書 (r11) | セッション作成処理（Class属性設定） |
+| D-08 | インフラ設定・運用設計書 (r19) | Docker Compose設定、環境変数 |
+| D-09 | Auth Server詳細設計書 (r17) | セッション作成処理（Class属性設定） |
 | E-02 | コーディング規約（簡易版） (r3) | コーディング規約 |
-| E-03 | 共通ライブラリ(pkg)設計書 (r4) | 共通ライブラリ（pkg） |
+| E-03 | 共通ライブラリ(pkg)設計書 (r9) | 共通ライブラリ（pkg） |
 
 ### 1.4 PoC対象外機能
 
@@ -112,7 +112,8 @@ apps/acct-server/
     │   ├── handler_test.go           # handler.goのテスト
     │   ├── secret.go                 # radius.SecretSource実装
     │   ├── secret_test.go            # secret.goのテスト
-    │   └── server.go                 # PacketServer設定・起動・シャットダウン
+    │   ├── server.go                 # PacketServer設定（InsecureSkipVerify / ErrorLog）・起動・シャットダウン
+    │   └── server_test.go            # server.goのテスト（ループバックのUDPでPacketServerを動かす）
     ├── session/
     │   ├── errors.go                 # sessionパッケージエラー定義
     │   ├── identifier.go             # IMSI取得ロジック
@@ -182,7 +183,7 @@ main.go
 | `acct` | Accounting処理ロジック（Start/Interim/Stop/On/Off）、インターフェース定義 | `Processor`, `DuplicateDetector` |
 | `session` | セッション状態管理、IMSI取得、インターフェース定義 | `Manager`, `IdentifierResolver` |
 | `store` | Valkeyアクセス抽象化（クライアント、セッション、重複検出、変換） | `ValkeyClient`, `ClientStore`, `SessionStore` |
-| `logging`（共通ライブラリ `pkg/logging`） | IMSIマスキング処理、`LOG_LEVEL` の変換（`main.go` のロガー初期化） | `MaskIMSI()`, `MaskUserName()`, `ParseLevel()` |
+| `logging`（共通ライブラリ `pkg/logging`） | IMSIマスキング処理、`LOG_LEVEL` の変換（`main.go` のロガー初期化）、RADIUSライブラリのログのJSON化（`server.go` の `PacketServer.ErrorLog`） | `MaskIMSI()`, `MaskUserName()`, `ParseLevel()`, `NewRADIUSLibraryLogger()` |
 | `mocks` | テスト用モック（acct、session、store） | 各パッケージのモック実装 |
 
 ### 2.4 外部パッケージ依存
@@ -257,11 +258,13 @@ ENTRYPOINT ["/usr/local/bin/acct-server"]
 | `REDIS_HOST` | Yes | - | Valkeyホスト名 |
 | `REDIS_PORT` | Yes | - | Valkeyポート番号 |
 | `REDIS_PASS` | Yes | - | Valkeyパスワード |
-| `RADIUS_SECRET` | No | - | デフォルトShared Secret（フォールバック用） |
+| `RADIUS_SECRET` | No | （空） | デフォルトShared Secret（フォールバック用。任意。空を推奨）。クライアント登録（`client:{IP}`）のない送信元IPからのパケットにも使う。空ならフォールバックは無効（§4.2） |
 | `LISTEN_ADDR` | No | `:1813` | UDPリッスンアドレス |
 | `LOG_LEVEL` | No | `INFO` | ログレベル（`DEBUG` / `INFO` / `WARN` / `ERROR`。大文字小文字を区別しない。未知の値は `INFO`）。`pkg/logging.ParseLevel` で変換する（§10.3、D-04 §4.6） |
 | `LOG_MASK_IMSI` | No | `true` | IMSIマスキング有効化 |
 > **注記:** 環境変数名 `RADIUS_SECRET` はシステム全体で統一されている。D-01およびD-08の `.env` ファイルでも同名を使用すること。
+
+> **注記（`RADIUS_SECRET` は任意。空を推奨）:** 送信元IPの共有シークレットは、Admin TUIのクライアント登録（`client:{IP}`）で送信元IPごとに設定する。`RADIUS_SECRET` に値を設定すると、登録のない送信元IPからのパケットも、その値を知っていれば受け付ける（フォールバック。Valkeyエラー時・送信元IP抽出失敗時もこの値を使う。§4.2）。インターネットに公開するサーバー（VPS 等）では空のままにすること。空なら、登録のない送信元IPのパケットは `RADIUS_NO_SECRET`（WARN）を出して破棄される（応答しない）。値を設定するのは、閉じた LAN で AP の送信元IPを登録せずに試す場合に限る。Docker Compose は `RADIUS_SECRET: ${RADIUS_SECRET:-}` で渡すため、`.env` で未設定でも警告は出ない（D-08）。設定されているかどうかは起動ログの `radius_secret_fallback` と WARN で確認できる（§10.3）。Auth Server と同じ扱いである（D-09 §3.1）。
 
 ### 3.2 設定構造体
 
@@ -299,6 +302,8 @@ func Load() (*Config, error) {
 }
 ```
 
+> **注記（`RadiusSecret`）:** `RADIUS_SECRET` は `required` を付けない任意の設定で、未設定・空文字のときはフォールバックが無効になる（`server.NewSecretSource` に空文字を渡すと、登録のない送信元IPのパケットは破棄される。§4.2）。インターネットに公開するサーバーでは空にする（§3.1 注記）。
+
 ### 3.3 接続タイムアウト設定
 
 D-01で定義された値を使用する。
@@ -326,13 +331,18 @@ D-01で定義された値を使用する。
                     ┌───────────────┐
                     │ Secret解決    │ ← client:{IP} or 環境変数
                     └───────┬───────┘
-                            │
+                            │不明 → パケット破棄（RADIUS_NO_SECRET）
                             ▼
                     ┌───────────────┐
-                    │ Authenticator │
+                    │ デコード      │ ← layeh.com/radius（PacketServer内部）
+                    └───────┬───────┘
+                            │失敗 → パケット破棄（RADIUS_LIB_ERR）
+                            ▼
+                    ┌───────────────┐
+                    │ Authenticator │ ← ハンドラー（Accounting-Request）
                     │ 検証          │
                     └───────┬───────┘
-                            │NG → パケット破棄（応答なし）
+                            │NG → パケット破棄（RADIUS_AUTH_ERR。応答なし）
                             │OK
                             ▼
                     ┌───────────────┐
@@ -381,6 +391,12 @@ D-01で定義された値を使用する。
                     [応答送信]
 ```
 
+> **注記（パケットの認証とライブラリのログ）:**
+> - `internal/server/server.go` は `PacketServer` に `InsecureSkipVerify: true` と `ErrorLog: logging.NewRADIUSLibraryLogger()` を設定する（コードは §10.3。Auth Server と同じ。方針と理由は D-09 §4.3）。
+> - `layeh.com/radius` の `PacketServer` は、既定（`InsecureSkipVerify` が `false`）では、ハンドラーに渡す前に Accounting-Request の Request Authenticator を検証し、一致しなければテキスト1行（`radius: packet validation failed; bad secret`）を標準エラーに出すだけで捨てる。未知の Code のパケットも同様に捨てる。このため、ライブラリの検証は使わず、Request Authenticator はハンドラーの `VerifyAccountingAuthenticator`（§4.3）で検証し、失敗したら `RADIUS_AUTH_ERR`（`trace_id`, `src_ip`）を出して破棄する（応答なし）。検証に失敗したパケットを処理せず応答しない点は、ライブラリで検証していたときと変わらない。
+> - ライブラリは、共有シークレットの解決（§4.2）→ パケットのデコード の順に処理し、デコードに失敗したパケット（形の壊れたパケット）は `RADIUS_LIB_ERR`（WARN。`error` にライブラリのメッセージ。`src_ip` なし）を出して破棄する。シークレットが決まらずに捨てたときの `RADIUS_LIB_ERR` は DEBUG である（同じパケットで `RADIUS_NO_SECRET` 等が出ているため）。
+> - デコードに成功したパケットは Code を問わずハンドラーに届く。Accounting-Request / Status-Server 以外の Code（Access-Request、未知の Code 等）は `RADIUS_UNKNOWN_CODE`（`code`）を出して破棄する（§10.1）。Status-Server は Message-Authenticator を検証する（§4.7）。
+
 ### 4.2 Shared Secret解決
 
 Auth Serverと同一のロジックを使用する。
@@ -426,6 +442,12 @@ func (s *DynamicSecretSource) RADIUSSecret(ctx context.Context, remoteAddr net.A
 }
 ```
 
+> **注記（フォールバックの共有シークレット）:**
+> - `client:{IP}` → フォールバック（`RADIUS_SECRET`）→ なし の順で決まる。フォールバックを設定すると、クライアント登録のない送信元IPからのパケットも、その値を知っていれば受け付ける（フォールバック使用時のログはない）。送信元IPの抽出失敗時・Valkeyエラー時もフォールバックを使う。
+> - `RADIUS_SECRET` は任意で、空を推奨する（§3.1 注記）。空なら `nil` を返し、`layeh.com/radius` の `PacketServer` がパケットを破棄する（応答しない。ライブラリのログは DEBUG の `RADIUS_LIB_ERR`）。登録のない送信元IPでは `RADIUS_NO_SECRET`（WARN）が出る。これは未登録の送信元からのパケットで出る正常な動作であり、正規の AP で出ている場合はクライアント登録（AP の送信元IP）を確認する。
+> - Valkeyエラー時も、フォールバックが空なら `RADIUS_SECRET_ERR` を出してパケットを破棄する（応答しない。NAS は再送する）。送信元IPの抽出失敗時は WARN 以上のログを出さずに破棄する（DEBUG の `RADIUS_LIB_ERR` のみ）。
+> - フォールバックの設定の有無は起動ログの `radius_secret_fallback` と WARN で確認できる（§10.3）。
+
 ### 4.3 Request Authenticator検証
 
 Accounting-Requestの検証はRFC 2866に基づく。
@@ -436,39 +458,40 @@ Authenticator = MD5(Code + Identifier + Length + 16 zero octets + Request Attrib
 ```
 
 ```go
-// internal/radius/authenticator.go
+// internal/radius/authenticator.go（実装）
+// VerifyAccountingAuthenticator はAccounting-RequestのRequest Authenticatorを検証する（RFC 2866）。
+// 検証式: Authenticator = MD5(Code + ID + Length + 16 zero octets + Attributes + Secret)
 func VerifyAccountingAuthenticator(packet *radius.Packet, secret []byte) bool {
-    // パケットのAuthenticatorフィールドを検証
-    expected := calculateAccountingAuthenticator(packet, secret)
-    return hmac.Equal(packet.Authenticator[:], expected)
-}
+	// パケットをバイト列化
+	data, err := packet.MarshalBinary()
+	if err != nil {
+		return false
+	}
 
-func calculateAccountingAuthenticator(packet *radius.Packet, secret []byte) []byte {
-    h := md5.New()
-    
-    // Code (1 byte)
-    h.Write([]byte{byte(packet.Code)})
-    
-    // Identifier (1 byte)
-    h.Write([]byte{packet.Identifier})
-    
-    // Length (2 bytes)
-    length := make([]byte, 2)
-    binary.BigEndian.PutUint16(length, uint16(len(packet.Encode())))
-    h.Write(length)
-    
-    // 16 zero octets
-    h.Write(make([]byte, 16))
-    
-    // Request Attributes
-    h.Write(packet.Attributes.Encode())
-    
-    // Secret
-    h.Write(secret)
-    
-    return h.Sum(nil)
+	if len(data) < 20 {
+		return false
+	}
+
+	// 元のAuthenticator（オフセット4-19）を保存
+	var origAuth [16]byte
+	copy(origAuth[:], data[4:20])
+
+	// Authenticatorフィールドを16個のゼロバイトに置換
+	copy(data[4:20], make([]byte, 16))
+
+	// MD5(Code + ID + Length + 16 zero + Attributes + Secret)
+	h := md5.New()
+	h.Write(data)
+	h.Write(secret)
+	expected := h.Sum(nil)
+
+	return subtle.ConstantTimeCompare(origAuth[:], expected) == 1
 }
 ```
+
+> **注記:**
+> - `Packet.MarshalBinary()` は受信した Authenticator をそのまま使い、属性も受信した順で書き戻すため、受信したバイト列で検証するのと等価である。
+> - ライブラリは Request Authenticator を検証しない（`InsecureSkipVerify: true`。§4.1 注記）ため、Accounting-Request の検証はこの関数だけで行う。共有シークレットが一致しない Accounting-Request は、ハンドラーが `RADIUS_AUTH_ERR`（WARN、`trace_id`, `src_ip`）を出して破棄する（応答なし）。
 
 ### 4.4 属性抽出
 
@@ -1521,12 +1544,12 @@ D-06で定義されたエラーハンドリングに基づく。
 
 | エラー種別 | 検出条件 | 対処 | RADIUS応答 | ログ |
 |-----------|---------|------|-----------|------|
-| パケットパース失敗 | 不正なRADIUS形式 | パケット破棄 | なし | なし（デコードは `layeh.com/radius` が行い、失敗時のログは出力しない） |
+| パケットパース失敗 | 不正なRADIUS形式（20バイト未満、長さ・属性の不整合等） | パケット破棄（`layeh.com/radius` がデコードに失敗し、ハンドラーに渡さない） | なし | WARN: `RADIUS_LIB_ERR`（`error`。`src_ip` なし） |
 | 属性抽出失敗 | Acct-Status-Typeなし、Accounting-On/Off以外でAcct-Session-Idなし | パケット破棄 | なし | WARN: `RADIUS_PARSE_ERR`（`reason`） |
-| Authenticator検証失敗 | 計算値不一致 | パケット破棄 | なし | WARN: `RADIUS_AUTH_ERR` |
+| Authenticator検証失敗 | Accounting-RequestのRequest Authenticatorの計算値不一致（共有シークレットの不一致等） | パケット破棄 | なし | WARN: `RADIUS_AUTH_ERR`（`src_ip`） |
 | Message-Authenticator検証失敗 | Status-ServerのMAC検証失敗 | パケット破棄 | なし | WARN: `RADIUS_AUTH_ERR` |
-| Shared Secret不明 | client:{IP}不在かつ環境変数未設定 | パケット破棄 | なし | WARN: `RADIUS_NO_SECRET` |
-| 未知のRADIUS Code | Accounting-Request / Status-Server以外 | パケット破棄 | なし | WARN: `RADIUS_UNKNOWN_CODE`（`code`） |
+| Shared Secret不明 | client:{IP}不在かつ環境変数未設定 | パケット破棄 | なし | WARN: `RADIUS_NO_SECRET`（ライブラリの DEBUG `RADIUS_LIB_ERR` も出る） |
+| 未知のRADIUS Code | Accounting-Request / Status-Server以外（Access-Request、未知のCode等） | パケット破棄 | なし | WARN: `RADIUS_UNKNOWN_CODE`（`code`） |
 | 未知のAcct-Status-Type | 1,2,3,7,8以外 | パケット破棄 | なし | WARN: `RADIUS_UNKNOWN_CODE`（`acct_status_type`） |
 | 応答送信失敗 | Accounting-Response / Status-Server応答の送信エラー | - | - | ERROR: `PKT_SEND_ERR` |
 
@@ -1617,10 +1640,11 @@ D-04で定義されたevent_idを使用する。
 | `DB_WRITE_ERR` | ERROR | Valkey書き込み失敗（セッション更新・停止マーク・セッション削除・インデックス削除） |
 | `PKT_SEND_ERR` | ERROR | Accounting-Response / Status-Server応答の送信失敗 |
 | `RADIUS_PARSE_ERR` | WARN | Accounting-Requestの属性抽出失敗 |
-| `RADIUS_AUTH_ERR` | WARN | Request Authenticator検証失敗、Status-ServerのMessage-Authenticator検証失敗 |
+| `RADIUS_AUTH_ERR` | WARN | Accounting-RequestのRequest Authenticator検証失敗（共有シークレットの不一致等）、Status-ServerのMessage-Authenticator検証失敗。いずれもパケット破棄・応答なし |
 | `RADIUS_SECRET_ERR` | WARN | Shared Secret解決時のValkey検索エラー |
 | `RADIUS_NO_SECRET` | WARN | Shared Secret不明 |
-| `RADIUS_UNKNOWN_CODE` | WARN | 未知のRADIUS Code / 未知のAcct-Status-Type |
+| `RADIUS_UNKNOWN_CODE` | WARN | 未知のRADIUS Code（Accounting-Request / Status-Server 以外。Access-Request を含む） / 未知のAcct-Status-Type |
+| `RADIUS_LIB_ERR` | WARN / DEBUG | RADIUSライブラリ（`layeh.com/radius`）のエラー（形の壊れたパケットのデコード失敗・受信エラーは WARN、共有シークレットが決まらずに破棄したときは DEBUG）。`error` のみ（`src_ip` なし） |
 | `ACCT_SESSION_NOT_FOUND` | WARN | Start時のClass属性なし、Start / Interim時のセッション不在（TTL超過を含む） |
 | `ACCT_DUPLICATE_START` | WARN | 重複Start |
 | `ACCT_DUPLICATE_INTERIM` | WARN | 重複Interim（直前に受信したInterimと同一値） |
@@ -1632,6 +1656,8 @@ D-04で定義されたevent_idを使用する。
 | `ACCT_OFF` | INFO | Accounting-Off受信（NASシャットダウン通知） |
 
 > **注記:** 各event_idの `msg`・属性はD-04 §3.2を参照。Valkey接続の復旧検知ログ、セッションTTL超過専用のevent_idはない。
+>
+> **注記（Accounting-Request の `RADIUS_AUTH_ERR`）:** 2026-10-04 の実装修正（`PacketServer` の `InsecureSkipVerify: true`。§4.1 注記）より前は、共有シークレットが一致しない Accounting-Request と未知の Code のパケットはライブラリがハンドラーに渡す前に捨てていたため、`RADIUS_AUTH_ERR`（Accounting-Request）と `RADIUS_UNKNOWN_CODE`（未知の Code）は出ず、テキスト1行 `radius: packet validation failed; bad secret` が標準エラーに出るだけだった（Status-Server の `RADIUS_AUTH_ERR` は従来から出ていた）。
 
 ### 8.2 ログ出力例
 
@@ -1950,7 +1976,9 @@ Valkey接続の復旧検知（`downtime_ms` の記録）は実装しない（D-0
 
 ### 10.3 起動・シャットダウン
 
-ロガーは環境変数 `LOG_LEVEL`（既定 `INFO`）以上のレベルを出力するJSON形式で初期化し、全ログに `app=acct-server` を付与する。レベル文字列は共通ライブラリの `pkg/logging.ParseLevel`（E-03 §5.6）で `slog.Level` に変換する（大文字小文字を区別せず前後の空白を除去、`WARNING` も `WARN`、未知の値・空文字は `INFO`）。起動ログ `acct-server起動開始` に `listen_addr` と `log_level`（設定値をそのまま出力）を出力する（D-04 §3.2.5、§4.6）。Acct ServerにはDEBUGログはない。
+ロガーは環境変数 `LOG_LEVEL`（既定 `INFO`）以上のレベルを出力するJSON形式で初期化し、全ログに `app=acct-server` を付与する。レベル文字列は共通ライブラリの `pkg/logging.ParseLevel`（E-03 §5.6）で `slog.Level` に変換する（大文字小文字を区別せず前後の空白を除去、`WARNING` も `WARN`、未知の値・空文字は `INFO`）。起動ログ `acct-server起動開始` に `listen_addr` と `log_level`（設定値をそのまま出力）、`radius_secret_fallback`（真偽値。`RADIUS_SECRET` が空でなければ `true`。シークレットの値は出さない）を出力する（D-04 §3.2.5、§4.6）。Acct ServerのDEBUGログは、共有シークレットが決まらずにパケットを破棄したときの `RADIUS_LIB_ERR`（D-04 §3.2.2）のみである。
+
+`RADIUS_SECRET` が設定されているときは、起動ログに続けて `warnFallbackSecret` が WARN を1行出力する（`event_id` なし。msg `RADIUS_SECRETが設定されているため、クライアント登録のない送信元IPのパケットもフォールバックの共有シークレットで受け付ける（インターネットに公開する場合は空にすること）`）。インターネットに公開するサーバーでは、`docker compose logs acct-server | grep 起動開始` で `"radius_secret_fallback":false` であり、この WARN が出ていないことを確認する（§3.1 注記）。
 
 ```go
 // main.go（実装）
@@ -1988,7 +2016,9 @@ func main() {
     slog.Info("acct-server起動開始",
         "listen_addr", cfg.ListenAddr,
         "log_level", cfg.LogLevel,
+        "radius_secret_fallback", cfg.RadiusSecret != "",
     )
+    warnFallbackSecret(cfg.RadiusSecret)
 
     // 3. Valkeyクライアント初期化
     valkeyClient, err := store.NewValkeyClient(cfg)
@@ -2049,6 +2079,63 @@ func main() {
 
     slog.Info("acct-server停止完了")
 }
+
+// warnFallbackSecret は、RADIUS_SECRET（フォールバックの共有シークレット）が設定されているときにWARNログを出す。
+// 設定されていると、クライアント登録（client:{IP}）のない送信元IPからのパケットも
+// このシークレットで受け付けるため、インターネットに公開するサーバーでは空にすることを促す。
+func warnFallbackSecret(fallbackSecret string) {
+    if fallbackSecret == "" {
+        return
+    }
+    slog.Warn("RADIUS_SECRETが設定されているため、クライアント登録のない送信元IPのパケットもフォールバックの共有シークレットで受け付ける（インターネットに公開する場合は空にすること）")
+}
+```
+
+UDPサーバー（`server.NewServer`）は、`PacketServer` に `InsecureSkipVerify: true`（パケットの認証をライブラリでは行わず、ハンドラーで検証する）と `ErrorLog: logging.NewRADIUSLibraryLogger()`（ライブラリのエラーを JSON の slog（`RADIUS_LIB_ERR`）に流す。E-03）を設定する（§4.1 注記、D-09 §4.3）。
+
+```go
+// internal/server/server.go（実装）
+package server
+
+import (
+	"context"
+
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/logging"
+	"layeh.com/radius"
+)
+
+// Server はRADIUS UDPサーバーのラッパー
+type Server struct {
+	ps *radius.PacketServer
+}
+
+// NewServer は新しいServerを生成する
+func NewServer(addr string, handler radius.Handler, secretSource radius.SecretSource) *Server {
+	return &Server{
+		ps: &radius.PacketServer{
+			Addr:         addr,
+			SecretSource: secretSource,
+			Handler:      handler,
+			// パケットの認証（Request Authenticator / Message-Authenticator）はハンドラーで検証し、
+			// 失敗したら送信元IP付きのログを出して破棄する。ライブラリにも検証させると、
+			// Accounting-Request などのシークレット不一致や未知のCodeのパケットが、
+			// ハンドラーに届く前に素のテキストのログだけで捨てられてしまうため、ライブラリの検証は使わない
+			InsecureSkipVerify: true,
+			// ライブラリが出すエラー（パケットの解析失敗など）を JSON の slog に流す
+			ErrorLog: logging.NewRADIUSLibraryLogger(),
+		},
+	}
+}
+
+// ListenAndServe はUDPサーバーを起動する
+func (s *Server) ListenAndServe() error {
+	return s.ps.ListenAndServe()
+}
+
+// Shutdown はサーバーをグレースフルに停止する
+func (s *Server) Shutdown(ctx context.Context) error {
+	return s.ps.Shutdown(ctx)
+}
 ```
 
 ---
@@ -2078,3 +2165,5 @@ func main() {
 | r8 | 2026-10-04 | ログのIMSIマスク漏れ修正の反映: §6.1 IMSI取得優先順位の優先度3（IMSI抽出失敗時のUser-Name）を「そのまま」からマスク済み（pkg/logging.MaskUserName）に修正、§6.2のResolveIMSIのコードを実装（`internal/session/identifier.go`。引数 userName / classUUID、pkg/logging の MaskIMSI / MaskUserName を使用）に合わせ更新、§6.3を pkg/logging の MaskIMSI / MaskUserName による実装に更新。関連ドキュメント参照版数更新（D-04 r19→r20、D-06 r7→r8、D-09 r10→r11、E-03 r3→r4）。あわせて、廃止済みの internal/logging（mask.go）をディレクトリ構成から削除（IMSIマスキングは pkg/logging を使用） |
 | r9 | 2026-10-04 | Interimのシーケンス判定修正の反映: §5.4 Acct-Interim処理を実装（`CheckInterim` による重複・順序異常の一括判定、順序異常の msg `interim sequence error`、`sess:{UUID}` の存在確認と不在時の `ACCT_SESSION_NOT_FOUND`）に合わせて説明とコードを更新。§5.8 重複・順序異常検出を実装（`internal/acct/duplicate.go`）のコードに差し替え、`acct:seen` の値による判定表を追加（Stop後のInterim `interim_after_stop` を新設。削除した `CheckInterimDuplicate` / `HasSeenStart` / `MarkAsStart` の記載を削除し、旧実装でStartなしのInterimを検出できなかった旨を注記）。§5.7 `UpdateOnInterim` に存在確認後に呼び出す旨を注記。§7.1.3 データエラー表（セッション不在にInterimを追加、StartなしでInterimの対処を「受信値を記録して処理継続」に修正、Stop後のInterimを新設）、§8.1 event_id一覧（`VALKEY_CONN_ERR`、`ACCT_SESSION_NOT_FOUND`、`ACCT_DUPLICATE_START`、`ACCT_SEQUENCE_ERR` の説明）、§8.2 ログ出力例（StartなしInterimの msg）、§9.2 インターフェース定義（`DuplicateDetector`、`InterimCheckResult` を追加）を更新。関連ドキュメント参照版数更新（D-02 r12→r13、D-04 r20→r21） |
 | r10 | 2026-10-04 | acct-server の重複 Interim の event_id 分離・SYS_ERR 削除・LOG_LEVEL 対応の実装修正の反映: §5.4 / §5.8 / §7.1.3 / §8.1 で重複Interimの event_id を `ACCT_DUPLICATE_START` から `ACCT_DUPLICATE_INTERIM` に変更し、§8.2 にログ出力例を追加（重複Startは従来どおり `ACCT_DUPLICATE_START`）。Accounting処理（`ProcessStart` / `ProcessInterim` / `ProcessStop` / `ProcessOn` / `ProcessOff`）の戻り値から error を外したことに合わせ、§5.3〜§5.7 のコード、§9.2 `AccountingProcessor` の定義、§10.1 ハンドラー（`procErr` と `SYS_ERR`（`処理エラー`）の分岐を削除し、`PKT_SEND_ERR` を実装どおり追記。常にAccounting-Responseを返す旨を注記）を更新し、§8.1 から `SYS_ERR` を削除。`LOG_LEVEL` 対応: §3.1 環境変数一覧に `LOG_LEVEL`（と既存の `LISTEN_ADDR`）を追加、§3.2 設定構造体を実装に合わせ更新、§10.3 起動・シャットダウンのコードを実装の `main.go`（`logging.ParseLevel(cfg.LogLevel)`、起動ログの `log_level`）に差し替え、§2.3 `logging` を共通ライブラリ `pkg/logging` に修正。関連ドキュメント参照版数更新（D-04 r21→r25、D-06 r8→r13、D-08 r14→r17） |
+| r11 | 2026-10-04 | インターネット公開（VPS 等）に向けた安全面の修正の反映: §3.1 環境変数一覧の `RADIUS_SECRET` を任意（既定は空）・空を推奨とし、フォールバックの意味（登録のない送信元IPのパケットも受け付ける。インターネットに公開するサーバーでは空にする。空なら `RADIUS_NO_SECRET` で破棄）の注記を追加。§3.2 設定構造体に `RadiusSecret` が任意で空ならフォールバック無効である旨を注記。§4.2 Shared Secret解決にフォールバックの注意（空のときはパケット破棄、`RADIUS_NO_SECRET` は未登録の送信元で出る正常な動作）を追記。§10.3 起動・シャットダウンの説明とコードを実装の `main.go` に合わせて更新（起動ログの `radius_secret_fallback`、`RADIUS_SECRET` 設定時の WARN を出す `warnFallbackSecret`）。§1.3 参照版数更新（D-01 r10→r16、D-04 r25→r30、D-06 r13→r16、D-08 r17→r19、D-09 r11→r16） |
+| r12 | 2026-10-04 | RADIUSパケットの検証をハンドラーに一本化し、RADIUSライブラリのログをJSONにした実装修正（`PacketServer` に `InsecureSkipVerify: true` と `ErrorLog: logging.NewRADIUSLibraryLogger()` を設定）の反映: §4.1 の処理フローにデコード（失敗時 `RADIUS_LIB_ERR`）・Secret不明・`RADIUS_AUTH_ERR` を追記し、パケットの認証をハンドラーで行う方針と理由の注記を追加。§4.2 注記にライブラリの DEBUG ログを追記。§4.3 の `VerifyAccountingAuthenticator` を実装のコードに置き換え、`MarshalBinary` による検証が受信バイト列での検証と等価であること・ライブラリが検証しないことを注記。§7.1.2 のパケットパース失敗のログを `RADIUS_LIB_ERR` に修正し、Authenticator検証失敗・未知のRADIUS Codeの条件を実装に合わせて修正。§8.1 の `RADIUS_AUTH_ERR` / `RADIUS_UNKNOWN_CODE` の説明を修正し `RADIUS_LIB_ERR` を追加、以前は Accounting-Request のシークレット不一致で `RADIUS_AUTH_ERR` が出ていなかった旨を注記。§10.3 に `internal/server/server.go` の実装を追加し「DEBUGログはない」を修正。§2.1 / §2.3 に `server_test.go`・`NewRADIUSLibraryLogger` を追加。§1.3 参照版数更新（D-04 r30→r31、D-06 r16→r17、D-09 r16→r17、E-03 r4→r9） |

@@ -37,7 +37,9 @@ func main() {
 		"log_level", cfg.LogLevel,
 		"vector_api_url", cfg.VectorAPIURL,
 		"network_name", cfg.NetworkName,
+		"radius_secret_fallback", cfg.RadiusSecret != "",
 	)
+	warnFallbackSecret(cfg.RadiusSecret)
 
 	// 3. Valkeyクライアント初期化
 	valkeyClient, err := store.NewValkeyClient(cfg)
@@ -99,4 +101,14 @@ func main() {
 	}
 
 	slog.Info("auth-server停止完了")
+}
+
+// warnFallbackSecret は、RADIUS_SECRET（フォールバックの共有シークレット）が設定されているときにWARNログを出す。
+// 設定されていると、クライアント登録（client:{IP}）のない送信元IPからのパケットも
+// このシークレットで受け付けるため、インターネットに公開するサーバーでは空にすることを促す。
+func warnFallbackSecret(fallbackSecret string) {
+	if fallbackSecret == "" {
+		return
+	}
+	slog.Warn("RADIUS_SECRETが設定されているため、クライアント登録のない送信元IPのパケットもフォールバックの共有シークレットで受け付ける（インターネットに公開する場合は空にすること）")
 }

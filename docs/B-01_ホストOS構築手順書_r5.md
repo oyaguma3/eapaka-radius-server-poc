@@ -1,10 +1,12 @@
-# B-01 ホストOS構築手順書 (r3)
+# B-01 ホストOS構築手順書 (r5)
 
 ## 1. 概要
 
 ### 1.1 目的
 
 本ドキュメントは、ベアメタルのミニPCにUbuntu Server 24.04 LTSをインストールし、Docker Composeでアプリケーションを実行可能な状態にするまでの手順を提供する。
+
+> **注記（r5）:** VPS（AWS Lightsail 等）に構築する場合は、B-03「VPSデプロイ手順書」を参照すること。B-03 は本書と B-02 の手順をもとに、VPS で変わる点（作業ユーザー、SSH ポート、クラウド側のファイアウォール等）を示している。
 
 ### 1.2 スコープ
 
@@ -31,9 +33,10 @@
 
 | ドキュメント | 参照内容 |
 |-------------|---------|
-| D-01 ミニPC版設計仕様書 (r9) | システム構成、ホストPCセットアップ手順概要 |
-| D-08 インフラ設定・運用設計書 (r12) | ホストOS設定内容、セキュリティチェックリスト |
+| D-01 ミニPC版設計仕様書 (r16) | システム構成、ホストPCセットアップ手順概要 |
+| D-08 インフラ設定・運用設計書 (r19) | ホストOS設定内容、セキュリティチェックリスト |
 | B-02 アプリケーションデプロイ手順書 | デプロイ手順、運用ファイル配置 |
+| B-03 VPSデプロイ手順書 (r1) | VPS（AWS Lightsail）に構築する場合の手順 |
 
 ### 1.4 対象読者
 
@@ -257,17 +260,25 @@ PubkeyAuthentication yes
 sudo sshd -t
 # エラーが出ないことを確認
 
-# SSHサービス再起動
-sudo systemctl restart ssh
-
-# 設定値の確認
+# 設定値の確認（設定ファイルから読んだ値）
 sudo sshd -T | grep -E '^(port|permitrootlogin|passwordauthentication|pubkeyauthentication)'
 # 期待される出力:
 # port 10022
 # permitrootlogin no
 # passwordauthentication no
 # pubkeyauthentication yes
+
+# 反映（Ubuntu 24.04 の sshd はソケット起動のため、ポートの変更は ssh.socket に反映する）
+sudo systemctl daemon-reload
+sudo systemctl restart ssh.socket
+sudo systemctl restart ssh
+
+# 実際に待ち受けているポートの確認
+sudo ss -lnt | grep -E ':(22|10022) '
+# 10022 で待ち受けており、22 で待ち受けていないこと（ソケット起動のため、ss -p で見えるプロセスは systemd になる）
 ```
+
+> **注意（r5）:** Ubuntu 24.04 では、SSH の待ち受けは `ssh.socket`（systemd のソケット起動）が行い、`sshd_config` の `Port` は `systemctl daemon-reload` のときにソケットの設定へ反映される。`sudo systemctl restart ssh` だけではポートの変更が反映されず、22 番で待ち受けたままになる（Ubuntu の不具合報告 LP#2069041 で知られた挙動）。`sshd -T` は設定ファイルを読んで表示するだけなので、反映されていなくても `port 10022` と表示される。必ず `ss` で実際の待ち受けポートを確認すること。r4 までの手順（`systemctl restart ssh` と `sshd -T` での確認）のまま UFW を有効にすると、22 番が遮断され 10022 番では待ち受けていない状態になり、締め出される。
 
 > **⚠️ 警告: SSHサービス再起動後、現在の接続セッションは維持されるが、必ず別ターミナルで新しいポート（10022）での接続を確認すること。確認が完了するまで、現在のセッションを切断しないこと。**
 
@@ -322,6 +333,8 @@ sudo ufw status verbose
 # 1812/udp (v6)              ALLOW IN    Anywhere (v6)
 # 1813/udp (v6)              ALLOW IN    Anywhere (v6)
 ```
+
+> **注記（Docker の公開ポートと UFW）:** Docker が公開したポート（compose の `ports:`）への通信は、Docker が iptables に追加する規則で直接許可されるため、UFW の規則を通らない。`ufw deny` しても公開ポートには届き、`ufw allow from <IP>` で送信元を絞ることもできない。本構成で外部に公開するのは 1812/udp・1813/udp だけであり、Valkey（6379）と Fluent Bit（24224）は compose で 127.0.0.1 にのみバインドしている。RADIUS の送信元を AP のIPに絞りたい場合は、UFW ではなく、クラウド側のファイアウォール（VPS の場合）またはホストの iptables の `DOCKER-USER` チェーンを使うこと（D-08 §5.4）。
 
 ---
 
@@ -492,7 +505,7 @@ systemctl is-enabled eapaka-radius-server-poc
 | 1 | OSバージョン | `lsb_release -a` | Ubuntu 24.04 LTS |
 | 2 | タイムゾーン | `timedatectl status` | Asia/Tokyo |
 | 3 | NTP同期 | `timedatectl show-timesync` | NTPSynchronized=yes |
-| 4 | SSHポート | `sudo sshd -T \| grep port` | 10022 |
+| 4 | SSHポート | `sudo ss -lnt \| grep -E ':(22\|10022) '`（`sshd -T` は設定ファイルの値なので使わない。ソケット起動のため待ち受けのプロセスは sshd ではなく systemd と表示される） | 10022 で待ち受けている（22 では待ち受けていない） |
 | 5 | パスワード認証無効 | `sudo sshd -T \| grep passwordauthentication` | no |
 | 6 | rootログイン無効 | `sudo sshd -T \| grep permitrootlogin` | no |
 | 7 | 公開鍵認証有効 | `sudo sshd -T \| grep pubkeyauthentication` | yes |
@@ -594,3 +607,5 @@ sudo timedatectl set-time "2026-02-07 12:00:00"
 | r1 | 2026-02-07 | 初版作成 |
 | r2 | 2026-02-16 | 関連ドキュメント参照版数を更新（D-01 r8→r9、D-08 r8→r9） |
 | r3 | 2026-02-23 | 関連ドキュメント参照版数を更新（D-08 r9→r12） |
+| r4 | 2026-10-04 | §5.2 UFW設定に、Docker の公開ポートは UFW を素通りする旨と、RADIUS の送信元を絞る場合はクラウド側のファイアウォールまたは iptables の `DOCKER-USER` チェーンを使う旨の注記を追加。関連ドキュメント参照版数を更新（D-01 r9→r16、D-08 r12→r19） |
+| r5 | 2026-10-04 | §5.1 の SSH ポート変更の反映手順を訂正: Ubuntu 24.04 の sshd はソケット起動のため、`systemctl restart ssh` だけではポートが変わらない（LP#2069041）。`systemctl daemon-reload` → `systemctl restart ssh.socket` で反映し、`ss -lnt` で実際の待ち受けポートを確認する手順に変更（`sshd -T` は設定ファイルの値を表示するだけで、反映の確認にならない）。§9 のチェックリスト #4 も `ss` での確認に変更。§1.1 / §1.3 に VPS の場合は B-03 を参照する旨を追記 |

@@ -1,4 +1,4 @@
-# E-03 共通ライブラリ(pkg)設計書 (r8)
+# E-03 共通ライブラリ(pkg)設計書 (r9)
 
 ## 1. 概要
 
@@ -28,8 +28,8 @@
 |-------------|---------|
 | D-01 ミニPC版設計仕様書 (r9) | リポジトリ構成、パッケージ利用マップ |
 | D-02 Valkeyデータ設計仕様書 (r15) | Go構造体定義、ストア層変換方式 |
-| D-04 ログ仕様設計書 (r25) | IMSIマスキング仕様（User-Nameのマスク規則を含む）、ログレベル設定（LOG_LEVEL） |
-| D-06 エラーハンドリング詳細設計書 (r6) | エラー定義パターン |
+| D-04 ログ仕様設計書 (r31) | IMSIマスキング仕様（User-Nameのマスク規則を含む）、ログレベル設定（LOG_LEVEL）、`RADIUS_LIB_ERR` |
+| D-06 エラーハンドリング詳細設計書 (r17) | エラー定義パターン |
 | D-11 Vector API詳細設計書 (r6) | RFC 7807 Problem Details |
 | E-02 コーディング規約（簡易版）(r1) | pkg配置方針、命名規則 |
 
@@ -82,7 +82,8 @@ pkg/
 ├── logging/                  # ログユーティリティ
 │   ├── masking.go            # IMSI・User-Nameマスキング・Masker構造体
 │   ├── fields.go             # フィールド定数・CommonFields・AuthLogFields
-│   └── level.go              # LOG_LEVEL文字列→slog.Level変換（ParseLevel）
+│   ├── level.go              # LOG_LEVEL文字列→slog.Level変換（ParseLevel）
+│   └── radiuslib.go          # RADIUSライブラリのログのJSON化（NewRADIUSLibraryLogger・EventRADIUSLibError）
 ├── model/                    # 共通データ構造体
 │   ├── subscriber.go         # Subscriber構造体・NewSubscriber
 │   ├── client.go             # RadiusClient構造体・NewRadiusClient
@@ -99,7 +100,7 @@ pkg/
 |-----------|------|---------------|
 | `apperr` | 共通エラー定義 | センチネルエラー、カスタムエラー型（ValidationError, BackendError, ValkeyError, EAPIdentityError） |
 | `valkey` | Valkeyクライアント初期化 | `NewClient()`, `Options`, `DefaultOptions()`, `TUIOptions()`, `BuildAddr()` |
-| `logging` | ログユーティリティ | `MaskIMSI()`, `MaskUserName()`, `Masker`, `CommonFields`, `AuthLogFields()`, `ParseLevel()`, フィールド定数8種 |
+| `logging` | ログユーティリティ | `MaskIMSI()`, `MaskUserName()`, `Masker`, `CommonFields`, `AuthLogFields()`, `ParseLevel()`, `NewRADIUSLibraryLogger()`, `EventRADIUSLibError`, フィールド定数8種 |
 | `model` | 共通データ構造体 | `Subscriber`, `RadiusClient`, `Session`, `EAPContext`, `Policy`, `PolicyRule`, `Stage` |
 | `httputil` | HTTPユーティリティ | `ProblemDetail`, `ContentType`, `WriteError()`, `AbortWithError()` |
 
@@ -625,6 +626,7 @@ func main() {
 - 共通ログフィールドの定義
 - マスキング設定の一元管理
 - ログレベル設定（環境変数 `LOG_LEVEL`）の文字列から `slog.Level` への変換
+- RADIUSライブラリ（`layeh.com/radius`）が出すエラーのログを、JSONのslog（`event_id`=`RADIUS_LIB_ERR`）に流す `*log.Logger` の提供（§5.8）
 
 ### 5.2 フィールド名定数
 
@@ -781,6 +783,53 @@ logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
     Level: logging.ParseLevel(cfg.LogLevel),
 })).With("app", "auth-server")
 slog.SetDefault(logger)
+```
+
+### 5.8 RADIUSライブラリのログ
+
+**ファイル: `pkg/logging/radiuslib.go`**
+
+```go
+// EventRADIUSLibError は RADIUS ライブラリ（layeh.com/radius）が出すエラーの event_id。
+const EventRADIUSLibError = "RADIUS_LIB_ERR"
+
+// NewRADIUSLibraryLogger は layeh.com/radius の PacketServer.ErrorLog に設定する *log.Logger を返す。
+// ライブラリは受信処理のエラー（パケットの解析失敗など）を標準の log パッケージで素のテキストとして出すため、
+// JSON の slog（event_id: RADIUS_LIB_ERR）に流して、他のログと同じ形式で扱えるようにする。
+//
+// 共有シークレットが決まらずにパケットを捨てた場合（"empty secret returned from secret source"）は、
+// アプリの SecretSource が送信元IP付きでログ（RADIUS_NO_SECRET 等）を出しているため、DEBUG にとどめる。
+func NewRADIUSLibraryLogger() *log.Logger
+```
+
+**目的:** `layeh.com/radius` の `PacketServer` は、受信処理のエラー（パケットのデコード失敗、受信エラー、共有シークレットが決まらずに捨てたこと等）を `ErrorLog`（`*log.Logger`）に書く。`ErrorLog` が `nil` だと標準の `log` パッケージで標準エラーにテキスト1行を出すため、`event_id` がなく、JSONのログとして集計・検索できない。`NewRADIUSLibraryLogger` が返す Logger を `ErrorLog` に設定すると、これらを他のログと同じJSON形式で出力できる。
+
+**動作:**
+
+- ライブラリが書き込んだ1行（前後の空白・改行を除去）を、`slog.Log` でデフォルトのロガー（`slog.Default()`）に出力する。msg は `RADIUSライブラリのエラー`、属性は `event_id`=`RADIUS_LIB_ERR`（`EventRADIUSLibError`）と `error`=ライブラリのメッセージ（例: `radius: unable to parse packet: radius: packet not at least 20 bytes long`）。
+- レベルは WARN。ただし、メッセージに `empty secret returned from secret source` を含む行は DEBUG とする（同じパケットでアプリの SecretSource が `RADIUS_NO_SECRET` 等を送信元の情報付きで出しているため。`LOG_LEVEL=DEBUG` のときだけ出る）。
+- ライブラリのメッセージに送信元IPは含まれないため、`src_ip` は出力しない。`app` などはデフォルトのロガーに付けた属性がそのまま付く。
+- Logger の prefix・flag は空（`log.New(w, "", 0)`）であり、日時は slog の `time` だけになる。
+- 標準ライブラリ（`log`, `log/slog`, `strings`, `context`）のみを使い、`layeh.com/radius` には依存しない（`*log.Logger` を返すだけ。§8.3）。
+
+**使い方:** Auth Server / Acct Server の `internal/server/server.go`（`NewServer`）で `PacketServer` に設定する（D-09 §4.3、D-10 §10.3）。`main.go` で `slog.SetDefault` した後に `NewServer` を呼ぶため、出力は `app` 付きのJSONになる。
+
+```go
+ps := &radius.PacketServer{
+    Addr:         addr,
+    SecretSource: secretSource,
+    Handler:      handler,
+    // パケットの認証はハンドラーで検証する（D-09 §4.3）
+    InsecureSkipVerify: true,
+    // ライブラリが出すエラー（パケットの解析失敗など）を JSON の slog に流す
+    ErrorLog: logging.NewRADIUSLibraryLogger(),
+}
+```
+
+出力例（WARN。形の壊れたパケットを受信したとき）:
+
+```json
+{"time":"2026-10-04T21:00:00.000000000+09:00","level":"WARN","msg":"RADIUSライブラリのエラー","app":"acct-server","event_id":"RADIUS_LIB_ERR","error":"radius: unable to parse packet: radius: packet not at least 20 bytes long"}
 ```
 
 ---
@@ -1209,7 +1258,7 @@ func (h *GatewayHandler) handleBackendError(c *gin.Context, err error) {
 |-----------|---------|---------|
 | `pkg/apperr` | なし | エラー定義のみ |
 | `pkg/valkey` | `github.com/redis/go-redis/v9` | Valkeyクライアント |
-| `pkg/logging` | なし | 標準slogのみ使用 |
+| `pkg/logging` | なし | 標準ライブラリ（`log/slog`、`log` 等）のみ使用（`NewRADIUSLibraryLogger` も `*log.Logger` を返すだけで `layeh.com/radius` には依存しない） |
 | `pkg/model` | なし | 構造体定義のみ（encoding/jsonは標準ライブラリ） |
 | `pkg/httputil` | `github.com/gin-gonic/gin`（任意） | Ginヘルパー関数 |
 
@@ -1261,3 +1310,4 @@ func (h *GatewayHandler) handleBackendError(c *gin.Context, err error) {
 | r6 | 2026-10-04 | auth-server の LOG_LEVEL 対応に伴う pkg/logging の公開API追加の反映: §5.6 ログレベル変換を新設し `ParseLevel()`（`pkg/logging/level.go`。DEBUG / INFO / WARN（WARNING）/ ERROR を大文字小文字を区別せず変換、前後の空白を除去、未知の値・空文字は INFO）と利用箇所（Auth Server のロガー初期化。Vector Gateway / Vector API は未使用）を追加、旧 §5.6 使用例を §5.7 に繰り下げてロガー初期化の例を追加、§2.1 ディレクトリ構造に `level.go`、§2.2 パッケージ一覧・§5.1 責務に `ParseLevel()` / ログレベル変換を追加。§1.3 参照版数更新（D-04 r20→r23） |
 | r7 | 2026-10-04 | vector-api / vector-gateway のログレベル変換を `pkg/logging.ParseLevel` に統一した実装修正の反映: §5.6 の利用箇所に Vector Gateway / Vector API（各 `main.go` の `initLogger`）を追加し、「Vector Gateway / Vector API は独自に変換しており本関数を使っていない」旨の記述を削除（3コンポーネントで `LOG_LEVEL` の解釈が同じになった。`WARNING` も `WARN`） |
 | r8 | 2026-10-04 | acct-server の LOG_LEVEL 対応の実装修正の反映: §5.6 の `ParseLevel` の利用箇所に Acct Server（`apps/acct-server/main.go` のロガー初期化）を追加して4コンポーネントとし、「Acct Server は LOG_LEVEL に対応しておらず使っていない」を削除。§1.3 関連ドキュメントの D-04 の版数を r25 に更新 |
+| r9 | 2026-10-04 | RADIUSライブラリのログをJSONにした実装修正（`pkg/logging/radiuslib.go` 新設）の反映: §5.8 RADIUSライブラリのログを新設し、`NewRADIUSLibraryLogger()`（`layeh.com/radius` の `PacketServer.ErrorLog` に設定する `*log.Logger`。ライブラリの1行を msg `RADIUSライブラリのエラー`・`event_id`=`RADIUS_LIB_ERR`・`error` で slog に出力、WARN（`empty secret returned from secret source` を含む行は DEBUG）、`src_ip` なし）と定数 `EventRADIUSLibError` の目的・動作・使い方を記載。§2.1 / §2.2 / §5.1 に追加し、§8.3 に `layeh.com/radius` に依存しない旨を追記。§1.3 参照版数更新（D-04 r25→r31、D-06 r6→r17） |

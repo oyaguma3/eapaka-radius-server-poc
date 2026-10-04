@@ -18,11 +18,11 @@ Wi-Fi 認証 (WPA2/WPA3-Enterprise) 向けの RADIUS 認証・課金機能、AKA
 |---|---|---|
 | **auth-server** | RADIUS 認証 + EAP-AKA/AKA' ステートマシン制御 | UDP 1812 |
 | **acct-server** | RADIUS 課金 (Accounting) | UDP 1813 |
-| **vector-gateway** | 認証ベクター生成リクエストのルーティング（PLMN 単位で接続方式 00: vector-api / 01: aka-only-server に振り分け） | HTTP 8080 |
-| **vector-api** | Milenage アルゴリズム計算 + SQN 管理 | HTTP 8081 |
+| **vector-gateway** | 認証ベクター生成リクエストのルーティング（PLMN 単位で接続方式 00: vector-api / 01: aka-only-server に振り分け） | HTTP 8080（コンテナ内のみ） |
+| **vector-api** | Milenage アルゴリズム計算 + SQN 管理 | HTTP 8080（コンテナ内のみ） |
 | **admin-tui** | 加入者・セッション管理用ターミナル UI | - |
-| **valkey** | データストア (加入者情報・セッション等) | 6379 |
-| **fluent-bit** | ログ収集・転送 | 24224 |
+| **valkey** | データストア (加入者情報・セッション等) | 6379（127.0.0.1 のみ） |
+| **fluent-bit** | ログ収集・転送 | 24224（127.0.0.1 のみ） |
 | **aka-only-server**（外部・任意） | 接続方式01。指定 PLMN の AKA 認証ベクターを払い出す外部サーバー（3GPP TS 29.503 Nudm_UEAU GenerateAv ベース、[aka-only-server](https://github.com/oyaguma3/aka-only-server)）。mTLS で接続 | HTTPS 8443（平文 HTTP 8080） |
 
 ## 技術スタック
@@ -88,12 +88,14 @@ cp .env.example .env
 docker compose up -d
 ```
 
+本番相当の環境へのデプロイ手順は、ミニPC（LAN 内）なら B-01 / B-02、VPS（AWS Lightsail 等。インターネットに公開）なら B-03 を参照してください。インターネットに公開する場合は、`RADIUS_SECRET` を空のままにし、クラウド側のファイアウォールで RADIUS（1812/1813/udp）の送信元を AP のIPに限ってください。
+
 ### 主要な環境変数
 
 | 変数名 | 必須 | 説明 |
 |---|---|---|
 | `VALKEY_PASSWORD` | Yes | Valkey 接続パスワード |
-| `RADIUS_SECRET` | Yes | RADIUS 共有シークレット |
+| `RADIUS_SECRET` | No | フォールバックの RADIUS 共有シークレット。設定すると、クライアント登録（送信元IP）のない送信元からのパケットもこの値で受け付ける。インターネットに公開する場合は空のままにする |
 | `VECTOR_GATEWAY_MODE` | No | 動作モード (`gateway` / `passthrough`) |
 | `VECTOR_GATEWAY_PLMN_MAP` | No | PLMN と接続方式 ID の対応 (例: `44010:01`。未一致 PLMN は `00` = 内部 vector-api) |
 | `VECTOR_GATEWAY_INTERNAL_TIMEOUT` | No | 内部 vector-api 呼び出しタイムアウト (デフォルト: `3s`。auth-server のタイムアウト 5 秒より短くすること) |
@@ -130,7 +132,7 @@ go test -cover ./...
 go test ./apps/auth-server/...
 ```
 
-テスト規模: 107 テストファイル、1,314 テストケース (T-02 単体テスト仕様書準拠)
+テスト規模: 111 テストファイル、1,329 テストケース (T-02 単体テスト仕様書準拠)
 
 ## 実装状況
 
@@ -179,16 +181,17 @@ go test ./apps/auth-server/...
 | No. | ドキュメント名 | 内容 |
 |---|---|---|
 | T-01 | テスト戦略書 | テスト方針・カバレッジ目標 |
-| T-02 | 単体テスト仕様書 | 全 1,314 テストケース定義 |
+| T-02 | 単体テスト仕様書 | 全 1,329 テストケース定義 |
 | T-03 | 結合テスト仕様書 | コンポーネント間連携テスト |
 | T-04 | E2E テスト仕様書 | 実機テスト・擬似 E2E (計 11 シナリオ) |
 
-### 構築・デプロイドキュメント (2件)
+### 構築・デプロイドキュメント (3件)
 
 | No. | ドキュメント名 | 内容 |
 |---|---|---|
 | B-01 | ホストOS構築手順書 | Ubuntu Server インストール・セキュリティ設定 |
 | B-02 | アプリケーションデプロイ手順書 | Docker Compose 起動・logrotate・バックアップ |
+| B-03 | VPSデプロイ手順書（AWS Lightsail） | VPS への構築・デプロイ（ファイアウォール、SSH、RADIUS の公開範囲） |
 
 ### 運用ドキュメント (5件)
 
@@ -206,7 +209,7 @@ go test ./apps/auth-server/...
 |---|---|---|
 | S-01 | eapaka_test 利用ノウハウ | eapaka_test の設定・テストケース解説・トラブルシューティング |
 
-詳細は [ドキュメント一覧](docs/EAP-AKA_RADIUS_PoC環境_ドキュメント一覧_r48.md) を参照してください。
+詳細は [ドキュメント一覧](docs/EAP-AKA_RADIUS_PoC環境_ドキュメント一覧_r52.md) を参照してください。
 
 ## ライセンス
 
