@@ -2,6 +2,8 @@ package subscriber
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
@@ -132,7 +134,7 @@ func (s *FormScreen) handleSave() {
 	}
 
 	// SQN変更チェック（編集モード時）
-	if s.editMode && input.SQN != s.originalSQN {
+	if s.sqnChanged(input) {
 		s.showSQNWarningDialog(input)
 		return
 	}
@@ -173,8 +175,19 @@ func (s *FormScreen) save(input *validation.SubscriberInput) {
 	}
 
 	if s.editMode {
-		// 更新
-		if err := s.subscriberStore.Update(ctx, sub); err != nil {
+		// 更新。SQN を変えていないときは sqn を書き換えない（認証で進んだ SQN を巻き戻さない）。
+		// 変えたときは、編集開始時の値から変わっていない場合だけ書き換える
+		var err error
+		if s.sqnChanged(input) {
+			err = s.subscriberStore.UpdateWithSQN(ctx, sub, s.originalSQN)
+		} else {
+			err = s.subscriberStore.Update(ctx, sub)
+		}
+		if errors.Is(err, store.ErrSQNChanged) {
+			s.app.GetStatusBar().ShowError("Failed to update: SQN was changed by authentication while editing. Reopen the subscriber and try again")
+			return
+		}
+		if err != nil {
 			s.app.GetStatusBar().ShowError("Failed to update: " + err.Error())
 			return
 		}
@@ -194,6 +207,12 @@ func (s *FormScreen) save(input *validation.SubscriberInput) {
 	if s.onSave != nil {
 		s.onSave()
 	}
+}
+
+// sqnChanged は編集モードで SQN が編集開始時の値から変更されたかを返す。
+// 入力は大文字に正規化されるが、Vector API は小文字で書き戻すため、大文字小文字は区別しない。
+func (s *FormScreen) sqnChanged(input *validation.SubscriberInput) bool {
+	return s.editMode && !strings.EqualFold(input.SQN, s.originalSQN)
 }
 
 func (s *FormScreen) handleCancel() {

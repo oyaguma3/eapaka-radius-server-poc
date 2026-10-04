@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/model"
 )
@@ -61,15 +62,29 @@ func TestSubscriberStore_CRUD(t *testing.T) {
 		t.Errorf("Get() expected ErrSubscriberNotFound, got: %v", err)
 	}
 
-	// Update
+	// Update（SQN は書き換えない）
+	sub.AMF = "8000"
 	sub.SQN = "000000000020"
 	if err := ss.Update(ctx, sub); err != nil {
 		t.Fatalf("Update() error = %v", err)
 	}
 
 	got, _ = ss.Get(ctx, sub.IMSI)
+	if got.AMF != "8000" {
+		t.Errorf("after Update, AMF = %s, want 8000", got.AMF)
+	}
+	if got.SQN != "ff9bb4d0b607" {
+		t.Errorf("after Update, SQN = %s, want ff9bb4d0b607 (unchanged)", got.SQN)
+	}
+
+	// UpdateWithSQN
+	if err := ss.UpdateWithSQN(ctx, sub, "ff9bb4d0b607"); err != nil {
+		t.Fatalf("UpdateWithSQN() error = %v", err)
+	}
+
+	got, _ = ss.Get(ctx, sub.IMSI)
 	if got.SQN != "000000000020" {
-		t.Errorf("after Update, SQN = %s, want 000000000020", got.SQN)
+		t.Errorf("after UpdateWithSQN, SQN = %s, want 000000000020", got.SQN)
 	}
 
 	// Update not found
@@ -175,4 +190,108 @@ func TestSubscriberStore_List_Empty(t *testing.T) {
 	if list != nil && len(list) != 0 {
 		t.Errorf("List() len = %d, want 0", len(list))
 	}
+}
+
+func TestSubscriberStore_UpdateSQNHandling(t *testing.T) {
+	const imsi = "440101234567890"
+	key := SubscriberKey(imsi)
+
+	// 編集開始時の加入者（SQN は Vector API が小文字で書き戻した値）
+	register := func(t *testing.T) (*SubscriberStore, func(field string) string) {
+		t.Helper()
+		mr, client := newTestRedis(t)
+		t.Cleanup(func() { _ = client.Close() })
+		mr.HSet(key,
+			"ki", "465B5CE8B199B49FAA5F0A2EE238A6BC",
+			"opc", "CD63CB71954A9F4E48A5994E37A02BAF",
+			"amf", "8000",
+			"sqn", "00000000004a",
+			"created_at", "2026-01-01T00:00:00Z",
+		)
+		return NewSubscriberStore(client), func(field string) string { return mr.HGet(key, field) }
+	}
+
+	edited := &model.Subscriber{
+		IMSI: imsi,
+		Ki:   "00112233445566778899AABBCCDDEEFF",
+		OPc:  "AABBCCDDEEFF00112233445566778899",
+		AMF:  "B9B9",
+		SQN:  "000000000020", // 編集開始時より古い値
+	}
+
+	t.Run("Update は SQN を書き換えない", func(t *testing.T) {
+		ss, hget := register(t)
+
+		if err := ss.Update(context.Background(), edited); err != nil {
+			t.Fatalf("Update() error = %v", err)
+		}
+		if got := hget("sqn"); got != "00000000004a" {
+			t.Errorf("sqn = %s, want 00000000004a (unchanged)", got)
+		}
+		if hget("ki") != edited.Ki || hget("opc") != edited.OPc || hget("amf") != edited.AMF {
+			t.Errorf("ki/opc/amf not updated: %s %s %s", hget("ki"), hget("opc"), hget("amf"))
+		}
+		if got := hget("created_at"); got != "2026-01-01T00:00:00Z" {
+			t.Errorf("created_at changed: %s", got)
+		}
+	})
+
+	t.Run("UpdateWithSQN は SQN が編集開始時のままなら書き換える", func(t *testing.T) {
+		ss, hget := register(t)
+
+		if err := ss.UpdateWithSQN(context.Background(), edited, "00000000004a"); err != nil {
+			t.Fatalf("UpdateWithSQN() error = %v", err)
+		}
+		if got := hget("sqn"); got != "000000000020" {
+			t.Errorf("sqn = %s, want 000000000020", got)
+		}
+		if got := hget("ki"); got != edited.Ki {
+			t.Errorf("ki = %s, want %s", got, edited.Ki)
+		}
+	})
+
+	t.Run("UpdateWithSQN は SQN が変わっていたら何も書き換えない", func(t *testing.T) {
+		ss, hget := register(t)
+
+		// 編集開始時に読んだ値（00000000003a）の後に、認証で 00000000004a に進んだ
+		err := ss.UpdateWithSQN(context.Background(), edited, "00000000003a")
+		if !errors.Is(err, ErrSQNChanged) {
+			t.Fatalf("UpdateWithSQN() error = %v, want ErrSQNChanged", err)
+		}
+		if got := hget("sqn"); got != "00000000004a" {
+			t.Errorf("sqn = %s, want 00000000004a (unchanged)", got)
+		}
+		if got := hget("ki"); got != "465B5CE8B199B49FAA5F0A2EE238A6BC" {
+			t.Errorf("ki must not be updated: %s", got)
+		}
+	})
+
+	t.Run("加入者がいなければキーを作らない", func(t *testing.T) {
+		mr, client := newTestRedis(t)
+		t.Cleanup(func() { _ = client.Close() })
+		ss := NewSubscriberStore(client)
+
+		if err := ss.Update(context.Background(), edited); !errors.Is(err, ErrSubscriberNotFound) {
+			t.Errorf("Update() error = %v, want ErrSubscriberNotFound", err)
+		}
+		if err := ss.UpdateWithSQN(context.Background(), edited, "00000000004a"); !errors.Is(err, ErrSubscriberNotFound) {
+			t.Errorf("UpdateWithSQN() error = %v, want ErrSubscriberNotFound", err)
+		}
+		if mr.Exists(key) {
+			t.Errorf("key %s must not be created", key)
+		}
+	})
+
+	t.Run("Valkey エラー", func(t *testing.T) {
+		mr, client := newTestRedis(t)
+		t.Cleanup(func() { _ = client.Close() })
+		ss := NewSubscriberStore(client)
+		mr.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		if err := ss.Update(ctx, edited); err == nil || errors.Is(err, ErrSubscriberNotFound) {
+			t.Errorf("Update() error = %v, want connection error", err)
+		}
+	})
 }
