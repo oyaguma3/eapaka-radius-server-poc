@@ -10,7 +10,7 @@ import (
 )
 
 // ProcessStart はAcct-Start処理を行う。
-func (p *Processor) ProcessStart(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error {
+func (p *Processor) ProcessStart(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) {
 	// 1. 重複検出
 	isDuplicate, err := p.duplicateDetector.CheckAndMarkStart(ctx, attrs.AcctSessionID)
 	if err != nil {
@@ -38,7 +38,7 @@ func (p *Processor) ProcessStart(ctx context.Context, attrs *radius.AccountingAt
 			"src_ip", srcIP,
 			"acct_session_id", attrs.AcctSessionID,
 		)
-		return nil
+		return
 	}
 
 	// 2. Class属性からセッションUUID取得
@@ -94,6 +94,4 @@ func (p *Processor) ProcessStart(ctx context.Context, attrs *radius.AccountingAt
 		"imsi", imsi,
 		"acct_session_id", attrs.AcctSessionID,
 	)
-
-	return nil
 }

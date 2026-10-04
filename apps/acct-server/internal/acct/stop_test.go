@@ -25,10 +25,7 @@ func TestProcessStop(t *testing.T) {
 		SessionTime:    1800,
 	}
 
-	err := proc.ProcessStop(ctx, attrs, "192.168.1.1", "trace-1")
-	if err != nil {
-		t.Fatalf("ProcessStop failed: %v", err)
-	}
+	proc.ProcessStop(ctx, attrs, "192.168.1.1", "trace-1")
 
 	// セッションが削除されていることを確認
 	exists := mr.Exists("sess:550e8400-e29b-41d4-a716-446655440000")
@@ -49,10 +46,7 @@ func TestProcessStop_Duplicate(t *testing.T) {
 	}
 
 	// Stop重複 - エラーなしで正常終了
-	err := proc.ProcessStop(ctx, attrs, "192.168.1.1", "trace-1")
-	if err != nil {
-		t.Fatalf("ProcessStop should not return error on duplicate: %v", err)
-	}
+	proc.ProcessStop(ctx, attrs, "192.168.1.1", "trace-1")
 }
 
 func TestProcessStop_NoSession(t *testing.T) {
@@ -66,8 +60,5 @@ func TestProcessStop_NoSession(t *testing.T) {
 	}
 
 	// セッション不在でもエラーにならない
-	err := proc.ProcessStop(ctx, attrs, "192.168.1.1", "trace-1")
-	if err != nil {
-		t.Fatalf("ProcessStop should not return error for missing session: %v", err)
-	}
+	proc.ProcessStop(ctx, attrs, "192.168.1.1", "trace-1")
 }

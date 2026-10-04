@@ -43,11 +43,9 @@ func (m *MockAccountingProcessor) EXPECT() *MockAccountingProcessorMockRecorder 
 }
 
 // ProcessInterim mocks base method.
-func (m *MockAccountingProcessor) ProcessInterim(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error {
+func (m *MockAccountingProcessor) ProcessInterim(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ProcessInterim", ctx, attrs, srcIP, traceID)
-	ret0, _ := ret[0].(error)
-	return ret0
+	m.ctrl.Call(m, "ProcessInterim", ctx, attrs, srcIP, traceID)
 }
 
 // ProcessInterim indicates an expected call of ProcessInterim.
@@ -57,11 +55,9 @@ func (mr *MockAccountingProcessorMockRecorder) ProcessInterim(ctx, attrs, srcIP,
 }
 
 // ProcessOff mocks base method.
-func (m *MockAccountingProcessor) ProcessOff(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error {
+func (m *MockAccountingProcessor) ProcessOff(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ProcessOff", ctx, attrs, srcIP, traceID)
-	ret0, _ := ret[0].(error)
-	return ret0
+	m.ctrl.Call(m, "ProcessOff", ctx, attrs, srcIP, traceID)
 }
 
 // ProcessOff indicates an expected call of ProcessOff.
@@ -71,11 +67,9 @@ func (mr *MockAccountingProcessorMockRecorder) ProcessOff(ctx, attrs, srcIP, tra
 }
 
 // ProcessOn mocks base method.
-func (m *MockAccountingProcessor) ProcessOn(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error {
+func (m *MockAccountingProcessor) ProcessOn(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ProcessOn", ctx, attrs, srcIP, traceID)
-	ret0, _ := ret[0].(error)
-	return ret0
+	m.ctrl.Call(m, "ProcessOn", ctx, attrs, srcIP, traceID)
 }
 
 // ProcessOn indicates an expected call of ProcessOn.
@@ -85,11 +79,9 @@ func (mr *MockAccountingProcessorMockRecorder) ProcessOn(ctx, attrs, srcIP, trac
 }
 
 // ProcessStart mocks base method.
-func (m *MockAccountingProcessor) ProcessStart(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error {
+func (m *MockAccountingProcessor) ProcessStart(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ProcessStart", ctx, attrs, srcIP, traceID)
-	ret0, _ := ret[0].(error)
-	return ret0
+	m.ctrl.Call(m, "ProcessStart", ctx, attrs, srcIP, traceID)
 }
 
 // ProcessStart indicates an expected call of ProcessStart.
@@ -99,11 +91,9 @@ func (mr *MockAccountingProcessorMockRecorder) ProcessStart(ctx, attrs, srcIP, t
 }
 
 // ProcessStop mocks base method.
-func (m *MockAccountingProcessor) ProcessStop(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error {
+func (m *MockAccountingProcessor) ProcessStop(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ProcessStop", ctx, attrs, srcIP, traceID)
-	ret0, _ := ret[0].(error)
-	return ret0
+	m.ctrl.Call(m, "ProcessStop", ctx, attrs, srcIP, traceID)
 }
 
 // ProcessStop indicates an expected call of ProcessStop.

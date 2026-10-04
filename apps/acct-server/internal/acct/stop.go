@@ -8,7 +8,7 @@ import (
 )
 
 // ProcessStop はAcct-Stop処理を行う。
-func (p *Processor) ProcessStop(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error {
+func (p *Processor) ProcessStop(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) {
 	// 1. Stop重複チェック
 	isDuplicate, err := p.duplicateDetector.CheckStopDuplicate(ctx, attrs.AcctSessionID)
 	if err != nil {
@@ -21,7 +21,7 @@ func (p *Processor) ProcessStop(ctx context.Context, attrs *radius.AccountingAtt
 	}
 	if isDuplicate {
 		// Stop重複時はログ出力なしで処理終了
-		return nil
+		return
 	}
 
 	// 2. Stopとしてマーク
@@ -76,6 +76,4 @@ func (p *Processor) ProcessStop(ctx context.Context, attrs *radius.AccountingAtt
 		"output_octets", attrs.OutputOctets,
 		"session_time", attrs.SessionTime,
 	)
-
-	return nil
 }

@@ -9,7 +9,7 @@ import (
 )
 
 // ProcessInterim はAcct-Interim処理を行う。
-func (p *Processor) ProcessInterim(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error {
+func (p *Processor) ProcessInterim(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) {
 	// 1. 重複・順序異常の判定
 	check, err := p.duplicateDetector.CheckInterim(ctx, attrs.AcctSessionID, attrs.InputOctets, attrs.OutputOctets)
 	if err != nil {
@@ -21,12 +21,12 @@ func (p *Processor) ProcessInterim(ctx context.Context, attrs *radius.Accounting
 	}
 	if check.Duplicate {
 		slog.Warn("duplicate accounting interim",
-			"event_id", "ACCT_DUPLICATE_START",
+			"event_id", "ACCT_DUPLICATE_INTERIM",
 			"trace_id", traceID,
 			"src_ip", srcIP,
 			"acct_session_id", attrs.AcctSessionID,
 		)
-		return nil
+		return
 	}
 	if check.SequenceReason != "" {
 		// 順序異常でも課金データの欠損を避けるため処理を継続する
@@ -85,6 +85,4 @@ func (p *Processor) ProcessInterim(ctx context.Context, attrs *radius.Accounting
 		"input_octets", attrs.InputOctets,
 		"output_octets", attrs.OutputOctets,
 	)
-
-	return nil
 }

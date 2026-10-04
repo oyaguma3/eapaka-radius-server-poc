@@ -60,6 +60,7 @@ services:
       REDIS_PASS: ${VALKEY_PASSWORD}
       RADIUS_SECRET: ${RADIUS_SECRET}
       LOG_MASK_IMSI: ${LOG_MASK_IMSI:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
       valkey:
         condition: service_healthy

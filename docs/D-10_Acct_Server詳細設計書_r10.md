@@ -1,4 +1,4 @@
-# D-10 Acct Server詳細設計書 (r9)
+# D-10 Acct Server詳細設計書 (r10)
 
 ## ■セクション1: 概要
 
@@ -26,10 +26,10 @@
 | D-01 | ミニPC版設計仕様書 (r10) | システム構成、パッケージ利用マップ |
 | D-02 | Valkeyデータ設計仕様書 (r13) | データ構造、キー設計、Go構造体 |
 | D-03 | Vector-APIインターフェース定義書およびEAP-AKAステートマシン設計書 (r6) | 認証フロー |
-| D-04 | ログ仕様設計書 (r21) | event_id定義、ログフォーマット、IMSIマスキング |
-| D-06 | エラーハンドリング詳細設計書 (r8) | エラー分類、タイムアウト、リトライ戦略 |
+| D-04 | ログ仕様設計書 (r25) | event_id定義、ログフォーマット、IMSIマスキング |
+| D-06 | エラーハンドリング詳細設計書 (r13) | エラー分類、タイムアウト、リトライ戦略 |
 | D-11 | Vector API詳細設計書 (r7) | AKA認証ベクター生成 |
-| D-08 | インフラ設定・運用設計書 (r14) | Docker Compose設定、環境変数 |
+| D-08 | インフラ設定・運用設計書 (r17) | Docker Compose設定、環境変数 |
 | D-09 | Auth Server詳細設計書 (r11) | セッション作成処理（Class属性設定） |
 | E-02 | コーディング規約（簡易版） (r3) | コーディング規約 |
 | E-03 | 共通ライブラリ(pkg)設計書 (r4) | 共通ライブラリ（pkg） |
@@ -182,7 +182,7 @@ main.go
 | `acct` | Accounting処理ロジック（Start/Interim/Stop/On/Off）、インターフェース定義 | `Processor`, `DuplicateDetector` |
 | `session` | セッション状態管理、IMSI取得、インターフェース定義 | `Manager`, `IdentifierResolver` |
 | `store` | Valkeyアクセス抽象化（クライアント、セッション、重複検出、変換） | `ValkeyClient`, `ClientStore`, `SessionStore` |
-| `logging` | IMSIマスキング処理 | `MaskIMSI()` |
+| `logging`（共通ライブラリ `pkg/logging`） | IMSIマスキング処理、`LOG_LEVEL` の変換（`main.go` のロガー初期化） | `MaskIMSI()`, `MaskUserName()`, `ParseLevel()` |
 | `mocks` | テスト用モック（acct、session、store） | 各パッケージのモック実装 |
 
 ### 2.4 外部パッケージ依存
@@ -258,6 +258,8 @@ ENTRYPOINT ["/usr/local/bin/acct-server"]
 | `REDIS_PORT` | Yes | - | Valkeyポート番号 |
 | `REDIS_PASS` | Yes | - | Valkeyパスワード |
 | `RADIUS_SECRET` | No | - | デフォルトShared Secret（フォールバック用） |
+| `LISTEN_ADDR` | No | `:1813` | UDPリッスンアドレス |
+| `LOG_LEVEL` | No | `INFO` | ログレベル（`DEBUG` / `INFO` / `WARN` / `ERROR`。大文字小文字を区別しない。未知の値は `INFO`）。`pkg/logging.ParseLevel` で変換する（§10.3、D-04 §4.6） |
 | `LOG_MASK_IMSI` | No | `true` | IMSIマスキング有効化 |
 > **注記:** 環境変数名 `RADIUS_SECRET` はシステム全体で統一されている。D-01およびD-08の `.env` ファイルでも同名を使用すること。
 
@@ -267,25 +269,31 @@ ENTRYPOINT ["/usr/local/bin/acct-server"]
 // internal/config/config.go
 package config
 
-import "github.com/kelseyhightower/envconfig"
+import (
+    "fmt"
+
+    "github.com/kelseyhightower/envconfig"
+)
 
 type Config struct {
     // Valkey接続設定
     RedisHost string `envconfig:"REDIS_HOST" required:"true"`
     RedisPort string `envconfig:"REDIS_PORT" required:"true"`
     RedisPass string `envconfig:"REDIS_PASS" required:"true"`
-    
+
     // RADIUS設定
-    RadiusSecret string `envconfig:"RADIUS_SECRET" default:""`
-    
+    RadiusSecret string `envconfig:"RADIUS_SECRET"`
+    ListenAddr   string `envconfig:"LISTEN_ADDR" default:":1813"`
+
     // ログ設定
-    LogMaskIMSI bool `envconfig:"LOG_MASK_IMSI" default:"true"`
+    LogLevel    string `envconfig:"LOG_LEVEL" default:"INFO"`
+    LogMaskIMSI bool   `envconfig:"LOG_MASK_IMSI" default:"true"`
 }
 
 func Load() (*Config, error) {
     var cfg Config
     if err := envconfig.Process("", &cfg); err != nil {
-        return nil, err
+        return nil, fmt.Errorf("failed to load config: %w", err)
     }
     return &cfg, nil
 }
@@ -838,7 +846,7 @@ Acct ServerはValkeyのセッションデータ（`sess:{UUID}`）を管理す�
 ```go
 // internal/acct/start.go（実装）
 // ProcessStart はAcct-Start処理を行う。
-func (p *Processor) ProcessStart(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error {
+func (p *Processor) ProcessStart(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) {
     // 1. 重複検出
     isDuplicate, err := p.duplicateDetector.CheckAndMarkStart(ctx, attrs.AcctSessionID)
     if err != nil {
@@ -866,7 +874,7 @@ func (p *Processor) ProcessStart(ctx context.Context, attrs *radius.AccountingAt
             "src_ip", srcIP,
             "acct_session_id", attrs.AcctSessionID,
         )
-        return nil
+        return
     }
 
     // 2. Class属性からセッションUUID取得
@@ -922,8 +930,6 @@ func (p *Processor) ProcessStart(ctx context.Context, attrs *radius.AccountingAt
         "imsi", imsi,
         "acct_session_id", attrs.AcctSessionID,
     )
-
-    return nil
 }
 ```
 
@@ -931,7 +937,7 @@ func (p *Processor) ProcessStart(ctx context.Context, attrs *radius.AccountingAt
 
 Interim受信時は、まず `CheckInterim`（§5.8）で重複と順序異常を1回の判定で求める。
 
-- 重複（直前と同一の `interim:{input}:{output}`）: WARN `ACCT_DUPLICATE_START`（msg `duplicate accounting interim`）を出力して処理を終了する。
+- 重複（直前と同一の `interim:{input}:{output}`）: WARN `ACCT_DUPLICATE_INTERIM`（msg `duplicate accounting interim`）を出力して処理を終了する。
 - 順序異常（Start未受信: `no_start_received`、Stop受信後: `interim_after_stop`）: WARN `ACCT_SEQUENCE_ERR`（msg `interim sequence error`、`reason` 付き）を出力し、課金データの欠損を避けるため処理を継続する。
 - 判定時のValkeyエラー（Get / Set 失敗）: ERROR `VALKEY_CONN_ERR` を出力して処理を継続する（Get 失敗時は重複・順序異常を判定できないため、正常として扱う）。
 
@@ -940,7 +946,7 @@ Interim受信時は、まず `CheckInterim`（§5.8）で重複と順序異常�
 ```go
 // internal/acct/interim.go（実装）
 // ProcessInterim はAcct-Interim処理を行う。
-func (p *Processor) ProcessInterim(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error {
+func (p *Processor) ProcessInterim(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) {
     // 1. 重複・順序異常の判定
     check, err := p.duplicateDetector.CheckInterim(ctx, attrs.AcctSessionID, attrs.InputOctets, attrs.OutputOctets)
     if err != nil {
@@ -952,12 +958,12 @@ func (p *Processor) ProcessInterim(ctx context.Context, attrs *radius.Accounting
     }
     if check.Duplicate {
         slog.Warn("duplicate accounting interim",
-            "event_id", "ACCT_DUPLICATE_START",
+            "event_id", "ACCT_DUPLICATE_INTERIM",
             "trace_id", traceID,
             "src_ip", srcIP,
             "acct_session_id", attrs.AcctSessionID,
         )
-        return nil
+        return
     }
     if check.SequenceReason != "" {
         // 順序異常でも課金データの欠損を避けるため処理を継続する
@@ -1016,8 +1022,6 @@ func (p *Processor) ProcessInterim(ctx context.Context, attrs *radius.Accounting
         "input_octets", attrs.InputOctets,
         "output_octets", attrs.OutputOctets,
     )
-
-    return nil
 }
 ```
 
@@ -1026,7 +1030,7 @@ func (p *Processor) ProcessInterim(ctx context.Context, attrs *radius.Accounting
 ```go
 // internal/acct/stop.go（実装）
 // ProcessStop はAcct-Stop処理を行う。
-func (p *Processor) ProcessStop(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error {
+func (p *Processor) ProcessStop(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) {
     // 1. Stop重複チェック
     isDuplicate, err := p.duplicateDetector.CheckStopDuplicate(ctx, attrs.AcctSessionID)
     if err != nil {
@@ -1039,7 +1043,7 @@ func (p *Processor) ProcessStop(ctx context.Context, attrs *radius.AccountingAtt
     }
     if isDuplicate {
         // Stop重複時はログ出力なしで処理終了
-        return nil
+        return
     }
 
     // 2. Stopとしてマーク
@@ -1094,8 +1098,6 @@ func (p *Processor) ProcessStop(ctx context.Context, attrs *radius.AccountingAtt
         "output_octets", attrs.OutputOctets,
         "session_time", attrs.SessionTime,
     )
-
-    return nil
 }
 ```
 
@@ -1105,12 +1107,12 @@ NAS起動通知（Accounting-On, Acct-Status-Type=7）を処理する。
 
 **設計方針:**
 - ログ出力のみ（セッション操作・重複検出なし）
-- 常にnil返却（エラーにならない）
+- errorを返さない（Start / Interim / Stopと同様。§10.1）
 - NAS-Identifier / NAS-IP-Address でNASを識別
 
 ```go
 // internal/acct/on_off.go
-func (p *Processor) ProcessOn(_ context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error {
+func (p *Processor) ProcessOn(_ context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) {
     slog.Info("accounting on",
         "event_id", "ACCT_ON",
         "trace_id", traceID,
@@ -1118,7 +1120,6 @@ func (p *Processor) ProcessOn(_ context.Context, attrs *radius.AccountingAttribu
         "nas_ip_address", attrs.NasIPAddress,
         "nas_identifier", attrs.NasIdentifier,
     )
-    return nil
 }
 ```
 
@@ -1130,7 +1131,7 @@ NASシャットダウン通知（Accounting-Off, Acct-Status-Type=8）を処理�
 
 ```go
 // internal/acct/on_off.go
-func (p *Processor) ProcessOff(_ context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error {
+func (p *Processor) ProcessOff(_ context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) {
     slog.Info("accounting off",
         "event_id", "ACCT_OFF",
         "trace_id", traceID,
@@ -1138,7 +1139,6 @@ func (p *Processor) ProcessOff(_ context.Context, attrs *radius.AccountingAttrib
         "nas_ip_address", attrs.NasIPAddress,
         "nas_identifier", attrs.NasIdentifier,
     )
-    return nil
 }
 ```
 
@@ -1153,7 +1153,7 @@ Acct-Session-Idをキー（`acct:seen:{Acct-Session-Id}`、TTL 86400秒）とし
 | Start | `stop` | 順序異常（`start_after_stop`） | `start` | WARN `ACCT_SEQUENCE_ERR` | 継続（新規セッションとして扱う） |
 | Interim | 未登録 | 順序異常（`no_start_received`） | `interim:{input}:{output}` | WARN `ACCT_SEQUENCE_ERR` | 継続 |
 | Interim | `start` | 正常 | `interim:{input}:{output}` | - | 継続 |
-| Interim | 同一の `interim:{input}:{output}` | 重複 | 変更しない | WARN `ACCT_DUPLICATE_START` | 終了 |
+| Interim | 同一の `interim:{input}:{output}` | 重複 | 変更しない | WARN `ACCT_DUPLICATE_INTERIM` | 終了 |
 | Interim | 別値の `interim:*` | 正常 | `interim:{input}:{output}` | - | 継続 |
 | Interim | `stop` | 順序異常（`interim_after_stop`） | `interim:{input}:{output}` | WARN `ACCT_SEQUENCE_ERR` | 継続 |
 | Stop | `stop` | 重複 | 変更しない | なし | 終了 |
@@ -1536,7 +1536,7 @@ D-06で定義されたエラーハンドリングに基づく。
 |-----------|---------|------|-----------|------|
 | セッション不在 | Start時にClass属性なし・不正、またはStart / Interim時に sess:{UUID}不在（TTL超過による削除済みを含む。区別しない）。Class属性なしのInterimは対象外（セッション更新・ログなし） | セッション更新せず処理継続（不在の sess:{UUID} は作成しない） | Accounting-Response | WARN: `ACCT_SESSION_NOT_FOUND` |
 | Start重複 | 同一Acct-Session-Idで再Start | 既存維持 | Accounting-Response | WARN: `ACCT_DUPLICATE_START` |
-| Interim重複 | 同一Acct-Session-Idで直前と同一値のInterim | 既存維持（処理終了） | Accounting-Response | WARN: `ACCT_DUPLICATE_START` |
+| Interim重複 | 同一Acct-Session-Idで直前と同一値のInterim | 既存維持（処理終了） | Accounting-Response | WARN: `ACCT_DUPLICATE_INTERIM` |
 | StartなしでInterim | Acct-Session-Id未登録（acct:seen なし）でInterim | 受信値を記録して処理継続（reason=`no_start_received`） | Accounting-Response | WARN: `ACCT_SEQUENCE_ERR` |
 | Stop後のInterim | 同一Acct-Session-IdでStop受信後にInterim | 受信値を記録して処理継続（reason=`interim_after_stop`） | Accounting-Response | WARN: `ACCT_SEQUENCE_ERR` |
 | Stop後にStart | 同一Acct-Session-Idで再Start | 新規セッションとして処理継続（reason=`start_after_stop`） | Accounting-Response | WARN: `ACCT_SEQUENCE_ERR` |
@@ -1615,7 +1615,6 @@ D-04で定義されたevent_idを使用する。
 | `PKT_RECV` | INFO | Status-Server応答送信（Accounting-Request受信時は出力しない） |
 | `VALKEY_CONN_ERR` | ERROR | 起動時のValkey接続失敗、実行時の読み取り系Valkeyエラー（重複・順序判定（Interim受信値の記録失敗を含む）・セッション存在確認） |
 | `DB_WRITE_ERR` | ERROR | Valkey書き込み失敗（セッション更新・停止マーク・セッション削除・インデックス削除） |
-| `SYS_ERR` | ERROR | Accounting処理がエラーを返した（現行は常にnilのため通常出力されない） |
 | `PKT_SEND_ERR` | ERROR | Accounting-Response / Status-Server応答の送信失敗 |
 | `RADIUS_PARSE_ERR` | WARN | Accounting-Requestの属性抽出失敗 |
 | `RADIUS_AUTH_ERR` | WARN | Request Authenticator検証失敗、Status-ServerのMessage-Authenticator検証失敗 |
@@ -1623,7 +1622,8 @@ D-04で定義されたevent_idを使用する。
 | `RADIUS_NO_SECRET` | WARN | Shared Secret不明 |
 | `RADIUS_UNKNOWN_CODE` | WARN | 未知のRADIUS Code / 未知のAcct-Status-Type |
 | `ACCT_SESSION_NOT_FOUND` | WARN | Start時のClass属性なし、Start / Interim時のセッション不在（TTL超過を含む） |
-| `ACCT_DUPLICATE_START` | WARN | 重複Start / 直前と同一値のInterim |
+| `ACCT_DUPLICATE_START` | WARN | 重複Start |
+| `ACCT_DUPLICATE_INTERIM` | WARN | 重複Interim（直前に受信したInterimと同一値） |
 | `ACCT_SEQUENCE_ERR` | WARN | 順序異常（Stop後のStart: `start_after_stop`、StartなしのInterim: `no_start_received`、Stop後のInterim: `interim_after_stop`） |
 | `ACCT_START` | INFO | Accounting-Start受信 |
 | `ACCT_INTERIM` | INFO | Accounting-Interim受信 |
@@ -1705,6 +1705,18 @@ D-04で定義されたevent_idを使用する。
   "acct_session_id": "sess-abc123"
 }
 
+// ACCT_DUPLICATE_INTERIM
+{
+  "time": "2026-01-20T10:05:00.456Z",
+  "level": "WARN",
+  "app": "acct-server",
+  "event_id": "ACCT_DUPLICATE_INTERIM",
+  "msg": "duplicate accounting interim",
+  "trace_id": "c3d4e5f6-a7b8-4c9d-8e0f-2a3b4c5d6e7f",
+  "src_ip": "192.168.1.100",
+  "acct_session_id": "sess-abc123"
+}
+
 // ACCT_ON（NAS起動通知）
 {
   "time": "2026-01-20T09:00:00.100Z",
@@ -1775,12 +1787,15 @@ package acct
 
 import "context"
 
+// AccountingProcessor はAccounting処理のインターフェース。
+// 各処理は内部のエラー（Valkey障害等）をログに記録して継続し、呼び出し元には返さない
+// （RADIUS的には常にAccounting-Responseを返すため）。
 type AccountingProcessor interface {
-    ProcessStart(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error
-    ProcessInterim(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error
-    ProcessStop(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error
-    ProcessOn(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error
-    ProcessOff(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error
+    ProcessStart(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string)
+    ProcessInterim(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string)
+    ProcessStop(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string)
+    ProcessOn(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string)
+    ProcessOff(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string)
 }
 
 // DuplicateDetector は重複・順序異常検出のインターフェース（§5.8）
@@ -1894,20 +1909,19 @@ func (h *Handler) handleAccountingRequest(w radius.ResponseWriter, r *radius.Req
         return
     }
 
-    // 3. Status-Type別処理
+    // 3. Status-Type別処理（各処理は内部のエラーをログに記録して継続する）
     ctx := context.Background()
-    var procErr error
     switch attrs.AcctStatusType {
     case radiuspkg.AcctStatusTypeStart:
-        procErr = h.processor.ProcessStart(ctx, attrs, srcIP, traceID)
+        h.processor.ProcessStart(ctx, attrs, srcIP, traceID)
     case radiuspkg.AcctStatusTypeStop:
-        procErr = h.processor.ProcessStop(ctx, attrs, srcIP, traceID)
+        h.processor.ProcessStop(ctx, attrs, srcIP, traceID)
     case radiuspkg.AcctStatusTypeInterim:
-        procErr = h.processor.ProcessInterim(ctx, attrs, srcIP, traceID)
+        h.processor.ProcessInterim(ctx, attrs, srcIP, traceID)
     case radiuspkg.AcctStatusTypeOn:
-        procErr = h.processor.ProcessOn(ctx, attrs, srcIP, traceID)
+        h.processor.ProcessOn(ctx, attrs, srcIP, traceID)
     case radiuspkg.AcctStatusTypeOff:
-        procErr = h.processor.ProcessOff(ctx, attrs, srcIP, traceID)
+        h.processor.ProcessOff(ctx, attrs, srcIP, traceID)
     default:
         slog.Warn("未対応のAcct-Status-Type",
             "event_id", "RADIUS_UNKNOWN_CODE",
@@ -1917,19 +1931,18 @@ func (h *Handler) handleAccountingRequest(w radius.ResponseWriter, r *radius.Req
         return // パケット破棄
     }
 
-    // 4. 処理エラーがあってもAccounting-Responseは返す
-    if procErr != nil {
-        slog.Error("処理エラー",
-            "event_id", "SYS_ERR",
-            "trace_id", traceID,
-            "error", procErr.Error())
-    }
-
-    // 5. Accounting-Response生成・送信
+    // 4. Accounting-Response生成・送信
     response := radiuspkg.BuildAccountingResponse(r.Packet, attrs.ProxyStates)
-    w.Write(response)
+    if err := w.Write(response); err != nil {
+        slog.Error("RADIUS応答送信失敗",
+            "event_id", "PKT_SEND_ERR",
+            "trace_id", traceID,
+            "error", err)
+    }
 }
 ```
+
+> **注記:** Accounting処理（`ProcessStart` / `ProcessInterim` / `ProcessStop` / `ProcessOn` / `ProcessOff`）はerrorを返さない。内部のエラー（Valkey障害等）は各処理が `VALKEY_CONN_ERR` / `DB_WRITE_ERR` 等でログに記録して処理を継続するため（§7.1）、パケット検証・属性抽出に成功し、Acct-Status-Typeが対応値であれば、常にAccounting-Responseを返す。Authenticator検証失敗・属性抽出失敗・未知のAcct-Status-Typeはパケットを破棄する（応答なし）。
 
 ### 10.2 Valkey接続復旧検知
 
@@ -1937,8 +1950,10 @@ Valkey接続の復旧検知（`downtime_ms` の記録）は実装しない（D-0
 
 ### 10.3 起動・シャットダウン
 
+ロガーは環境変数 `LOG_LEVEL`（既定 `INFO`）以上のレベルを出力するJSON形式で初期化し、全ログに `app=acct-server` を付与する。レベル文字列は共通ライブラリの `pkg/logging.ParseLevel`（E-03 §5.6）で `slog.Level` に変換する（大文字小文字を区別せず前後の空白を除去、`WARNING` も `WARN`、未知の値・空文字は `INFO`）。起動ログ `acct-server起動開始` に `listen_addr` と `log_level`（設定値をそのまま出力）を出力する（D-04 §3.2.5、§4.6）。Acct ServerにはDEBUGログはない。
+
 ```go
-// main.go
+// main.go（実装）
 package main
 
 import (
@@ -1947,52 +1962,92 @@ import (
     "os"
     "os/signal"
     "syscall"
-    
-    "acct-server/internal/config"
-    "acct-server/internal/server"
+
+    "github.com/oyaguma3/eapaka-radius-server-poc/apps/acct-server/internal/acct"
+    "github.com/oyaguma3/eapaka-radius-server-poc/apps/acct-server/internal/config"
+    "github.com/oyaguma3/eapaka-radius-server-poc/apps/acct-server/internal/server"
+    "github.com/oyaguma3/eapaka-radius-server-poc/apps/acct-server/internal/session"
+    "github.com/oyaguma3/eapaka-radius-server-poc/apps/acct-server/internal/store"
+    "github.com/oyaguma3/eapaka-radius-server-poc/pkg/logging"
 )
 
 func main() {
-    // ログ設定
-    slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-        Level: slog.LevelInfo,
-    })))
-    
-    // 設定読み込み
+    // 1. 環境変数読み込み
     cfg, err := config.Load()
     if err != nil {
-        slog.Error("failed to load config", "error", err.Error())
+        slog.Error("設定読み込み失敗", "error", err)
         os.Exit(1)
     }
-    
-    // サーバー初期化
-    srv, err := server.New(cfg)
+
+    // 2. ロガー初期化（JSON形式、LOG_LEVEL 以上。既定 INFO）
+    logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+        Level: logging.ParseLevel(cfg.LogLevel),
+    })).With("app", "acct-server")
+    slog.SetDefault(logger)
+
+    slog.Info("acct-server起動開始",
+        "listen_addr", cfg.ListenAddr,
+        "log_level", cfg.LogLevel,
+    )
+
+    // 3. Valkeyクライアント初期化
+    valkeyClient, err := store.NewValkeyClient(cfg)
     if err != nil {
-        slog.Error("failed to create server", "error", err.Error())
+        slog.Error("Valkey接続失敗",
+            "event_id", "VALKEY_CONN_ERR",
+            "error", err,
+        )
         os.Exit(1)
     }
-    
-    // シグナルハンドリング
-    ctx, cancel := context.WithCancel(context.Background())
-    defer cancel()
-    
-    sigCh := make(chan os.Signal, 1)
-    signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-    
+    defer valkeyClient.Close()
+
+    slog.Info("Valkey接続完了", "addr", cfg.ValkeyAddr())
+
+    // 4. Store層生成
+    clientStore := store.NewClientStore(valkeyClient)
+    sessionStore := store.NewSessionStore(valkeyClient)
+    duplicateStore := store.NewDuplicateStore(valkeyClient)
+
+    // 5. Session層生成
+    sessionManager := session.NewManager(sessionStore)
+    identifierResolver := session.NewIdentifierResolver(sessionManager, cfg.LogMaskIMSI)
+
+    // 6. Acct層生成
+    duplicateDetector := acct.NewDuplicateDetector(duplicateStore)
+    processor := acct.NewProcessor(sessionManager, duplicateDetector, identifierResolver)
+
+    // 7. RADIUS Secret解決
+    secretSource := server.NewSecretSource(clientStore, cfg.RadiusSecret)
+
+    // 8. RADIUSハンドラ
+    handler := server.NewHandler(processor)
+
+    // 9. UDPサーバー
+    srv := server.NewServer(cfg.ListenAddr, handler, secretSource)
+
+    // 10. サーバー起動（goroutine）
     go func() {
-        <-sigCh
-        slog.Info("shutdown signal received")
-        cancel()
+        slog.Info("RADIUSサーバー起動", "addr", cfg.ListenAddr)
+        if err := srv.ListenAndServe(); err != nil {
+            slog.Error("サーバーエラー", "error", err)
+        }
     }()
-    
-    // サーバー起動
-    slog.Info("starting acct-server", "port", 1813)
-    if err := srv.ListenAndServe(ctx); err != nil {
-        slog.Error("server error", "error", err.Error())
-        os.Exit(1)
+
+    // 11. シグナル待機 → Graceful Shutdown
+    sigCh := make(chan os.Signal, 1)
+    signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+
+    sig := <-sigCh
+    slog.Info("シグナル受信、シャットダウン開始", "signal", sig)
+
+    ctx, cancel := context.WithTimeout(context.Background(), config.ShutdownTimeout)
+    defer cancel()
+
+    if err := srv.Shutdown(ctx); err != nil {
+        slog.Warn("シャットダウンエラー", "error", err)
     }
-    
-    slog.Info("acct-server stopped")
+
+    slog.Info("acct-server停止完了")
 }
 ```
 
@@ -2022,3 +2077,4 @@ func main() {
 | r7 | 2026-10-04 | D-04 r19 の event_id 全面整合に合わせて修正: §8.1 event_id一覧から実装に存在しない `VALKEY_CONN_RESTORED` / `ACCT_SESSION_EXPIRED` を削除し、`SYS_ERR` / `PKT_SEND_ERR` / `RADIUS_SECRET_ERR` を追加、各説明を実装の出力条件に修正。§7.1.1〜§7.1.3 のエラー表を修正（起動時 `VALKEY_CONN_ERR`、書き込み系 `DB_WRITE_ERR`、`RADIUS_SECRET_ERR`、`RADIUS_PARSE_ERR` は属性抽出失敗でありパケットデコード失敗はログなし、未知のRADIUS Code、`PKT_SEND_ERR` を追加。セッションTTL超過は `ACCT_SESSION_NOT_FOUND` と区別しない旨を明記）。§10.2 Valkey接続復旧検知を「実装しない」に改め実装例を削除。§4.2 Shared Secret解決、§5.3〜§5.5 Start/Interim/Stop処理のコード例を実装（`trace_id` 付与、`RADIUS_SECRET_ERR`、重複チェック時の `VALKEY_CONN_ERR`、Stop後Startの `ACCT_SEQUENCE_ERR`、停止マーク失敗の `DB_WRITE_ERR`）に合わせて更新。§4.7 Status-Server処理のログ（msg・`trace_id`、`packet_code` 削除）を実装に合わせて修正。§8.2 ログ出力例に `trace_id` を追加し、StartなしInterimの msg を `interim without start` に修正。§1.3 関連ドキュメントの版数を現行版に更新（D-01 r10、D-02 r12、D-03 r6（文書名も現行名に修正）、D-04 r19、D-06 r7、D-08 r14、D-09 r10、E-02 r3）。関連ドキュメント表の文書名を実在の文書に修正（存在しない D-05「Valkeyキー・TTL設計書」を削除、D-07「AKA Vector Server」→ D-11 Vector API詳細設計書、E-03 → 共通ライブラリ(pkg)設計書） |
 | r8 | 2026-10-04 | ログのIMSIマスク漏れ修正の反映: §6.1 IMSI取得優先順位の優先度3（IMSI抽出失敗時のUser-Name）を「そのまま」からマスク済み（pkg/logging.MaskUserName）に修正、§6.2のResolveIMSIのコードを実装（`internal/session/identifier.go`。引数 userName / classUUID、pkg/logging の MaskIMSI / MaskUserName を使用）に合わせ更新、§6.3を pkg/logging の MaskIMSI / MaskUserName による実装に更新。関連ドキュメント参照版数更新（D-04 r19→r20、D-06 r7→r8、D-09 r10→r11、E-03 r3→r4）。あわせて、廃止済みの internal/logging（mask.go）をディレクトリ構成から削除（IMSIマスキングは pkg/logging を使用） |
 | r9 | 2026-10-04 | Interimのシーケンス判定修正の反映: §5.4 Acct-Interim処理を実装（`CheckInterim` による重複・順序異常の一括判定、順序異常の msg `interim sequence error`、`sess:{UUID}` の存在確認と不在時の `ACCT_SESSION_NOT_FOUND`）に合わせて説明とコードを更新。§5.8 重複・順序異常検出を実装（`internal/acct/duplicate.go`）のコードに差し替え、`acct:seen` の値による判定表を追加（Stop後のInterim `interim_after_stop` を新設。削除した `CheckInterimDuplicate` / `HasSeenStart` / `MarkAsStart` の記載を削除し、旧実装でStartなしのInterimを検出できなかった旨を注記）。§5.7 `UpdateOnInterim` に存在確認後に呼び出す旨を注記。§7.1.3 データエラー表（セッション不在にInterimを追加、StartなしでInterimの対処を「受信値を記録して処理継続」に修正、Stop後のInterimを新設）、§8.1 event_id一覧（`VALKEY_CONN_ERR`、`ACCT_SESSION_NOT_FOUND`、`ACCT_DUPLICATE_START`、`ACCT_SEQUENCE_ERR` の説明）、§8.2 ログ出力例（StartなしInterimの msg）、§9.2 インターフェース定義（`DuplicateDetector`、`InterimCheckResult` を追加）を更新。関連ドキュメント参照版数更新（D-02 r12→r13、D-04 r20→r21） |
+| r10 | 2026-10-04 | acct-server の重複 Interim の event_id 分離・SYS_ERR 削除・LOG_LEVEL 対応の実装修正の反映: §5.4 / §5.8 / §7.1.3 / §8.1 で重複Interimの event_id を `ACCT_DUPLICATE_START` から `ACCT_DUPLICATE_INTERIM` に変更し、§8.2 にログ出力例を追加（重複Startは従来どおり `ACCT_DUPLICATE_START`）。Accounting処理（`ProcessStart` / `ProcessInterim` / `ProcessStop` / `ProcessOn` / `ProcessOff`）の戻り値から error を外したことに合わせ、§5.3〜§5.7 のコード、§9.2 `AccountingProcessor` の定義、§10.1 ハンドラー（`procErr` と `SYS_ERR`（`処理エラー`）の分岐を削除し、`PKT_SEND_ERR` を実装どおり追記。常にAccounting-Responseを返す旨を注記）を更新し、§8.1 から `SYS_ERR` を削除。`LOG_LEVEL` 対応: §3.1 環境変数一覧に `LOG_LEVEL`（と既存の `LISTEN_ADDR`）を追加、§3.2 設定構造体を実装に合わせ更新、§10.3 起動・シャットダウンのコードを実装の `main.go`（`logging.ParseLevel(cfg.LogLevel)`、起動ログの `log_level`）に差し替え、§2.3 `logging` を共通ライブラリ `pkg/logging` に修正。関連ドキュメント参照版数更新（D-04 r21→r25、D-06 r8→r13、D-08 r14→r17） |

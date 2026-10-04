@@ -6,18 +6,20 @@ import (
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/acct-server/internal/radius"
 )
 
-// AccountingProcessor はAccounting処理のインターフェース
+// AccountingProcessor はAccounting処理のインターフェース。
+// 各処理は内部のエラー（Valkey障害等）をログに記録して継続し、呼び出し元には返さない
+// （RADIUS的には常にAccounting-Responseを返すため）。
 type AccountingProcessor interface {
 	// ProcessStart はAcct-Start処理を行う
-	ProcessStart(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error
+	ProcessStart(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string)
 	// ProcessInterim はAcct-Interim処理を行う
-	ProcessInterim(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error
+	ProcessInterim(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string)
 	// ProcessStop はAcct-Stop処理を行う
-	ProcessStop(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error
+	ProcessStop(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string)
 	// ProcessOn はAccounting-On（NAS起動通知）を処理する
-	ProcessOn(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error
+	ProcessOn(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string)
 	// ProcessOff はAccounting-Off（NASシャットダウン通知）を処理する
-	ProcessOff(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error
+	ProcessOff(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string)
 }
 
 // DuplicateDetector は重複・順序異常検出のインターフェース
