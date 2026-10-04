@@ -177,10 +177,7 @@ func TestEngine_PermanentAKA_Success(t *testing.T) {
 		EAPMessage: eapMsg,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionChallenge {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionChallenge)
 	}
@@ -217,10 +214,7 @@ func TestEngine_PermanentAKAPrime_Success(t *testing.T) {
 		EAPMessage: eapMsg,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionChallenge {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionChallenge)
 	}
@@ -250,10 +244,7 @@ func TestEngine_Pseudonym_Fallback(t *testing.T) {
 		EAPMessage: eapMsg,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionChallenge {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionChallenge)
 	}
@@ -280,10 +271,7 @@ func TestEngine_SIM_Reject(t *testing.T) {
 		EAPMessage: eapMsg,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -310,10 +298,7 @@ func TestEngine_InvalidIdentity_Reject(t *testing.T) {
 		EAPMessage: eapMsg,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -344,10 +329,7 @@ func TestEngine_VectorError_Reject(t *testing.T) {
 		EAPMessage: eapMsg,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -378,10 +360,7 @@ func TestEngine_Vector404_Reject(t *testing.T) {
 		EAPMessage: eapMsg,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -459,10 +438,7 @@ func TestEngine_ChallengeSuccess_Accept(t *testing.T) {
 		EAPMessage:    challengeResp,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionAccept {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionAccept)
 	}
@@ -503,10 +479,7 @@ func TestEngine_MACInvalid_Reject(t *testing.T) {
 		EAPMessage: challengeResp,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -540,10 +513,7 @@ func TestEngine_RESMismatch_Reject(t *testing.T) {
 		EAPMessage: challengeResp,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -573,10 +543,7 @@ func TestEngine_PolicyNotFound_Reject(t *testing.T) {
 		EAPMessage:    challengeResp,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -608,10 +575,7 @@ func TestEngine_PolicyDenied_Reject(t *testing.T) {
 		EAPMessage:    challengeResp,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -635,10 +599,7 @@ func TestEngine_ContextNotFound_Reject(t *testing.T) {
 		EAPMessage: challengeResp,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -673,10 +634,7 @@ func TestEngine_SyncFailure_Success(t *testing.T) {
 		EAPMessage: syncMsg,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionChallenge {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionChallenge)
 	}
@@ -705,10 +663,7 @@ func TestEngine_SyncFailure_LimitExceeded(t *testing.T) {
 		EAPMessage: syncMsg,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -739,10 +694,7 @@ func TestEngine_AuthReject(t *testing.T) {
 		EAPMessage: authRejectMsg,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -771,10 +723,7 @@ func TestEngine_ClientError(t *testing.T) {
 		EAPMessage: clientErrMsg,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -802,10 +751,7 @@ func TestEngine_UnknownSubtype(t *testing.T) {
 		EAPMessage: notifMsg,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -824,10 +770,7 @@ func TestEngine_EAPParseFail(t *testing.T) {
 		EAPMessage: []byte{},
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -865,10 +808,7 @@ func TestEngine_IdentityResponse_Success(t *testing.T) {
 		EAPMessage: identityMsg,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionChallenge {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionChallenge)
 	}
@@ -898,10 +838,7 @@ func TestEngine_IdentityResponse_NonPermanent_Reject(t *testing.T) {
 		EAPMessage: identityMsg,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -931,10 +868,7 @@ func TestEngine_IdentityResponse_InvalidIdentity_Reject(t *testing.T) {
 		EAPMessage: identityMsg,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -959,10 +893,7 @@ func TestEngine_FullAuthRedirect_CtxCreateError(t *testing.T) {
 		EAPMessage: eapMsg,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -988,10 +919,7 @@ func TestEngine_CircuitBreakerOpen_Reject(t *testing.T) {
 		EAPMessage: eapMsg,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -1015,10 +943,7 @@ func TestEngine_VectorUnknownError_Reject(t *testing.T) {
 		EAPMessage: eapMsg,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -1041,10 +966,7 @@ func TestEngine_Identity_NotIdentitySubtype(t *testing.T) {
 		EAPMessage: challengeMsg,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionDrop {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionDrop)
 	}
@@ -1075,10 +997,7 @@ func TestEngine_Identity_UnexpectedStage_Reject(t *testing.T) {
 		EAPMessage: identityMsg,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -1111,10 +1030,7 @@ func TestEngine_Resync_VectorError(t *testing.T) {
 		EAPMessage: syncMsg,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -1144,10 +1060,7 @@ func TestEngine_Resync_WrongStage_Reject(t *testing.T) {
 		EAPMessage: syncMsg,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -1172,10 +1085,7 @@ func TestEngine_PermanentIdentity_CtxCreateError(t *testing.T) {
 		EAPMessage: eapMsg,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -1206,10 +1116,7 @@ func TestEngine_ChallengeResponse_WrongStage_Reject(t *testing.T) {
 		EAPMessage: challengeResp,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -1302,10 +1209,7 @@ func TestEngine_RFC3748Identity_PermanentAKA_Success(t *testing.T) {
 		EAPMessage: eapMsg,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionChallenge {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionChallenge)
 	}
@@ -1335,10 +1239,7 @@ func TestEngine_FullAuthRedirect_UpdateError(t *testing.T) {
 		EAPMessage: eapMsg,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -1369,10 +1270,7 @@ func TestEngine_RequestVector_CtxUpdateError(t *testing.T) {
 		EAPMessage: eapMsg,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -1402,10 +1300,7 @@ func TestEngine_Subsequent_ParseError_Reject(t *testing.T) {
 		EAPMessage: []byte{0x02, 0x01},
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -1438,10 +1333,7 @@ func TestEngine_IdentityResponse_UnsupportedIdentity_Reject(t *testing.T) {
 		EAPMessage: identityMsg,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -1473,10 +1365,7 @@ func TestEngine_IdentityResponse_CtxUpdateError_Reject(t *testing.T) {
 		EAPMessage: identityMsg,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -1511,10 +1400,7 @@ func TestEngine_ChallengeResponse_KautDecodeError_Reject(t *testing.T) {
 		EAPMessage: challengeResp,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -1548,10 +1434,7 @@ func TestEngine_ChallengeResponse_XRESDecodeError_Reject(t *testing.T) {
 		EAPMessage: challengeResp,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -1585,10 +1468,7 @@ func TestEngine_ChallengeResponse_MSKDecodeError_Reject(t *testing.T) {
 		EAPMessage: challengeResp,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -1646,10 +1526,7 @@ func TestEngine_ChallengeSuccess_AKAPrime_Accept(t *testing.T) {
 		EAPMessage:    challengeResp,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionAccept {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionAccept)
 	}
@@ -1684,10 +1561,7 @@ func TestEngine_ChallengeResponse_OtherVerifyError_Reject(t *testing.T) {
 		EAPMessage: challengeResp,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -1722,10 +1596,7 @@ func TestEngine_ChallengeResponse_SessionCreateError_Reject(t *testing.T) {
 		EAPMessage:    challengeResp,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -1762,10 +1633,7 @@ func TestEngine_ChallengeResponse_AddUserIndexError_Continue(t *testing.T) {
 		EAPMessage:    challengeResp,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionAccept {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionAccept)
 	}
@@ -1799,10 +1667,7 @@ func TestEngine_Resync_AUTSNotFound_Reject(t *testing.T) {
 		EAPMessage: syncMsg,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -1852,10 +1717,7 @@ func TestEngine_Resync_AKAPrime_Success(t *testing.T) {
 		EAPMessage: syncMsg,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionChallenge {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionChallenge)
 	}
@@ -1893,10 +1755,7 @@ func TestEngine_Resync_CtxUpdateError_Reject(t *testing.T) {
 		EAPMessage: syncMsg,
 	}
 
-	result, err := eng.Process(context.Background(), req)
-	if err != nil {
-		t.Fatalf("予期しないエラー: %v", err)
-	}
+	result := eng.Process(context.Background(), req)
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
 	}
@@ -1937,9 +1796,7 @@ func TestEngine_IdentityLog_UserNameMasked(t *testing.T) {
 				UserName:   tt.userName,
 				EAPMessage: buildIdentityEAPMessage(1, eapaka.TypeAKA),
 			}
-			if _, err := eng.Process(context.Background(), req); err != nil {
-				t.Fatalf("予期しないエラー: %v", err)
-			}
+			eng.Process(context.Background(), req)
 
 			logs := buf.String()
 			if !strings.Contains(logs, `"event_id":"`+tt.eventID+`"`) {

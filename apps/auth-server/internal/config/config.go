@@ -25,7 +25,8 @@ type Config struct {
 	NetworkName string `envconfig:"EAP_AKA_PRIME_NETWORK_NAME" default:"WLAN"`
 
 	// ログ設定
-	LogMaskIMSI bool `envconfig:"LOG_MASK_IMSI" default:"true"`
+	LogLevel    string `envconfig:"LOG_LEVEL" default:"INFO"`
+	LogMaskIMSI bool   `envconfig:"LOG_MASK_IMSI" default:"true"`
 }
 
 // Load は環境変数から設定を読み込む

@@ -1,4 +1,4 @@
-# D-02 Valkey データ設計仕様書 (r15)
+# D-02 Valkey データ設計仕様書 (r16)
 
 ## 1. 全体方針
 
@@ -157,7 +157,7 @@ IdentityフェーズからChallenge応答フェーズへ情報を持ち回るた
 
 - **Key:** `eap:{UUID}`
 - **UUIDフォーマット:** RFC 4122準拠、ハイフン含む36文字（例: `550e8400-e29b-41d4-a716-446655440000`）
-- **生成:** Auth Server が Access-Request 受信ごとに `github.com/google/uuid` の `uuid.New().String()` で生成する。State属性の無い初回リクエスト（Identity）で生成したものがコンテキストのキー・State値となり、以降のリクエストでは State属性の値を Trace ID として使う
+- **生成:** Auth Server が State属性の無い初回の Access-Request（Identity）を受信したときに `github.com/google/uuid` の `uuid.New().String()` で生成し、コンテキストのキー・State値とする。以降の Access-Request（Access-Challengeへの応答）では、UUID形式の State属性の値をそのまま Trace ID として使う（ハンドラー層のログを含め、1回の認証を通して同じ Trace ID になる。D-04 §4.1）。State属性がUUID形式でない場合は新しいUUIDを生成する（対応するコンテキストはないため Reject）
 - **Type:** `Hash`
 - **TTL:** **60秒**（作成時に設定し、更新（HSET）のたびに EXPIRE で60秒にリセット）
 - **削除:** 認証成功時、および Challenge検証失敗・ポリシー拒否・Authentication-Reject/Client-Error受信・再同期上限超過などの失敗時に DEL。それ以外（初回の Vector 取得失敗等）は TTL で消滅
@@ -328,7 +328,7 @@ Acct Serverが重複パケットおよび順序異常を検出するためのキ
    - 送信元IPで `HGET client:{IP} secret` を実行。
    - **ヒット時:** その `secret` を使用。
    - **未登録またはValkeyエラー:** 環境変数 `RADIUS_SECRET` を使用（未設定なら破棄）。
-   - Trace ID（UUID）を生成し、ログの `trace_id` に設定。
+   - Trace ID（UUID）を決定し、ログの `trace_id` に設定（State属性なしなら生成、UUID形式のState属性があればその値を引き継ぐ）。
 2. **Identity 受信時（State属性なし）:**
    - **Identity種別判定:** 先頭文字とrealm有無で認証方式を判別。
      - 永続ID(0,6): 通常フロー継続、`eap_type`を決定
@@ -577,3 +577,4 @@ type Subscriber struct {
 | r13 | 2026-10-04 | acct-server の Interim シーケンス判定修正の反映: 3.E Acct Server のセッション処理で、Interim も `sess:{UUID}` の存在を確認し、不在時は `ACCT_SESSION_NOT_FOUND` を出力してセッションを作成しない（`imsi` を持たない Hash が作られる問題を解消）ことに修正、TTLの記述を補足。3.G 重複検出ロジックの Interim を実装どおりに修正（1回の GET で判定してから SET、値なしは `no_start_received`、`stop` は新設の `interim_after_stop` として `ACCT_SEQUENCE_ERR` を出力し処理継続。「`no_start_received` が出力されない」実装上の制約の記載を削除）。4 Acct Server の Interim フローを更新。D-10 の参照セクション番号を修正（5.6→5.8） |
 | r14 | 2026-10-04 | テストベクターモードでも加入者登録を必須にした Vector API の実装修正の反映（2.A）: テストベクターモードで置き換えるのは Ki/OPc/AMF だけで、`sub:{IMSI}` の取得・`sqn` の解析と書き戻し・エラー処理は通常モードと同じ（未登録は404、Valkeyエラー・書き戻し失敗は500、`sqn` 解析エラーも500）に修正。既定 SQN `ff9bb4d0b607` へのフォールバック、`sqn` だけを持つ Hash の作成、`TEST_SQN_PERSIST_ERR` の記述を削除し、旧実装で作られた `sqn` だけの Hash の扱いを注記。SQN更新方式の注記に、書き戻し失敗時・未登録時の扱いがテストベクターモードでも同じである旨を追記 |
 | r15 | 2026-10-04 | ポリシーの `nas_id` で `"*"` を任意の NAS に一致させた Auth Server の実装修正の反映（2.C）: `nas_id` の説明を「`"*"` 単独は任意の NAS-Identifier（NAS-Identifier が無い場合を含む）に一致、部分一致は行わない、それ以外は完全一致（大文字小文字区別）」に改め、r12 で記載した「ワイルドカード不可」を削除。JSON 例に `nas_id` `"*"` のルールを追加し、評価順（個別のNASのルールを前に置く）を説明。評価ロジック2に `nas_id` / `allowed_ssids` の一致条件を追記。5 の `PolicyRule.NasID` のコメントを `pkg/model` の更新後のコメントに合わせて修正 |
+| r16 | 2026-10-04 | auth-server の trace_id 引き継ぎの実装修正の反映: 3.D の UUID の「生成」を、State属性の無い初回 Access-Request で生成し、以降は UUID 形式の State属性の値をそのまま Trace ID とする（ハンドラー層のログを含め1回の認証で同じ値。UUID 形式でない State は新規 UUID）記述に修正、4章の処理フロー 1. の Trace ID の「生成」を「決定」に修正 |

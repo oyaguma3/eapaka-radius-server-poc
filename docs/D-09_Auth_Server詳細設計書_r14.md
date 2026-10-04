@@ -1,4 +1,4 @@
-﻿# D-09 Auth Server詳細設計書 (r13)
+﻿# D-09 Auth Server詳細設計書 (r14)
 
 ## ■セクション1: 概要
 
@@ -26,7 +26,7 @@
 | D-01 | ミニPC版設計仕様書 (r10) | システム構成、パッケージ利用マップ |
 | D-02 | Valkeyデータ設計仕様書 (r15) | データ構造、キー設計、Go構造体 |
 | D-03 | Vector-API/ステートマシン設計書 (r6) | API仕様、EAP状態遷移、Vector Gateway経由接続 |
-| D-04 | ログ仕様設計書 (r20) | event_id定義、ログフォーマット、IMSIマスキング |
+| D-04 | ログ仕様設計書 (r23) | event_id定義、ログフォーマット、IMSIマスキング |
 | D-05 | Acct Server詳細設計書 (r5) | セッション管理連携、Accounting処理 |
 | D-06 | エラーハンドリング詳細設計書 (r8) | エラー分類、タイムアウト、Circuit Breaker |
 | D-07 | TUI管理ツール詳細設計書 (r3) | 管理用TUIアプリケーション |
@@ -367,7 +367,7 @@ ENTRYPOINT ["/usr/local/bin/auth-server"]
 | `identity.go` | Identity解析・種別判定 | `ParseIdentity()`, `DetermineEAPType()`, `ExtractIMSI()` |
 | `packet.go` | EAPパケット解析・構築 | `Parse()`, `GetType()`, `GetSubtype()`, `BuildEAPSuccess()`, `BuildEAPFailure()` |
 | `statemachine.go` | 状態遷移制御 | `Process()`, `HandleIdentity()`, `HandleChallenge()` |
-| `types.go` | EAP型定義 | `IdentityType`, `ParsedIdentity` |
+| `types.go` | EAP型定義・EAP処理インターフェース | `Action`, `Request`, `Result`, `EAPProcessor`（`Process(ctx, req) *Result`） |
 
 #### `internal/eap/aka/` と `internal/eap/akaprime/`
 
@@ -394,7 +394,7 @@ ENTRYPOINT ["/usr/local/bin/auth-server"]
 
 | ファイル | 責務 | 主要関数・型 |
 |---------|------|-------------|
-| `engine.go` | 認証エンジン（EAP処理のオーケストレーション） | `Engine`, 各サービス層の統合制御 |
+| `engine.go` | 認証エンジン（EAP処理のオーケストレーション） | `EngineImpl`（`eap.EAPProcessor` の実装）, `NewEngine()`, 各サービス層の統合制御 |
 
 > **注記:** IMSIマスキングは共通ライブラリ `pkg/logging`（`MaskIMSI()` / `MaskUserName()`）を使用する。auth-server 固有の `internal/logging` パッケージは pkg への統合により廃止済み（E-03 参照）。
 
@@ -424,6 +424,7 @@ ENTRYPOINT ["/usr/local/bin/auth-server"]
 | `LISTEN_ADDR` | No | `:1812` | string | UDPリッスンアドレス |
 | `EAP_AKA_PRIME_NETWORK_NAME` | No | `WLAN` | string | EAP-AKA' AT_KDF_INPUT値（ANID） |
 | `LOG_MASK_IMSI` | No | `true` | bool | IMSIマスキング有効化（ログ出力時） |
+| `LOG_LEVEL` | No | `INFO` | string | ログレベル（`DEBUG` / `INFO` / `WARN` / `ERROR`。大文字小文字を区別しない。未知の値は `INFO`）。§3.8参照 |
 > **注記:** 環境変数名 `RADIUS_SECRET` はシステム全体で統一されている。D-01およびD-08の `.env` ファイルでも同名を使用すること。
 
 ### 3.2 設定構造体
@@ -457,7 +458,8 @@ type Config struct {
     NetworkName string `envconfig:"EAP_AKA_PRIME_NETWORK_NAME" default:"WLAN"`
 
     // ログ設定
-    LogMaskIMSI bool `envconfig:"LOG_MASK_IMSI" default:"true"`
+    LogLevel    string `envconfig:"LOG_LEVEL" default:"INFO"`
+    LogMaskIMSI bool   `envconfig:"LOG_MASK_IMSI" default:"true"`
 }
 
 // 定数（コードに埋め込み）
@@ -508,7 +510,9 @@ func (c *Config) ValkeyAddr() string {
                             ▼
                     ┌───────────────────────┐
                     │ slog.SetDefault(...)  │
-                    │ JSON形式、INFO以上    │
+                    │ JSON形式              │
+                    │ LOG_LEVEL以上         │
+                    │ (既定: INFO)          │
                     └───────────┬───────────┘
                                 │
         3. Valkeyクライアント  │
@@ -574,6 +578,7 @@ import (
     "auth-server/internal/session"
     "auth-server/internal/store"
     "auth-server/internal/vector"
+    "github.com/oyaguma3/eapaka-radius-server-poc/pkg/logging"
 )
 
 func main() {
@@ -584,14 +589,15 @@ func main() {
         os.Exit(1)
     }
 
-    // 2. ロガー初期化
+    // 2. ロガー初期化（JSON形式、LOG_LEVEL 以上。既定 INFO）
     logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-        Level: slog.LevelInfo,
+        Level: logging.ParseLevel(cfg.LogLevel),
     }))
     slog.SetDefault(logger)
 
     slog.Info("starting auth-server",
         "listen_addr", cfg.ListenAddr,
+        "log_level", cfg.LogLevel,
         "vector_api_url", cfg.VectorAPIURL,
         "network_name", cfg.NetworkName)
 
@@ -825,14 +831,23 @@ func NewClient(cfg *config.Config) *Client {
     "level": "INFO",
     "msg": "starting auth-server",
     "listen_addr": ":1812",
+    "log_level": "INFO",
     "vector_api_url": "http://vector-gateway:8080/api/v1/vector",
     "network_name": "WLAN"
 }
 ```
 
+> **注記:** 実装（`main.go`）の起動ログの `msg` は `auth-server起動開始` で、`app`（`auth-server`）が付く（D-04 §3.1.8）。
+
+**ログレベル：**
+
+- 環境変数 `LOG_LEVEL`（`DEBUG` / `INFO` / `WARN` / `ERROR`、既定 `INFO`）で出力する最低レベルを設定する。共通ライブラリの `pkg/logging.ParseLevel`（E-03）で `slog.Level` に変換する（大文字小文字を区別せず、前後の空白を除去。`WARNING` も `WARN` として扱い、未知の値・空文字は `INFO`）。
+- 起動ログに `log_level`（設定値そのまま）を出力する。
+- `LOG_LEVEL=DEBUG` のときだけ、Vector Gatewayクライアントの DEBUG ログ `vector api success`（`latency_ms`）が出力される（§7.10、D-04 §4.6）。
+
 **ログ属性の付与方法：**
 
-- リクエスト単位で `trace_id` を付与
+- 1回の認証（Access-Request〜Access-Challenge の往復を含む）を通して同じ `trace_id` を付与（§5.3）
 - `context.WithValue` でTrace IDを伝搬
 - `slog.With` によるロガー生成は行わず、各ログ呼び出しで `"trace_id", traceID` を明示的に渡す（D-04 §4.1）
 
@@ -912,7 +927,7 @@ PacketServer
     ├── パケットパース・検証（内部処理）
     │
     └── Handler.ServeRADIUS() 呼び出し
-            ├── Trace ID生成
+            ├── Trace ID決定（State属性のUUIDを引き継ぎ、なければ生成）
             ├── Code判定・処理振り分け
             │       ├── Code=1  → EAP認証処理
             │       ├── Code=12 → Status-Server処理
@@ -933,7 +948,7 @@ PacketServer
 
 - `radius.Handler` インターフェースを実装
 - `ServeRADIUS(w ResponseWriter, r *Request)` メソッドで処理
-- Trace ID生成は `ServeRADIUS` の冒頭で実施
+- Trace IDの決定（`resolveTraceID`）は `ServeRADIUS` の冒頭で実施（§5.3）
 
 #### シャットダウン
 
@@ -956,7 +971,7 @@ PacketServer
 
 #### Trace ID
 
-- `ServeRADIUS` 冒頭でUUID生成
+- `ServeRADIUS` 冒頭でTrace IDを決定（2回目以降のAccess-RequestはState属性のUUIDを引き継ぎ、それ以外はUUID生成。§5.3）
 - `context.WithValue` でTrace IDを伝搬
 - 全てのログ出力に `trace_id` を付与
 
@@ -1054,7 +1069,7 @@ type Handler interface {
 
 **実装方針：**
 
-- `ServeRADIUS` エントリ時点でTrace ID（UUID）を生成
+- `ServeRADIUS` エントリ時点でTrace ID（UUID）を決定する（`resolveTraceID`）
 - `r.Packet.Code` で処理を振り分け
 - 応答は `w.Write(packet)` で返却
 
@@ -1066,9 +1081,11 @@ type Handler interface {
 | `StatusServer`  | 12   | Status-Server応答  |
 | その他          | -    | ログ出力、応答なし |
 
-**Trace ID生成・伝搬：**
+**Trace IDの決定・伝搬：**
 
-- `google/uuid` で UUIDv4 を生成
+- Access-RequestにUUID形式のState属性がある場合（2回目以降のAccess-Request。Access-Challengeへの応答）は、State属性の値（初回に採番したTrace ID＝EAPコンテキストのキー）を正規化せずにそのままTrace IDとして使う（`uuid.ParseBytes` で形式だけを確認する）
+- State属性がない場合（初回のAccess-Request）、UUID形式でない場合、およびAccess-Request以外（Status-Server等）は、`google/uuid` で UUIDv4 を生成する
+- これにより、ハンドラー層のログ（`PKT_RECV` / `PKT_MA_INVALID` / `PKT_NO_EAP` / `PKT_SEND_ERR` / `PKT_DROP`）とEAPエンジンのログ、Vector Gatewayへの `X-Trace-ID` が、1回の認証を通して同じ値になる（D-04 §4.1）。State属性がUUID形式でない場合は、ハンドラー層は新しいUUID、エンジンはState属性の値を `trace_id` とするため一致しない（対応するEAPコンテキストがないため `EAP_CTX_NOT_FOUND` でReject）
 - `context.WithValue` でコンテキストに格納
 - 以降の全処理でこのコンテキストを使用
 - ログ出力時は `slog.With` を使わず、各ログ呼び出しで `"trace_id", traceID` を明示的に渡す（D-04 §4.1）
@@ -1272,7 +1289,7 @@ PacketServer
     │
     └── Handler.ServeRADIUS()
             │
-            ├── Trace ID 生成
+            ├── Trace ID 決定（State属性のUUIDを引き継ぎ、なければ生成）
             │
             ├── Code 判定
             │       │
@@ -1307,7 +1324,6 @@ PacketServer
 | Message-Authenticator検証失敗 | `PKT_MA_INVALID`      | WARN   | `trace_id`, `src_ip`    |
 | EAP-Message属性なし           | `PKT_NO_EAP`          | WARN   | `trace_id`, `src_ip`    |
 | 未知のCode                    | `PKT_UNKNOWN_CODE`    | WARN   | `trace_id`, `code`      |
-| EAPエンジンエラー             | `EAP_ENGINE_ERR`      | ERROR  | `trace_id`, `error`     |
 | パケットドロップ              | `PKT_DROP`            | INFO   | `trace_id`              |
 | 応答送信失敗                  | `PKT_SEND_ERR`        | ERROR  | `trace_id`, `error`     |
 | Status-Server応答             | `RADIUS_STATUS_OK`    | INFO   | `trace_id`, `src_ip`    |
@@ -1316,7 +1332,7 @@ PacketServer
 | Secret解決時のValkeyエラー    | `RADIUS_SECRET_ERR`   | WARN   | `src_ip`, `error`       |
 | Secret不明                    | `RADIUS_NO_SECRET`    | WARN   | `src_ip`                |
 
-> **注記:** RADIUSパケットのデコード失敗は `layeh.com/radius` が処理し、ログは出力しない。
+> **注記:** RADIUSパケットのデコード失敗は `layeh.com/radius` が処理し、ログは出力しない。EAPエンジン（`eap.EAPProcessor` の `Process(ctx, req) *Result`）はerrorを返さず、内部エラーをログに記録してReject結果に変換するため、ハンドラーにエンジンエラーのログはない（§10.5.6）。
 
 ### 5.11 実装時の注意点まとめ
 
@@ -2422,9 +2438,10 @@ Auth Server                    Vector Gateway                 Vector API
 
 #### 7.7.2 実装方針
 
-- contextからTrace IDを取得
+- contextからTrace IDを取得（認証エンジンが `vector.WithTraceID` で設定）
 - リクエストヘッダ `X-Trace-ID` に設定
 - ログ出力時は同一Trace IDを使用
+- Trace IDはEAP Context UUID（State属性の値）であり、初回のベクター取得と再同期時のベクター取得で同じ値になる。2回目以降のAccess-Requestのハンドラー層のログ（`PKT_RECV` 等）も同じ値を使う（§5.3）
 
 **注意点：**
 
@@ -2519,7 +2536,7 @@ EAP処理層
 
 | 処理             | event_id         | レベル | 追加フィールド                       |
 | ---------------- | ---------------- | ------ | ------------------------------------ |
-| API呼び出し成功  | -                | DEBUG  | `latency_ms`                         |
+| API呼び出し成功（msg `vector api success`） | - | DEBUG  | `latency_ms`（`LOG_LEVEL=DEBUG` のときだけ出力。§3.8） |
 | API呼び出し失敗（200以外の応答） | `VECTOR_API_ERR` | ERROR  | `error`, `http_status`, `latency_ms`（`trace_id` なし） |
 | CB Open遷移      | `CB_OPEN`        | WARN   | `cb_name`, `failure_count`（常に0。状態遷移コールバックでは件数を取得できないため） |
 | CB Half-Open遷移 | `CB_HALF_OPEN`   | INFO   | `cb_name`                            |
@@ -3807,7 +3824,8 @@ type Config struct {
     NetworkName string `envconfig:"EAP_AKA_PRIME_NETWORK_NAME" default:"WLAN"`
 
     // ログ設定
-    LogMaskIMSI bool `envconfig:"LOG_MASK_IMSI" default:"true"`
+    LogLevel    string `envconfig:"LOG_LEVEL" default:"INFO"`
+    LogMaskIMSI bool   `envconfig:"LOG_MASK_IMSI" default:"true"`
 }
 
 // Load は環境変数から設定を読み込む
@@ -4142,6 +4160,25 @@ func (v *ValkeyClient) Client() *redis.Client
 func (v *ValkeyClient) Ping(ctx context.Context) error
 ```
 
+#### 10.5.6 EAP処理（RADIUSハンドラー ↔ 認証エンジン）
+
+**ファイル:** `internal/eap/types.go`
+
+```go
+package eap
+
+import "context"
+
+// EAPProcessor はEAP認証処理のインターフェース
+type EAPProcessor interface {
+    Process(ctx context.Context, req *Request) *Result
+}
+```
+
+- 実装は `internal/engine/engine.go` の `EngineImpl`（`NewEngine()` で生成）。RADIUSハンドラー（`internal/server/handler.go`）は `EAPProcessor` を通して呼び出す（テストでは `internal/mocks` の `MockEAPProcessor` を使う）。
+- `Process` は error を返さない。エンジンは内部エラー（Valkeyエラー、パケット構築失敗、ベクター取得失敗等）を処理箇所ごとの event_id（`EAP_CTX_CREATE_ERR`, `VECTOR_CONN_ERR` 等。D-04 §3.1）でログに記録し、Reject（EAP-Failure付き）またはDropの `Result` に変換して返す。このため、ハンドラーにエンジンエラーの分岐とログはない。
+- `Request.TraceID` はハンドラーが決めたTrace ID（§5.3）。`Request.State` がある場合、エンジンはその値をTrace ID（EAPコンテキストのキー）として使う。
+
 ### 10.6 エラー型
 
 #### 10.6.1 セッション関連エラー
@@ -4342,6 +4379,10 @@ var (
 
 | エクスポート      | 種別   | 説明              |
 | ----------------- | ------ | ----------------- |
+| `EAPProcessor`    | interface | EAP認証処理（`Process(ctx, req) *Result`） |
+| `Request`         | struct | EAP処理への入力   |
+| `Result`          | struct | EAP処理の結果     |
+| `Action`          | type   | 応答アクション（`ActionAccept` / `ActionReject` / `ActionChallenge` / `ActionDrop`） |
 | `ParseIdentity()` | func   | Identity解析      |
 | `ParsedIdentity`  | struct | Identity解析結果  |
 | `IdentityType`    | type   | Identity種別      |
@@ -4421,7 +4462,8 @@ var (
 
 | エクスポート      | 種別   | 説明                                         |
 | ----------------- | ------ | -------------------------------------------- |
-| `Engine`          | struct | 認証エンジン（EAP処理オーケストレーション）   |
+| `EngineImpl`      | struct | 認証エンジン（EAP処理オーケストレーション。`eap.EAPProcessor` の実装） |
+| `NewEngine()`     | func   | 認証エンジン作成                             |
 
 #### 10.7.12 internal/logging（廃止）
 
@@ -4544,3 +4586,4 @@ Auth Server内で直接参照する外部パッケージの型：
 | r11 | 2026-10-04 | ログのIMSIマスク漏れ修正の反映: §3.5.2にUser-Name（EAP Identity）のマスク規則（pkg/logging.MaskUserName）を追記、§3.5.3の実装を pkg/logging の MaskIMSI / MaskUserName を使う認証エンジンのラッパーメソッド（maskIMSI / maskUserName）に更新、§3.5.4適用箇所にEAP_UNSUPPORTED_TYPE / EAP_IDENTITY_INVALIDの `user_name` を追加し「マスクせず出力」の注記を修正。関連ドキュメント参照版数更新（D-04 r19→r20、D-06 r7→r8）。あわせて、廃止済みの internal/logging（mask.go）のパッケージ構成記載を削除し、pkg/logging を使う旨に修正 |
 | r12 | 2026-10-04 | §9.5 のセッションTTL超過時の Acct Server の挙動を、Interim 時も `ACCT_SESSION_NOT_FOUND` を出力し不在のキーを作らない実装に合わせて修正 |
 | r13 | 2026-10-04 | ポリシーの `nas_id` で `"*"` を任意の NAS に一致させた実装修正の反映（セクション8）: 8.3.2/8.3.3 のルール構造・8.4.2 と 10.4.3 の `PolicyRule` 型・8.5 の評価入力・評価ロジック・注意点・8.6.1 の注記・8.8 の NAS-ID/SSID 不在時の扱い・8.11 を、実装の構造（`nas_id` / `allowed_ssids` / `vlan_id` / `session_timeout`）と評価（`nas_id` は `"*"` 単独で任意の NAS に一致・部分一致なし・それ以外は完全一致、`allowed_ssids` は `"*"` で全SSID・大文字小文字無視、両方に一致した最初のルールで許可、VLAN・Session-Timeout は一致したルールから付与）に修正。r9 で記載した `ssid` / `action` / `time_min` / `time_max` によるルール評価は実装に存在しないため削除。関連ドキュメントの D-02 参照版数を更新（r10→r15） |
+| r14 | 2026-10-04 | trace_id の認証単位での引き継ぎ・LOG_LEVEL 対応の実装修正の反映: §4.2 / §4.3 / §4.4 / §5.3 / §5.9 の Trace ID 生成を「決定（`resolveTraceID`）」に修正し、§5.3 に決め方（2回目以降の Access-Request は UUID 形式の State 属性をそのまま Trace ID とし、State がない・UUID 形式でない場合と Access-Request 以外は新規 UUID を生成）と、ハンドラー層のログ・エンジンのログ・X-Trace-ID が1回の認証を通して同じ値になる旨を追記、§7.7.2 に再同期時も同じ Trace ID である旨を追記。EAPエンジンの `Process` が error を返さなくなったことに合わせ、§5.10 から `EAP_ENGINE_ERR` を削除して注記を追加、§10.5.6 に `eap.EAPProcessor`（`Process(ctx, req) *Result`）を追加、§2 の `types.go` / `engine.go` の主要型と §10.7.4 / §10.7.11 のエクスポート一覧を実装（`Request` / `Result` / `Action` / `EAPProcessor`、`EngineImpl` / `NewEngine()`）に合わせて修正。§3.1 環境変数一覧・§3.2 / §10.3.1 設定構造体に `LOG_LEVEL`（既定 INFO）を追加、§3.3 初期化シーケンス・§3.4 main.go のロガー初期化を `pkg/logging.ParseLevel(cfg.LogLevel)` と起動ログの `log_level` に修正、§3.8 にログレベルの説明を追加、§7.10 の `vector api success`（DEBUG）が `LOG_LEVEL=DEBUG` 時のみ出力される旨を追記。§1.3 参照版数更新（D-04 r20→r23） |

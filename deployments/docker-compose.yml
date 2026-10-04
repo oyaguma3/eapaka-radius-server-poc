@@ -26,6 +26,7 @@ services:
       VECTOR_API_URL: http://vector-gateway:8080
       RADIUS_SECRET: ${RADIUS_SECRET}
       LOG_MASK_IMSI: ${LOG_MASK_IMSI:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
       valkey:
         condition: service_healthy
@@ -96,6 +97,7 @@ services:
       VECTOR_GATEWAY_AKAONLY_SERVER_CERT: ${VECTOR_GATEWAY_AKAONLY_SERVER_CERT:-}
       VECTOR_GATEWAY_AKAONLY_TIMEOUT: ${VECTOR_GATEWAY_AKAONLY_TIMEOUT:-5s}
       LOG_MASK_IMSI: ${LOG_MASK_IMSI:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       # aka-only-server接続用の証明書（av-client.pem / av-server.pem）
       - ./certs:/certs:ro
@@ -129,6 +131,7 @@ services:
       REDIS_PORT: "6379"
       REDIS_PASS: ${VALKEY_PASSWORD}
       LOG_MASK_IMSI: ${LOG_MASK_IMSI:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       # テストベクターモード（開発・テスト専用。本番では有効にしないこと）
       TEST_VECTOR_ENABLED: ${TEST_VECTOR_ENABLED:-false}
       TEST_VECTOR_IMSI_PREFIX: ${TEST_VECTOR_IMSI_PREFIX:-00101}

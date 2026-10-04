@@ -15,6 +15,7 @@ import (
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/auth-server/internal/session"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/auth-server/internal/store"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/auth-server/internal/vector"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/logging"
 )
 
 func main() {
@@ -25,14 +26,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 2. ロガー初期化（JSON形式、INFO以上）
+	// 2. ロガー初期化（JSON形式、LOG_LEVEL 以上。既定 INFO）
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
+		Level: logging.ParseLevel(cfg.LogLevel),
 	})).With("app", "auth-server")
 	slog.SetDefault(logger)
 
 	slog.Info("auth-server起動開始",
 		"listen_addr", cfg.ListenAddr,
+		"log_level", cfg.LogLevel,
 		"vector_api_url", cfg.VectorAPIURL,
 		"network_name", cfg.NetworkName,
 	)

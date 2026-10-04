@@ -1,4 +1,4 @@
-# D-12 Vector Gateway 詳細設計書 (r5)
+# D-12 Vector Gateway 詳細設計書 (r6)
 
 ## 1. 概要
 
@@ -629,6 +629,9 @@ VECTOR_GATEWAY_AKAONLY_TIMEOUT=5s
 # -----------------------------------------------------------------------------
 # ログ設定
 # -----------------------------------------------------------------------------
+# ログレベル（DEBUG / INFO / WARN / ERROR。デフォルト: INFO）
+LOG_LEVEL=INFO
+
 # IMSIマスキング有効化（デフォルト: true）
 # - true : IMSI中央部分をマスク（本番環境推奨）
 # - false: IMSI全桁表示（デバッグ用）
@@ -655,6 +658,7 @@ services:
     environment:
       VECTOR_API_URL: http://vector-gateway:8080
       LOG_MASK_IMSI: ${LOG_MASK_IMSI:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
       vector-gateway:
         condition: service_started
@@ -678,6 +682,7 @@ services:
       VECTOR_GATEWAY_AKAONLY_SERVER_CERT: ${VECTOR_GATEWAY_AKAONLY_SERVER_CERT:-}
       VECTOR_GATEWAY_AKAONLY_TIMEOUT: ${VECTOR_GATEWAY_AKAONLY_TIMEOUT:-5s}
       LOG_MASK_IMSI: ${LOG_MASK_IMSI:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       # aka-only-server接続用の証明書（av-client.pem / av-server.pem）
       - ./certs:/certs:ro
@@ -687,8 +692,10 @@ services:
     restart: always
 
   vector-api:
-    # 変更なし（LOG_MASK_IMSIはD-11で定義済み）
+    # 変更なし（LOG_MASK_IMSI / LOG_LEVEL はD-11で定義済み）
 ```
+
+> **注記:** `LOG_LEVEL: ${LOG_LEVEL:-INFO}` は auth-server / vector-gateway / vector-api に渡す（acct-server は `LOG_LEVEL` 未対応のため渡さない。D-08 §4.1）。vector-gateway は `main.go` の `initLogger` で `LOG_LEVEL`（大文字小文字を区別しない `DEBUG` / `INFO` / `WARN` / `ERROR`。それ以外は `INFO`）を `slog.Level` に変換する。
 
 ### 5.3 起動時検証と起動ログ
 
@@ -1337,3 +1344,4 @@ D-12: Vector Gateway詳細設計書 (未) ◄── 新規追加
 | r3 | 2026-01-26 | インフラ基盤統一: セクション4.6新設（Dockerfile方針 - ベースイメージdebian:bookworm-slim、curl/ca-certificates導入、ヘルスチェックcurl -fsS） |
 | r4 | 2026-02-18 | ディレクトリ構造全面更新、関連ドキュメント版数更新 |
 | r5 | 2026-10-04 | 接続方式ID `01`（aka-only-server、mTLS/平文HTTP）を追加: 1.1/1.2/1.4更新、2.1〜2.3（構成図・通信フロー・責務）更新、3.1/3.2更新、3.4/3.5・4.3・4.4を実装コードに合わせて更新（レジストリの `01` 登録条件）、4.5新設（IF変換・エラー変換・TLS設定・やらないこと）、旧4.5/4.6を4.6/4.7に繰り下げ、5.1/5.2更新（`VECTOR_GATEWAY_AKAONLY_*`、docker-compose.yml を実ファイルに同期）、5.3〜5.5新設（起動時検証・起動ログ/WARN、docker-compose.aka-av.yml・証明書配置・接続手順、運用上の注意）、6.1/6.2を実装に合わせて更新、7.3に403追加、8.2・9.1・9.2・9.3.3・9.3.4で `BACKEND_EXTERNAL_CALL` / `BACKEND_EXTERNAL_ERR` を実装済みに更新、10.2/10.3・11・12.4・13・14.2更新。既存記載の実装との不一致を修正（4.2の内部バックエンドのコードを実装 `internal/backend/internal.go` に合わせて更新、7.3のエラー応答を ProblemDetail の実際の `title` / `detail` に修正、8.1・9.2・9.3.4のevent_idを実装の `GW_ROUTE` / `GW_OK` / `GW_ERR`（`msg` で区別）に置き換え（`PLMN_ROUTE_MATCH` / `PLMN_ROUTE_UNMATCH` / `BACKEND_INTERNAL_CALL` / `BACKEND_INTERNAL_ERR` / `REQUEST_INVALID` / `BACKEND_NOT_IMPLEMENTED` / `GW_REQUEST_OK` を削除）、9.2のログ出力例・9.3.4の実装例を実装に合わせて修正、9.2の差異注記を削除、12.4のD-04行に追記）。lnav のクエリを実際の動作（lnav 0.11.2）に合わせて修正: 9.2 の絞り込み例を `logline`（選択中の1行のみ）から全行を対象とする `aka_radius_log` テーブルに変更 |
+| r6 | 2026-10-04 | compose が LOG_LEVEL を auth-server / vector-gateway / vector-api に渡すよう修正されたことの反映: §5.2 docker-compose.yml（抜粋）の auth-server / vector-gateway の environment に `LOG_LEVEL: ${LOG_LEVEL:-INFO}` を追加し、対象サービスと vector-gateway でのレベル変換の注記を追加、§5.1 環境変数（PoC版）のログ設定に `LOG_LEVEL` を追加（vector-gateway の実装は変更なし） |
