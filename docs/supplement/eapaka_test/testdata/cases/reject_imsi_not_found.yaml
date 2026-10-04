@@ -4,8 +4,9 @@
 # IMSI: 001029999999999（PLMN 00102。TEST_VECTOR_IMSI_PREFIX=00101 に一致しないためテストベクター対象外）
 # 動作: PLMNマップ未登録 → BackendID 00（内部Vector API）→ sub:001029999999999 なし → 404
 #       → Auth Server VECTOR_IMSI_NOT_FOUND → Access-Reject
-# 備考: 以前の IMSI 001019999999999 はテストベクター対象のため、テストベクターモードでは未登録でもベクターが
+# 備考: 以前の IMSI 001019999999999 はテストベクター対象のため、旧実装のテストベクターモードでは未登録でもベクターが
 #       生成され、ポリシー未登録（AUTH_POLICY_NOT_FOUND）で Reject されていた（理由が違うため変更）
+#       現行実装ではテストベクター対象の IMSI も未登録なら 404（VECTOR_IMSI_NOT_FOUND）になる
 version: 1
 name: reject_imsi_not_found
 identity: "0001029999999999@wlan.mnc002.mcc001.3gppnetwork.org"

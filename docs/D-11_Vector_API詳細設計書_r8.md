@@ -1,4 +1,4 @@
-# D-11 Vector API詳細設計書 (r7)
+# D-11 Vector API詳細設計書 (r8)
 
 ## ■セクション1: 概要
 
@@ -31,9 +31,9 @@
 | No. | ドキュメント | 参照内容 |
 |-----|-------------|---------|
 | D-01 | ミニPC版設計仕様書 (r10) | システム構成、パッケージ利用マップ |
-| D-02 | Valkeyデータ設計仕様書 (r12) | 加入者データ構造、キー設計、Go構造体、SQN更新方式（現行実装） |
+| D-02 | Valkeyデータ設計仕様書 (r14) | 加入者データ構造、キー設計、Go構造体、SQN更新方式（現行実装） |
 | D-03 | Vector-API/ステートマシン設計書 (r6) | API仕様、リクエスト/レスポンス定義 |
-| D-04 | ログ仕様設計書 (r19) | event_id定義、ログフォーマット |
+| D-04 | ログ仕様設計書 (r22) | event_id定義、ログフォーマット |
 | D-09 | Auth Server詳細設計書 (r10) | Auth Server連携仕様 |
 | D-06 | エラーハンドリング詳細設計書 (r7) | エラー分類、タイムアウト設定、SQN競合エラー（設計済み・未実装） |
 | D-07 | Admin TUI詳細設計書【後半】 (r8) | 管理用TUIアプリケーション仕様 |
@@ -114,7 +114,7 @@ apps/vector-api/
     │   ├── subscriber.go       # 加入者データアクセス
     │   └── valkey.go           # Valkeyクライアント初期化・管理
     ├── testmode/
-    │   ├── testvector.go       # テストモード用固定ベクター
+    │   ├── testvector.go       # テストモード用固定パラメータ（Ki/OPc/AMF）
     │   └── testvector_test.go  # testmode パッケージテスト
     └── usecase/
         ├── error.go            # ユースケースエラー型定義
@@ -170,7 +170,7 @@ apps/vector-api/
 | `milenage` | Milenage計算ラッパー、AUTS処理 | `Calculator`, `ResyncProcessor` |
 | `sqn` | SQN管理、インクリメント、検証 | `Manager`, `Validator` |
 | `store` | Valkeyアクセス抽象化 | `ValkeyClient`, `SubscriberStore` |
-| `testmode` | E2Eテスト用固定ベクター生成 | `TestVectorProvider`, `IsTestIMSI()` |
+| `testmode` | テストベクターモード用の固定 Ki/OPc/AMF 提供 | `TestVectorProvider`, `IsTestIMSI()`, `GetTestCryptoParams()` |
 | `dto` | データ転送オブジェクト、リクエスト/レスポンス構造体 | `VectorRequest`, `VectorResponse`, `ProblemDetail` |
 
 ### 2.4 外部パッケージ依存
@@ -216,6 +216,7 @@ type SubscriberRepository interface {
 type TestVectorProvider interface {
     IsTestIMSI(imsi string) bool
     GetTestVector(imsi string) (*Vector, error)
+    GetTestCryptoParams() (ki, opc, amf []byte) // テスト用 Ki/OPc/AMF（防御的コピー）
 }
 
 // handler/interfaces.go
@@ -330,7 +331,7 @@ ENTRYPOINT ["/usr/local/bin/vector-api"]
 
 | ファイル | 責務 | 主要関数・型 |
 |---------|------|-------------|
-| `testvector.go` | テストモード判定、固定ベクター生成 | `TestVectorProvider`, `IsTestIMSI()`, `GetTestVector()` |
+| `testvector.go` | テストモード判定、テスト用固定 Ki/OPc/AMF の提供 | `TestVectorProvider`, `IsTestIMSI()`, `GetTestCryptoParams()`, `GetTestVector()`（ユースケースからは未使用） |
 
 #### `internal/dto/`
 
@@ -1513,13 +1514,13 @@ func NewVectorUseCase(
     }
 }
 
+// GenerateVector はベクターを生成する。
+// テストモード（TEST_VECTOR_ENABLED=true かつ対象プレフィックスのIMSI）では、
+// Ki/OPc/AMF をテスト用の固定値に置き換える。加入者の取得・SQNの管理・エラー処理は通常モードと同じ。
 func (u *VectorUseCase) GenerateVector(ctx context.Context, req *dto.VectorRequest) (*dto.VectorResponse, error) {
-    // 0. テストモード判定（有効な場合）
-    if u.testVectorProvider != nil && u.testVectorProvider.IsTestIMSI(req.IMSI) {
-        return u.generateTestVector(req.IMSI)
-    }
+    testMode := u.testVectorProvider != nil && u.testVectorProvider.IsTestIMSI(req.IMSI)
     
-    // 1. 加入者情報取得
+    // 1. 加入者情報取得（テストモードでも登録が必要）
     sub, err := u.subscriberStore.Get(ctx, req.IMSI)
     if err != nil {
         return nil, fmt.Errorf("%w: %v", ErrValkeyConnection, err)
@@ -1528,18 +1529,20 @@ func (u *VectorUseCase) GenerateVector(ctx context.Context, req *dto.VectorReque
         return nil, ErrSubscriberNotFound
     }
     
-    // 2. 鍵情報をバイト列に変換
-    ki, err := milenage.HexDecode(sub.Ki)
-    if err != nil {
-        return nil, fmt.Errorf("invalid Ki format: %w", err)
-    }
-    opc, err := milenage.HexDecode(sub.OPc)
-    if err != nil {
-        return nil, fmt.Errorf("invalid OPc format: %w", err)
-    }
-    amf, err := milenage.HexDecode(sub.AMF)
-    if err != nil {
-        return nil, fmt.Errorf("invalid AMF format: %w", err)
+    // 2. 鍵情報をバイト列に変換（テストモードは固定値）
+    var ki, opc, amf []byte
+    if testMode {
+        ki, opc, amf = u.testVectorProvider.GetTestCryptoParams()
+    } else {
+        if ki, err = milenage.HexDecode(sub.Ki); err != nil {
+            return nil, fmt.Errorf("invalid Ki format: %w", err)
+        }
+        if opc, err = milenage.HexDecode(sub.OPc); err != nil {
+            return nil, fmt.Errorf("invalid OPc format: %w", err)
+        }
+        if amf, err = milenage.HexDecode(sub.AMF); err != nil {
+            return nil, fmt.Errorf("invalid AMF format: %w", err)
+        }
     }
     currentSQN, err := u.sqnManager.ParseHex(sub.SQN)
     if err != nil {
@@ -1571,6 +1574,14 @@ func (u *VectorUseCase) GenerateVector(ctx context.Context, req *dto.VectorReque
     newSQNHex := u.sqnManager.FormatHex(newSQN)
     if err := u.subscriberStore.UpdateSQN(ctx, req.IMSI, newSQNHex); err != nil {
         return nil, fmt.Errorf("%w: %v", ErrValkeyConnection, err)
+    }
+    
+    if testMode {
+        slog.Info("test vector generated",
+            "event_id", "CALC_OK",
+            "test_mode", true,
+            "sqn", newSQNHex,
+        )
     }
     
     // 6. レスポンス変換
@@ -1627,22 +1638,9 @@ func (u *VectorUseCase) processResync(ki, opc []byte, resyncInfo *dto.ResyncInfo
     
     return newSQN, nil
 }
-
-// generateTestVector はテストモード用の固定ベクターを生成する
-func (u *VectorUseCase) generateTestVector(imsi string) (*dto.VectorResponse, error) {
-    vector, err := u.testVectorProvider.GetTestVector(imsi)
-    if err != nil {
-        return nil, fmt.Errorf("failed to generate test vector: %w", err)
-    }
-    
-    slog.Info("test vector generated",
-        "event_id", "CALC_OK",
-        "test_mode", true,
-    )
-    
-    return milenage.VectorToResponse(vector), nil
-}
 ```
+
+> **注記（テストモード、r8）:** テストモードで通常モードと異なるのは、Milenage 計算に使う Ki / OPc / AMF を `GetTestCryptoParams()` の固定値（3GPP TS 35.208 Test Set 1、AMF `B9B9`）に置き換える点だけである。加入者 `sub:{IMSI}` の取得・SQN の解析と書き戻し・再同期・エラー処理は通常モードと同じで、未登録IMSIは `ErrSubscriberNotFound`（404）、Valkeyエラーと SQN 書き戻し失敗は `ErrValkeyConnection`（500）、SQN の解析失敗はエラー（500）になる。`sub:{IMSI}` の `ki` / `opc` / `amf` は参照しない（形式チェックもしない）が、`sqn` を使うため加入者の登録は必須である。r7 以前の実装にあった既定 SQN（`ff9bb4d0b607`）へのフォールバック（`TEST_SQN_FALLBACK` / `TEST_SQN_PARSE_ERR` / `TEST_SQN_PERSIST_ERR`）と `GetDefaultSQN()` は削除した（未登録IMSIに `sqn` だけを持つ `sub:{IMSI}` が作られる問題を解消）。
 
 ---
 
@@ -1654,19 +1652,16 @@ D-04で定義されたVector API用event_id:
 
 | event_id | レベル | 説明 |
 |----------|--------|------|
-| `CALC_OK` | INFO | ベクター生成成功（テストベクターモードではユースケース層の `test vector generated` も出力） |
-| `CALC_ERR` | INFO/WARN/ERROR | 計算・データエラー（リクエスト不正・IMSI形式不正=WARN、IMSI不在=INFO、Milenage計算エラー・予期しないエラー=ERROR） |
+| `CALC_OK` | INFO | ベクター生成成功（テストベクターモードではユースケース層の `test vector generated`（`test_mode`, `sqn`）も出力） |
+| `CALC_ERR` | INFO/WARN/ERROR | 計算・データエラー（リクエスト不正・IMSI形式不正=WARN、IMSI不在=INFO（テストベクターモードの対象IMSIも同じ）、Milenage計算エラー・予期しないエラー=ERROR） |
 | `SQN_RESYNC` | INFO | SQN再同期成功（ユースケース層。`trace_id`・`imsi` なし） |
 | `SQN_RESYNC_MAC_ERR` | WARN | AUTS MAC検証失敗（AUTSからのSQN抽出失敗を含む） |
 | `SQN_RESYNC_FORMAT_ERR` | WARN | AUTS形式不正（RAND/AUTSのHexデコード失敗を含む） |
 | `SQN_RESYNC_DELTA_ERR` | WARN | SQNデルタ超過（ユースケース層・ハンドラー層の2行） |
 | `SQN_OVERFLOW_ERR` | ERROR | SQNオーバーフロー |
-| `VALKEY_CONN_ERR` | ERROR | 加入者取得・SQN更新時のValkeyエラー（500返却） |
-| `TEST_SQN_FALLBACK` | INFO | テストベクターモードでSQN取得不可のためデフォルトSQNを使用 |
-| `TEST_SQN_PARSE_ERR` | WARN | テストベクターモードでSQN解析失敗 |
-| `TEST_SQN_PERSIST_ERR` | WARN | テストベクターモードでSQN書き戻し失敗 |
+| `VALKEY_CONN_ERR` | ERROR | 加入者取得・SQN更新時のValkeyエラー（500返却。テストベクターモードの対象IMSIも同じ） |
 
-> **注記:** 各event_idの `msg`・属性はD-04 §3.4を参照。起動時のValkey接続失敗は event_id なしの `failed to connect to Valkey` で出力する。Valkey接続の復旧検知ログは出力しない。`SQN_CONFLICT_RETRY` / `SQN_CONFLICT_ERR` は §13.6 で設計済みだが**未実装**のため出力されない。
+> **注記:** 各event_idの `msg`・属性はD-04 §3.4を参照。起動時のValkey接続失敗は event_id なしの `failed to connect to Valkey` で出力する。Valkey接続の復旧検知ログは出力しない。`SQN_CONFLICT_RETRY` / `SQN_CONFLICT_ERR` は §13.6 で設計済みだが**未実装**のため出力されない。テストベクターモード専用のエラー系 event_id はない（r7 まで記載していた `TEST_SQN_FALLBACK` / `TEST_SQN_PARSE_ERR` / `TEST_SQN_PERSIST_ERR` は r8 で廃止。エラーは通常モードと同じ event_id で出力する）。
 
 ### 11.2 ログ出力例
 
@@ -1838,6 +1833,7 @@ type SubscriberRepository interface {
 type TestVectorProvider interface {
     IsTestIMSI(imsi string) bool
     GetTestVector(imsi string) (*Vector, error)
+    GetTestCryptoParams() (ki, opc, amf []byte) // テスト用 Ki/OPc/AMF（防御的コピー）
 }
 
 type VectorUseCase interface {
@@ -1895,7 +1891,7 @@ type VectorUseCase interface {
 
 #### 概要
 
-E2Eテスト（eapaka_test等）で使用する固定ベクターを返却するテストモードを実装する。
+E2Eテスト・結合テスト（eapaka_test等）向けに、対象IMSIの Ki / OPc / AMF を 3GPP TS 35.208 Test Set 1 の固定値に置き換えてベクターを計算するテストモードを実装する。加入者の登録（`sub:{IMSI}`）と SQN 管理は通常モードと同じく必要である。
 **方式A + 環境変数ガード** を採用し、二重ガードで本番環境での誤発動を防止する。
 
 #### 環境変数
@@ -1908,88 +1904,63 @@ E2Eテスト（eapaka_test等）で使用する固定ベクターを返却する
 #### 判定ロジック
 
 ```
-1. TEST_VECTOR_ENABLED=true か確認
+1. TEST_VECTOR_ENABLED=true か確認（起動時。false なら TestVectorProvider を生成しない）
    └─ false → 通常処理（Valkey参照）
 
 2. IMSIプレフィックスが TEST_VECTOR_IMSI_PREFIX に一致か
    └─ 不一致 → 通常処理（Valkey参照）
 
-3. 一致 → 3GPP TS 35.208 テストベクターを返却
+3. 一致 → 通常処理と同じ流れで、Ki/OPc/AMF だけを Test Set 1 の固定値に置き換える
+   ├─ sub:{IMSI} を取得（未登録 → 404、Valkeyエラー → 500）
+   ├─ sub:{IMSI} の sqn を解析（失敗 → 500）。ki / opc / amf は参照しない
+   ├─ SQN +32（再同期時は SQN_MS+32）、乱数 RAND で Milenage 計算
+   └─ 新SQNを sub:{IMSI} に書き戻す（失敗 → 500。ベクターは返さない）
 ```
 
 #### テストベクター実装
 
 ```go
-// internal/testmode/testvector.go
+// internal/testmode/testvector.go（抜粋）
 
-// 3GPP TS 35.208 Test Set 1 ベースのテストベクター
-var testSet1 = struct {
-    Ki   []byte
-    OPc  []byte
-    RAND []byte
-    SQN  uint64
-    AMF  []byte
-    XRES []byte
-    CK   []byte
-    IK   []byte
-}{
-    Ki:   hexMustDecode("465b5ce8b199b49faa5f0a2ee238a6bc"),
-    OPc:  hexMustDecode("cd63cb71954a9f4e48a5994e37a02baf"),
-    RAND: hexMustDecode("23553cbe9637a89d218ae64dae47bf35"),
-    SQN:  0xff9bb4d0b607,
-    AMF:  hexMustDecode("b9b9"),
-    XRES: hexMustDecode("a54211d5e3ba50bf"),
-    CK:   hexMustDecode("b40ba9a3c58b2a05bbf0d987b21bf8cb"),
-    IK:   hexMustDecode("f769bcd751044604127672711c6d3441"),
-}
+// 3GPP TS 35.208 Test Set 1
+var (
+    testRAND = []byte{ /* 23553cbe9637a89d218ae64dae47bf35 */ }
+    testKi   = []byte{ /* 465b5ce8b199b49faa5f0a2ee238a6bc */ }
+    testOPc  = []byte{ /* cd63cb71954a9f4e48a5994e37a02baf */ }
+    testAMF  = []byte{0xb9, 0xb9}
+    testSQN  uint64 = 0xff9bb4d0b607 // GetTestVector 専用（ユースケースの SQN には使わない）
+)
 
 type TestVectorProvider struct {
-    enabled    bool
     imsiPrefix string
 }
 
-func NewTestVectorProvider(cfg *config.Config) *TestVectorProvider {
-    if !cfg.TestVectorEnabled {
-        return nil
-    }
-    return &TestVectorProvider{
-        enabled:    cfg.TestVectorEnabled,
-        imsiPrefix: cfg.TestVectorIMSIPrefix,
-    }
+// main.go で cfg.TestVectorEnabled が true のときだけ生成する（false なら nil を渡し、テストモード無効）
+func NewTestVectorProvider(imsiPrefix string) *TestVectorProvider {
+    return &TestVectorProvider{imsiPrefix: imsiPrefix}
 }
 
 func (p *TestVectorProvider) IsTestIMSI(imsi string) bool {
-    if p == nil || !p.enabled {
-        return false
-    }
     return strings.HasPrefix(imsi, p.imsiPrefix)
 }
 
-func (p *TestVectorProvider) GetTestVector(imsi string) (*milenage.Vector, error) {
-    // 固定RANDでAUTNを計算
-    calc := milenage.NewCalculator()
-    
-    // テスト用に固定値で計算（SQNはインクリメントしない）
-    vector := &milenage.Vector{
-        RAND: testSet1.RAND,
-        XRES: testSet1.XRES,
-        CK:   testSet1.CK,
-        IK:   testSet1.IK,
-    }
-    
-    // AUTNを計算
-    autn := calc.ComputeAUTNFromTestData(testSet1.SQN, testSet1.AMF)
-    vector.AUTN = autn
-    
-    return vector, nil
+// GetTestCryptoParams はテスト用の Ki / OPc / AMF を返す（防御的コピー）。
+// ユースケース（§10.1）はこの値で Milenage を計算する。
+func (p *TestVectorProvider) GetTestCryptoParams() (ki, opc, amf []byte) {
+    ki = append([]byte(nil), testKi...)
+    opc = append([]byte(nil), testOPc...)
+    amf = append([]byte(nil), testAMF...)
+    return
 }
 
-func hexMustDecode(s string) []byte {
-    b, err := hex.DecodeString(s)
-    if err != nil {
-        panic(err)
+// GetTestVector は固定 RAND・固定 SQN で Test Set 1 のベクターを返す。
+// インターフェースには残っているが、現行のユースケースからは呼ばれない。
+func (p *TestVectorProvider) GetTestVector(imsi string) (*milenage.Vector, error) {
+    if !p.IsTestIMSI(imsi) {
+        return nil, fmt.Errorf("IMSI %s is not a test IMSI", imsi)
     }
-    return b
+    calc := milenage.NewCalculator()
+    return calc.GenerateVectorWithRAND(testKi, testOPc, testAMF, testSQN, testRAND)
 }
 ```
 
@@ -2017,8 +1988,10 @@ trace:
 
 - **本番環境**: `TEST_VECTOR_ENABLED=false`（デフォルト）で運用
 - **テスト環境**: `TEST_VECTOR_ENABLED=true` + `TEST_VECTOR_IMSI_PREFIX=00101` を設定
-- **SQN管理**: テストモードではSQNをインクリメント・永続化しない（固定値返却）
-- **再同期テスト**: テストモードでは再同期リクエストもテストベクターを返却（実際の再同期処理はスキップ）
+- **加入者登録**: テストモードでも `sub:{IMSI}` の登録が必要（未登録なら通常モードと同じく 404）。`ki` / `opc` / `amf` フィールドは参照しないが、`sqn` を使う。テスト用加入者は T-03 の事前準備（test_subscriber_data_scripts）で登録する
+- **SQN管理**: 通常モードと同じく `sub:{IMSI}` の `sqn` を +32 して書き戻す。`sqn` を解析できない場合や書き戻しに失敗した場合はエラー（500）とし、既定 SQN へのフォールバックはしない
+- **RAND**: 毎回乱数（固定 RAND の `GetTestVector()` はユースケースからは使わない）
+- **再同期テスト**: テストモードでも再同期（AUTS）処理は通常どおり行う（固定 Ki/OPc で MAC-S を検証し、SQN_MS+32 を書き戻す）
 
 #### 13.5.1 本番環境でのテストベクターモード無効化
 
@@ -2292,3 +2265,4 @@ func (h *VectorHandler) HandleVector(c *gin.Context) {
 | r5 | 2026-01-27 | 本番環境注記追加: セクション13.5.1にテストベクターモードの本番無効化要件を新設、関連ドキュメント参照バージョン更新、D-08への参照追加 |
 | r6 | 2026-02-18 | ディレクトリ構造全面更新、usecase統合反映、関連ドキュメント版数更新 |
 | r7 | 2026-10-04 | D-04 r19 の event_id 全面整合に合わせて修正: §11.1 event_id一覧から実装に存在しない `SQN_RESYNC_DECODE_ERR`（AUTSからのSQN抽出失敗は `SQN_RESYNC_MAC_ERR`）と `VALKEY_CONN_RESTORED` を削除し、`TEST_SQN_FALLBACK` / `TEST_SQN_PARSE_ERR` / `TEST_SQN_PERSIST_ERR` を追加、各説明を実装に合わせて修正。§11.2 ログ出力例を実装の属性に修正（`CALC_OK` / `CALC_ERR` から `method`・`path`・`latency_ms` を削除、ユースケース層の `SQN_RESYNC` / `SQN_RESYNC_DELTA_ERR` から `trace_id` を削除）。SQN競合制御（WATCH/MULTI による CAS、リトライ上限3回、HTTP 409、`SQN_CONFLICT_RETRY` / `SQN_CONFLICT_ERR`）は設計を残したまま「設計済み・未実装（現行は単純な HSET による後勝ち）」と明記（§7.5、§13.3、§13.6 冒頭・各見出し、§2.7 の `ErrSQNConflict` 記載、§1.3）。§8.3 `GetWithRetry` が未使用でリトライログが出力されない旨を注記し、§9.4 のリトライ記載を修正。§1.3 関連ドキュメントの版数を現行版に更新（D-01 r10、D-02 r12、D-03 r6、D-04 r19、D-06 r7、D-07 r8、D-08 r14、D-12 r5、E-02 r3。Auth Server詳細設計書の文書番号を D-09 に修正）。関連ドキュメント表の E-03 を実在の文書名（共通ライブラリ(pkg)設計書）に修正 |
+| r8 | 2026-10-04 | テストベクターモードでも加入者登録を必須にした実装修正の反映: §10.1 `GenerateVector` をテストモードと通常モードの共通処理に更新（テストモードで置き換えるのは Ki/OPc/AMF だけ。加入者の取得・SQN の解析と書き戻し・エラー処理は通常モードと同じで、未登録IMSIは404、Valkeyエラー・SQN書き戻し失敗は500、SQN解析失敗はエラー）し、旧 `generateTestVector` を削除、テストモードの注記を追加。§11.1 から `TEST_SQN_FALLBACK` / `TEST_SQN_PARSE_ERR` / `TEST_SQN_PERSIST_ERR` を削除し、`CALC_ERR` / `VALKEY_CONN_ERR` / `CALC_OK` の説明にテストベクターモードの扱いを追記。§13.5 の概要・判定ロジック・注意事項を実装どおりに修正（固定ベクター返却・SQN非永続・再同期スキップの記述を、固定 Ki/OPc/AMF で計算・加入者登録必須・SQN は通常どおり管理・再同期も通常どおりに訂正）し、テストベクター実装のコード例を現行の `testvector.go`（`NewTestVectorProvider(imsiPrefix)`、`GetTestCryptoParams()`）に更新。§2.5・§12.3 の `TestVectorProvider` インターフェースに `GetTestCryptoParams()` を追記し、§2.1 ディレクトリ構造のコメント・§2.3 パッケージ一覧・§2.7 ファイル別責務を更新。§1.3 関連ドキュメントの版数を更新（D-02 r14、D-04 r22） |
