@@ -4,8 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -23,6 +27,11 @@ func init() {
 type mockVectorUseCase struct {
 	response *dto.VectorResponse
 	err      error
+	testMode bool
+}
+
+func (m *mockVectorUseCase) IsTestMode(imsi string) bool {
+	return m.testMode
 }
 
 func (m *mockVectorUseCase) GenerateVector(ctx context.Context, req *dto.VectorRequest) (*dto.VectorResponse, error) {
@@ -186,6 +195,47 @@ func TestHandleVector(t *testing.T) {
 
 		if w.Code != http.StatusNotFound {
 			t.Errorf("Status = %d, want %d", w.Code, http.StatusNotFound)
+		}
+	})
+}
+
+func TestHandleVector_LogAttributes(t *testing.T) {
+	run := func(t *testing.T, uc *mockVectorUseCase) (*httptest.ResponseRecorder, string) {
+		t.Helper()
+		var buf bytes.Buffer
+		prev := slog.Default()
+		slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+		defer slog.SetDefault(prev)
+
+		h := NewVectorHandler(uc, &config.Config{LogMaskIMSI: true})
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request, _ = http.NewRequest("POST", "/api/v1/vector", bytes.NewBufferString(`{"imsi":"001010000000001"}`))
+		c.Request.Header.Set("Content-Type", "application/json")
+		c.Set(TraceIDKey, "test-trace-id")
+		h.HandleVector(c)
+		return w, buf.String()
+	}
+
+	t.Run("success logs test_mode once", func(t *testing.T) {
+		_, logs := run(t, &mockVectorUseCase{response: &dto.VectorResponse{}, testMode: true})
+		if strings.Count(logs, `"event_id":"CALC_OK"`) != 1 || !strings.Contains(logs, `"test_mode":true`) {
+			t.Errorf("CALC_OK with test_mode should be logged once: %s", logs)
+		}
+	})
+
+	t.Run("problem error logs cause", func(t *testing.T) {
+		err := fmt.Errorf("%w: %v", usecase.ErrValkeyConnection, errors.New("connection refused"))
+		w, logs := run(t, &mockVectorUseCase{err: err})
+		if w.Code != http.StatusInternalServerError {
+			t.Errorf("Status = %d, want 500", w.Code)
+		}
+		if !strings.Contains(logs, `"event_id":"VALKEY_CONN_ERR"`) || !strings.Contains(logs, "connection refused") {
+			t.Errorf("cause not logged: %s", logs)
+		}
+		// 応答の detail には原因を含めない
+		if strings.Contains(w.Body.String(), "connection refused") {
+			t.Errorf("response must not contain the cause: %s", w.Body.String())
 		}
 	})
 }

@@ -51,4 +51,6 @@ type TestVectorProvider interface {
 // VectorUseCaseInterface はベクター生成ユースケースのインターフェース。
 type VectorUseCaseInterface interface {
 	GenerateVector(ctx context.Context, req *dto.VectorRequest) (*dto.VectorResponse, error)
+	// IsTestMode はIMSIがテストベクターモードの対象かを返す（ログ出力用）
+	IsTestMode(imsi string) bool
 }

@@ -1,14 +1,18 @@
 package usecase
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-api/internal/config"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-api/internal/dto"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-api/internal/milenage"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-api/internal/store"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/logging"
 	"go.uber.org/mock/gomock"
 )
 
@@ -520,7 +524,7 @@ func TestProcessResync_Success(t *testing.T) {
 	ki, _ := milenage.HexDecode(validHexKi)
 	opc, _ := milenage.HexDecode(validHexOPc)
 
-	newSQN, err := uc.processResync(ki, opc, resyncInfo, uint64(0x20))
+	newSQN, err := uc.processResync(context.Background(), testIMSI, ki, opc, resyncInfo, uint64(0x20))
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -545,7 +549,7 @@ func TestProcessResync_InvalidRAND(t *testing.T) {
 	ki, _ := milenage.HexDecode(validHexKi)
 	opc, _ := milenage.HexDecode(validHexOPc)
 
-	_, err := uc.processResync(ki, opc, resyncInfo, uint64(0x20))
+	_, err := uc.processResync(context.Background(), testIMSI, ki, opc, resyncInfo, uint64(0x20))
 
 	if !errors.Is(err, ErrResyncInvalidFormat) {
 		t.Errorf("expected ErrResyncInvalidFormat, got: %v", err)
@@ -567,7 +571,7 @@ func TestProcessResync_InvalidAUTS(t *testing.T) {
 	ki, _ := milenage.HexDecode(validHexKi)
 	opc, _ := milenage.HexDecode(validHexOPc)
 
-	_, err := uc.processResync(ki, opc, resyncInfo, uint64(0x20))
+	_, err := uc.processResync(context.Background(), testIMSI, ki, opc, resyncInfo, uint64(0x20))
 
 	if !errors.Is(err, ErrResyncInvalidFormat) {
 		t.Errorf("expected ErrResyncInvalidFormat, got: %v", err)
@@ -590,7 +594,7 @@ func TestProcessResync_AUTSLengthError(t *testing.T) {
 	ki, _ := milenage.HexDecode(validHexKi)
 	opc, _ := milenage.HexDecode(validHexOPc)
 
-	_, err := uc.processResync(ki, opc, resyncInfo, uint64(0x20))
+	_, err := uc.processResync(context.Background(), testIMSI, ki, opc, resyncInfo, uint64(0x20))
 
 	if !errors.Is(err, ErrResyncInvalidFormat) {
 		t.Errorf("expected ErrResyncInvalidFormat, got: %v", err)
@@ -615,7 +619,7 @@ func TestProcessResync_ExtractSQNFailed(t *testing.T) {
 	ki, _ := milenage.HexDecode(validHexKi)
 	opc, _ := milenage.HexDecode(validHexOPc)
 
-	_, err := uc.processResync(ki, opc, resyncInfo, uint64(0x20))
+	_, err := uc.processResync(context.Background(), testIMSI, ki, opc, resyncInfo, uint64(0x20))
 
 	if !errors.Is(err, ErrResyncMACFailed) {
 		t.Errorf("expected ErrResyncMACFailed, got: %v", err)
@@ -640,7 +644,7 @@ func TestProcessResync_DeltaExceeded(t *testing.T) {
 	ki, _ := milenage.HexDecode(validHexKi)
 	opc, _ := milenage.HexDecode(validHexOPc)
 
-	_, err := uc.processResync(ki, opc, resyncInfo, uint64(0x20))
+	_, err := uc.processResync(context.Background(), testIMSI, ki, opc, resyncInfo, uint64(0x20))
 
 	if !errors.Is(err, ErrResyncDeltaExceeded) {
 		t.Errorf("expected ErrResyncDeltaExceeded, got: %v", err)
@@ -666,7 +670,7 @@ func TestProcessResync_ComputeResyncOverflow(t *testing.T) {
 	ki, _ := milenage.HexDecode(validHexKi)
 	opc, _ := milenage.HexDecode(validHexOPc)
 
-	_, err := uc.processResync(ki, opc, resyncInfo, uint64(0x20))
+	_, err := uc.processResync(context.Background(), testIMSI, ki, opc, resyncInfo, uint64(0x20))
 
 	if !errors.Is(err, ErrSQNOverflow) {
 		t.Errorf("expected ErrSQNOverflow, got: %v", err)
@@ -707,5 +711,91 @@ func TestGenerateVector_Resync_Success(t *testing.T) {
 	}
 	if resp == nil {
 		t.Fatal("expected non-nil response")
+	}
+}
+
+func TestProcessResync_LogsTraceIDAndMaskedIMSI(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	uc, _, _, _, mockSQNVal, mockResync, _ := setupUseCase(ctrl)
+	uc.cfg.LogMaskIMSI = true
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	defer slog.SetDefault(prev)
+
+	mockResync.EXPECT().ExtractSQN(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(uint64(0x10), nil)
+	mockSQNVal.EXPECT().ValidateResyncSQN(uint64(0x10), uint64(0x20)).Return(nil)
+	mockSQNVal.EXPECT().ComputeResyncSQN(uint64(0x10)).Return(uint64(0x30), nil)
+
+	ki, _ := milenage.HexDecode(validHexKi)
+	opc, _ := milenage.HexDecode(validHexOPc)
+	ctx := ContextWithTraceID(context.Background(), "trace-resync")
+	resyncInfo := &dto.ResyncInfo{RAND: "0102030405060708090a0b0c0d0e0f10", AUTS: "0102030405060708090a0b0c0d0e"}
+
+	if _, err := uc.processResync(ctx, testIMSI, ki, opc, resyncInfo, uint64(0x20)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	logs := buf.String()
+	for _, want := range []string{`"event_id":"SQN_RESYNC"`, `"trace_id":"trace-resync"`, `"imsi":"` + logging.MaskIMSI(testIMSI, true) + `"`} {
+		if !strings.Contains(logs, want) {
+			t.Errorf("log does not contain %s: %s", want, logs)
+		}
+	}
+	if strings.Contains(logs, testIMSI) {
+		t.Errorf("log contains unmasked IMSI: %s", logs)
+	}
+}
+
+func TestProcessResync_DeltaExceeded_NoUseCaseLog(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	uc, _, _, _, mockSQNVal, mockResync, _ := setupUseCase(ctrl)
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	defer slog.SetDefault(prev)
+
+	mockResync.EXPECT().ExtractSQN(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(uint64(0x10), nil)
+	mockSQNVal.EXPECT().ValidateResyncSQN(uint64(0x10), uint64(0x20)).Return(errors.New("delta too large"))
+
+	ki, _ := milenage.HexDecode(validHexKi)
+	opc, _ := milenage.HexDecode(validHexOPc)
+	resyncInfo := &dto.ResyncInfo{RAND: "0102030405060708090a0b0c0d0e0f10", AUTS: "0102030405060708090a0b0c0d0e"}
+
+	_, err := uc.processResync(context.Background(), testIMSI, ki, opc, resyncInfo, uint64(0x20))
+	if !errors.Is(err, ErrResyncDeltaExceeded) {
+		t.Fatalf("expected ErrResyncDeltaExceeded, got: %v", err)
+	}
+	// SQN値はエラー文に含め、ログはハンドラーが1行で出す（ユースケースでは出さない）
+	if !strings.Contains(err.Error(), "sqn_ms=000000000010") || !strings.Contains(err.Error(), "sqn_he=000000000020") {
+		t.Errorf("error does not contain SQN values: %v", err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("use case should not log: %s", buf.String())
+	}
+}
+
+func TestVectorUseCase_IsTestModeAndMaskIMSI(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	uc, _, _, _, _, _, mockTestVP := setupUseCase(ctrl)
+
+	mockTestVP.EXPECT().IsTestIMSI(testIMSI).Return(true)
+	if !uc.IsTestMode(testIMSI) {
+		t.Error("IsTestMode() = false, want true")
+	}
+	if (&VectorUseCase{}).IsTestMode(testIMSI) {
+		t.Error("IsTestMode() without provider should be false")
+	}
+
+	const imsi = "440101234567890"
+	if got := (&VectorUseCase{cfg: &config.Config{LogMaskIMSI: false}}).maskIMSI(imsi); got != imsi {
+		t.Errorf("maskIMSI(disabled) = %q", got)
+	}
+	if got := (&VectorUseCase{}).maskIMSI(imsi); got != "440101********0" {
+		t.Errorf("maskIMSI(nil cfg) = %q", got)
 	}
 }

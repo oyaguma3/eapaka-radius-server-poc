@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -17,6 +16,7 @@ import (
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-gateway/internal/handler"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-gateway/internal/router"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-gateway/internal/server"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/logging"
 )
 
 func main() {
@@ -122,18 +122,8 @@ func warnBackendConfig(cfg *config.Config, plmnMap map[string]string, registry *
 
 // initLogger はロガーを初期化する。
 func initLogger(cfg *config.Config) {
-	level := slog.LevelInfo
-	switch strings.ToUpper(cfg.LogLevel) {
-	case "DEBUG":
-		level = slog.LevelDebug
-	case "WARN":
-		level = slog.LevelWarn
-	case "ERROR":
-		level = slog.LevelError
-	}
-
 	opts := &slog.HandlerOptions{
-		Level: level,
+		Level: logging.ParseLevel(cfg.LogLevel),
 	}
 
 	h := slog.NewJSONHandler(os.Stdout, opts)

@@ -3,14 +3,6 @@ package store
 import (
 	"context"
 	"fmt"
-	"log/slog"
-	"strings"
-	"time"
-)
-
-const (
-	maxRetries    = 2
-	retryInterval = 100 * time.Millisecond
 )
 
 // Subscriber は加入者情報を表す。
@@ -65,45 +57,4 @@ func (s *SubscriberStore) UpdateSQN(ctx context.Context, imsi string, sqn string
 	}
 
 	return nil
-}
-
-// GetWithRetry はリトライ付きで加入者情報を取得する。
-func (s *SubscriberStore) GetWithRetry(ctx context.Context, imsi string) (*Subscriber, error) {
-	var lastErr error
-
-	for i := 0; i <= maxRetries; i++ {
-		sub, err := s.Get(ctx, imsi)
-		if err == nil {
-			return sub, nil
-		}
-
-		lastErr = err
-
-		// 接続エラーの場合のみリトライ
-		if !isConnectionError(err) {
-			return nil, err
-		}
-
-		if i < maxRetries {
-			slog.Warn("Valkey connection failed, retrying",
-				"event_id", "VALKEY_CONN_ERR",
-				"retry", i+1,
-				"error", err.Error(),
-			)
-			time.Sleep(retryInterval)
-		}
-	}
-
-	return nil, lastErr
-}
-
-// isConnectionError は接続エラーかどうかを判定する。
-func isConnectionError(err error) bool {
-	if err == nil {
-		return false
-	}
-	errStr := err.Error()
-	return strings.Contains(errStr, "connection refused") ||
-		strings.Contains(errStr, "i/o timeout") ||
-		strings.Contains(errStr, "connection reset")
 }

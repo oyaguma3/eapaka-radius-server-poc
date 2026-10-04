@@ -34,7 +34,7 @@ func NewVectorHandler(useCase usecase.VectorUseCaseInterface, cfg *config.Config
 // HandleVector はPOST /api/v1/vector のハンドラー。
 func (h *VectorHandler) HandleVector(c *gin.Context) {
 	traceID, _ := c.Get(TraceIDKey)
-	ctx := c.Request.Context()
+	ctx := usecase.ContextWithTraceID(c.Request.Context(), fmt.Sprint(traceID))
 
 	// 1. リクエストバインド
 	var req dto.VectorRequest
@@ -81,6 +81,7 @@ func (h *VectorHandler) HandleVector(c *gin.Context) {
 		"event_id", "CALC_OK",
 		"imsi", logging.MaskIMSI(req.IMSI, h.cfg.LogMaskIMSI),
 		"http_status", http.StatusOK,
+		"test_mode", h.useCase.IsTestMode(req.IMSI),
 	)
 	c.JSON(http.StatusOK, resp)
 }
@@ -94,6 +95,8 @@ func (h *VectorHandler) handleError(c *gin.Context, traceID any, imsi string, er
 			"event_id", problemErr.EventID,
 			"imsi", logging.MaskIMSI(imsi, h.cfg.LogMaskIMSI),
 			"http_status", problemErr.Status,
+			// 原因（Valkeyのエラー、SQN値など）を含むエラー文。応答の detail には含めない
+			"error", err.Error(),
 		)
 		c.JSON(problemErr.Status, problemErr.ToProblemDetail())
 		return
@@ -125,4 +128,3 @@ func validateIMSI(imsi string) error {
 	}
 	return nil
 }
-
