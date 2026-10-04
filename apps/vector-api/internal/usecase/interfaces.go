@@ -46,11 +46,11 @@ type TestVectorProvider interface {
 	GetTestVector(imsi string) (*milenage.Vector, error)
 	// GetTestCryptoParams はテスト用の暗号パラメータを返す（Ki, OPc, AMF）
 	GetTestCryptoParams() (ki, opc, amf []byte)
-	// GetDefaultSQN はテストベクターのデフォルトSQN値を返す
-	GetDefaultSQN() uint64
 }
 
 // VectorUseCaseInterface はベクター生成ユースケースのインターフェース。
 type VectorUseCaseInterface interface {
 	GenerateVector(ctx context.Context, req *dto.VectorRequest) (*dto.VectorResponse, error)
+	// IsTestMode はIMSIがテストベクターモードの対象かを返す（ログ出力用）
+	IsTestMode(imsi string) bool
 }

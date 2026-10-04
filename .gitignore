@@ -9,6 +9,12 @@ coverage.out
 # バイナリ
 *.exe
 apps/admin-tui/admin-tui-linux
+# リポジトリ直下で単一パッケージを go build したときの成果物
+/auth-server
+/acct-server
+/vector-gateway
+/vector-api
+/admin-tui
 
 # IDE
 .vscode/
@@ -24,6 +30,10 @@ docs/testresults/
 
 # ホスト上のログ出力
 deployments/logs_on_host/*.log
+
+# aka-only-server 接続用の証明書・秘密鍵
+deployments/certs/*
+!deployments/certs/.gitkeep
 
 # Claude Code
 .claude/

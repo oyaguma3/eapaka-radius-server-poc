@@ -8,6 +8,7 @@ import (
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-api/internal/config"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-api/internal/dto"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-api/internal/milenage"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/logging"
 )
 
 // VectorUseCase はベクター生成ユースケースを実装する。
@@ -43,13 +44,12 @@ func NewVectorUseCase(
 }
 
 // GenerateVector はベクターを生成する。
+// テストモード（TEST_VECTOR_ENABLED=true かつ対象プレフィックスのIMSI）では、
+// Ki/OPc/AMF をテスト用の固定値に置き換える。加入者の取得・SQNの管理・エラー処理は通常モードと同じ。
 func (u *VectorUseCase) GenerateVector(ctx context.Context, req *dto.VectorRequest) (*dto.VectorResponse, error) {
-	// 0. テストモード判定（有効な場合）
-	if u.testVectorProvider != nil && u.testVectorProvider.IsTestIMSI(req.IMSI) {
-		return u.generateTestVector(ctx, req)
-	}
+	testMode := u.IsTestMode(req.IMSI)
 
-	// 1. 加入者情報取得
+	// 1. 加入者情報取得（テストモードでも登録が必要）
 	sub, err := u.subscriberStore.Get(ctx, req.IMSI)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrValkeyConnection, err)
@@ -58,18 +58,20 @@ func (u *VectorUseCase) GenerateVector(ctx context.Context, req *dto.VectorReque
 		return nil, ErrSubscriberNotFound
 	}
 
-	// 2. 鍵情報をバイト列に変換
-	ki, err := milenage.HexDecode(sub.Ki)
-	if err != nil {
-		return nil, fmt.Errorf("invalid Ki format: %w", err)
-	}
-	opc, err := milenage.HexDecode(sub.OPc)
-	if err != nil {
-		return nil, fmt.Errorf("invalid OPc format: %w", err)
-	}
-	amf, err := milenage.HexDecode(sub.AMF)
-	if err != nil {
-		return nil, fmt.Errorf("invalid AMF format: %w", err)
+	// 2. 鍵情報をバイト列に変換（テストモードは固定値）
+	var ki, opc, amf []byte
+	if testMode {
+		ki, opc, amf = u.testVectorProvider.GetTestCryptoParams()
+	} else {
+		if ki, err = milenage.HexDecode(sub.Ki); err != nil {
+			return nil, fmt.Errorf("invalid Ki format: %w", err)
+		}
+		if opc, err = milenage.HexDecode(sub.OPc); err != nil {
+			return nil, fmt.Errorf("invalid OPc format: %w", err)
+		}
+		if amf, err = milenage.HexDecode(sub.AMF); err != nil {
+			return nil, fmt.Errorf("invalid AMF format: %w", err)
+		}
 	}
 	currentSQN, err := u.sqnManager.ParseHex(sub.SQN)
 	if err != nil {
@@ -80,7 +82,7 @@ func (u *VectorUseCase) GenerateVector(ctx context.Context, req *dto.VectorReque
 
 	// 3. 再同期処理 or 通常処理
 	if req.ResyncInfo != nil {
-		newSQN, err = u.processResync(ki, opc, req.ResyncInfo, currentSQN)
+		newSQN, err = u.processResync(ctx, req.IMSI, ki, opc, req.ResyncInfo, currentSQN)
 		if err != nil {
 			return nil, err
 		}
@@ -108,7 +110,7 @@ func (u *VectorUseCase) GenerateVector(ctx context.Context, req *dto.VectorReque
 }
 
 // processResync は再同期処理を行う。
-func (u *VectorUseCase) processResync(ki, opc []byte, resyncInfo *dto.ResyncInfo, currentSQN uint64) (uint64, error) {
+func (u *VectorUseCase) processResync(ctx context.Context, imsi string, ki, opc []byte, resyncInfo *dto.ResyncInfo, currentSQN uint64) (uint64, error) {
 	// 1. RAND/AUTS をバイト列に変換
 	randVal, err := milenage.HexDecode(resyncInfo.RAND)
 	if err != nil {
@@ -133,13 +135,8 @@ func (u *VectorUseCase) processResync(ki, opc []byte, resyncInfo *dto.ResyncInfo
 
 	// 4. デルタ検証
 	if err := u.sqnValidator.ValidateResyncSQN(sqnMS, currentSQN); err != nil {
-		slog.Warn("SQN delta validation failed",
-			"event_id", "SQN_RESYNC_DELTA_ERR",
-			"sqn_ms", fmt.Sprintf("%012x", sqnMS),
-			"sqn_he", fmt.Sprintf("%012x", currentSQN),
-			"error", err.Error(),
-		)
-		return 0, ErrResyncDeltaExceeded
+		// ログはハンドラーが1行で出力する（SQN値はエラー文に含める）
+		return 0, fmt.Errorf("%w: sqn_ms=%012x sqn_he=%012x: %v", ErrResyncDeltaExceeded, sqnMS, currentSQN, err)
 	}
 
 	// 5. 新SQN計算（SQN_MS + 32）
@@ -151,6 +148,8 @@ func (u *VectorUseCase) processResync(ki, opc []byte, resyncInfo *dto.ResyncInfo
 	// 6. SQN再同期成功ログ
 	slog.Info("SQN resync successful",
 		"event_id", "SQN_RESYNC",
+		"trace_id", traceIDFromContext(ctx),
+		"imsi", u.maskIMSI(imsi),
 		"sqn_old", fmt.Sprintf("%012x", currentSQN),
 		"sqn_ms", fmt.Sprintf("%012x", sqnMS),
 		"sqn_new", fmt.Sprintf("%012x", newSQN),
@@ -159,70 +158,17 @@ func (u *VectorUseCase) processResync(ki, opc []byte, resyncInfo *dto.ResyncInfo
 	return newSQN, nil
 }
 
-// generateTestVector はテストモード用のベクターを生成する。
-// Ki/OPc/AMFは固定値を使用し、SQNはValkey経由でステートフルに管理する。
-func (u *VectorUseCase) generateTestVector(ctx context.Context, req *dto.VectorRequest) (*dto.VectorResponse, error) {
-	// 1. テスト用暗号パラメータ取得
-	ki, opc, amf := u.testVectorProvider.GetTestCryptoParams()
+// IsTestMode はIMSIがテストベクターモードの対象かを返す。
+func (u *VectorUseCase) IsTestMode(imsi string) bool {
+	return u.testVectorProvider != nil && u.testVectorProvider.IsTestIMSI(imsi)
+}
 
-	// 2. ValkeyからSQN取得（失敗時はデフォルトSQNにフォールバック）
-	var currentSQN uint64
-	sub, err := u.subscriberStore.Get(ctx, req.IMSI)
-	if err != nil || sub == nil {
-		currentSQN = u.testVectorProvider.GetDefaultSQN()
-		slog.Info("test mode: using default SQN (Valkey unavailable or subscriber not found)",
-			"event_id", "TEST_SQN_FALLBACK",
-			"imsi", req.IMSI,
-			"default_sqn", fmt.Sprintf("%012x", currentSQN),
-		)
-	} else {
-		currentSQN, err = u.sqnManager.ParseHex(sub.SQN)
-		if err != nil {
-			currentSQN = u.testVectorProvider.GetDefaultSQN()
-			slog.Warn("test mode: SQN parse failed, using default",
-				"event_id", "TEST_SQN_PARSE_ERR",
-				"raw_sqn", sub.SQN,
-				"error", err.Error(),
-			)
-		}
+// maskIMSI はログ出力用にIMSIをマスキングする。
+// 設定が無い場合はマスキングを有効として扱う（LOG_MASK_IMSI の既定値 true に合わせる）。
+func (u *VectorUseCase) maskIMSI(imsi string) string {
+	enabled := true
+	if u.cfg != nil {
+		enabled = u.cfg.LogMaskIMSI
 	}
-
-	var newSQN uint64
-
-	// 3. 再同期処理 or 通常処理
-	if req.ResyncInfo != nil {
-		newSQN, err = u.processResync(ki, opc, req.ResyncInfo, currentSQN)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		newSQN, err = u.sqnManager.Increment(currentSQN)
-		if err != nil {
-			return nil, ErrSQNOverflow
-		}
-	}
-
-	// 4. ベクター生成
-	vector, err := u.calculator.GenerateVector(ki, opc, amf, newSQN)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrMilenageCalculation, err)
-	}
-
-	// 5. ValkeyにSQN書き戻し
-	newSQNHex := u.sqnManager.FormatHex(newSQN)
-	if err := u.subscriberStore.UpdateSQN(ctx, req.IMSI, newSQNHex); err != nil {
-		slog.Warn("test mode: failed to persist SQN to Valkey",
-			"event_id", "TEST_SQN_PERSIST_ERR",
-			"imsi", req.IMSI,
-			"error", err.Error(),
-		)
-	}
-
-	slog.Info("test vector generated",
-		"event_id", "CALC_OK",
-		"test_mode", true,
-		"sqn", newSQNHex,
-	)
-
-	return milenage.VectorToResponse(vector), nil
+	return logging.MaskIMSI(imsi, enabled)
 }

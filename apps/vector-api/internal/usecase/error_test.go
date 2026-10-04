@@ -15,7 +15,7 @@ func TestProblemError(t *testing.T) {
 	})
 
 	t.Run("ToProblemDetail", func(t *testing.T) {
-		err := ErrInvalidIMSI
+		err := ErrResyncMACFailed
 		pd := err.ToProblemDetail()
 
 		if pd.Status != err.Status {
@@ -38,7 +38,7 @@ func TestProblemErrorLogLevel(t *testing.T) {
 	}{
 		{"500 error", ErrValkeyConnection, slog.LevelError},
 		{"404 error", ErrSubscriberNotFound, slog.LevelInfo},
-		{"400 error", ErrInvalidIMSI, slog.LevelWarn},
+		{"400 error", ErrResyncMACFailed, slog.LevelWarn},
 	}
 
 	for _, tt := range tests {
@@ -54,7 +54,6 @@ func TestProblemErrorLogLevel(t *testing.T) {
 func TestPredefinedErrors(t *testing.T) {
 	errors := []*ProblemError{
 		ErrSubscriberNotFound,
-		ErrInvalidIMSI,
 		ErrResyncMACFailed,
 		ErrResyncInvalidFormat,
 		ErrResyncDeltaExceeded,

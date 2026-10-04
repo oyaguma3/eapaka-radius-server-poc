@@ -41,8 +41,8 @@ func (r *identifierResolver) ResolveIMSI(ctx context.Context, sessionUUID, userN
 		if imsi != "" {
 			return logging.MaskIMSI(imsi, r.maskEnabled)
 		}
-		// 3. IMSI抽出失敗、User-Nameをそのまま返却
-		return userName
+		// 3. IMSI抽出失敗、User-Nameを（IMSIを含みうるため）マスクして返却
+		return logging.MaskUserName(userName, r.maskEnabled)
 	}
 
 	// 4. Class UUID

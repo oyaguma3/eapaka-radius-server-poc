@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -17,6 +16,7 @@ import (
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-gateway/internal/handler"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-gateway/internal/router"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-gateway/internal/server"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/logging"
 )
 
 func main() {
@@ -42,10 +42,17 @@ func main() {
 		"log_level", cfg.LogLevel,
 		"mode", cfg.Mode,
 		"plmn_map_entries", len(plmnMap),
+		"akaonly_enabled", cfg.AKAOnlyEnabled(),
+		"akaonly_transport", akaOnlyTransport(cfg),
 	)
 
 	// 4. バックエンドレジストリ
-	registry := backend.NewRegistry(cfg)
+	registry, err := backend.NewRegistry(cfg)
+	if err != nil {
+		slog.Error("failed to initialize backends", "error", err)
+		os.Exit(1)
+	}
+	warnBackendConfig(cfg, plmnMap, registry)
 
 	// 5. ルーター
 	r := router.NewRouter(plmnMap, registry, cfg.IsPassthrough())
@@ -81,20 +88,65 @@ func main() {
 	slog.Info("server stopped")
 }
 
-// initLogger はロガーを初期化する。
-func initLogger(cfg *config.Config) {
-	level := slog.LevelInfo
-	switch strings.ToUpper(cfg.LogLevel) {
-	case "DEBUG":
-		level = slog.LevelDebug
-	case "WARN":
-		level = slog.LevelWarn
-	case "ERROR":
-		level = slog.LevelError
+// authServerVectorTimeout は auth-server が Vector Gateway を呼び出すときのタイムアウト
+// （apps/auth-server/internal/config.VectorRequestTimeout と同じ値）。
+const authServerVectorTimeout = 5 * time.Second
+
+// akaOnlyTransport はaka-only-serverへの接続方式（mtls / plain / disabled）を返す。
+func akaOnlyTransport(cfg *config.Config) string {
+	switch {
+	case !cfg.AKAOnlyEnabled():
+		return "disabled"
+	case cfg.AKAOnlyUseTLS():
+		return "mtls"
+	default:
+		return "plain"
+	}
+}
+
+// warnBackendConfig は起動を止めるほどではない設定上の注意をWARNログに出す。
+func warnBackendConfig(cfg *config.Config, plmnMap map[string]string, registry *backend.Registry) {
+	// バックエンド向けタイムアウトは auth-server の呼び出しタイムアウトより短くする必要がある
+	timeouts := []struct {
+		name string
+		d    time.Duration
+		used bool
+	}{
+		{"VECTOR_GATEWAY_INTERNAL_TIMEOUT", cfg.InternalTimeout, true},
+		{"VECTOR_GATEWAY_AKAONLY_TIMEOUT", cfg.AKAOnlyTimeout, cfg.AKAOnlyEnabled()},
+	}
+	for _, t := range timeouts {
+		if t.used && t.d >= authServerVectorTimeout {
+			slog.Warn("backend timeout should be shorter than the auth-server timeout; auth-server may time out before receiving 502",
+				"setting", t.name,
+				"timeout", t.d.String(),
+				"auth_server_timeout", authServerVectorTimeout.String(),
+			)
+		}
 	}
 
+	if cfg.AKAOnlyEnabled() && !cfg.AKAOnlyUseTLS() {
+		slog.Warn("aka-only-server is connected over plain HTTP; CK/IK are transmitted unencrypted",
+			"akaonly_url", cfg.AKAOnlyURL,
+		)
+	}
+	if cfg.IsPassthrough() {
+		return
+	}
+	for plmn, id := range plmnMap {
+		if _, err := registry.Get(id); err != nil {
+			slog.Warn("PLMN map refers to a backend that is not configured; requests will fail with 501",
+				"plmn", plmn,
+				"backend_id", id,
+			)
+		}
+	}
+}
+
+// initLogger はロガーを初期化する。
+func initLogger(cfg *config.Config) {
 	opts := &slog.HandlerOptions{
-		Level: level,
+		Level: logging.ParseLevel(cfg.LogLevel),
 	}
 
 	h := slog.NewJSONHandler(os.Stdout, opts)

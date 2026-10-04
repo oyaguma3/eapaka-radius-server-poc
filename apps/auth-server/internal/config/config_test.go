@@ -70,6 +70,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.LogMaskIMSI != true {
 		t.Errorf("LogMaskIMSI default = %v, want %v", cfg.LogMaskIMSI, true)
 	}
+	if cfg.LogLevel != "INFO" {
+		t.Errorf("LogLevel default = %q, want %q", cfg.LogLevel, "INFO")
+	}
 	if cfg.RadiusSecret != "" {
 		t.Errorf("RadiusSecret default = %q, want %q", cfg.RadiusSecret, "")
 	}
@@ -216,5 +219,18 @@ func TestConstants(t *testing.T) {
 	}
 	if MaxResyncCount != 32 {
 		t.Errorf("MaxResyncCount = %d, want %d", MaxResyncCount, 32)
+	}
+}
+
+func TestLoadLogLevel(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("LOG_LEVEL", "DEBUG")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+	if cfg.LogLevel != "DEBUG" {
+		t.Errorf("LogLevel = %q, want %q", cfg.LogLevel, "DEBUG")
 	}
 }

@@ -68,20 +68,19 @@ func (h *Handler) handleAccountingRequest(w radius.ResponseWriter, r *radius.Req
 		return // パケット破棄
 	}
 
-	// 3. Status-Type別処理
+	// 3. Status-Type別処理（各処理は内部のエラーをログに記録して継続する）
 	ctx := context.Background()
-	var procErr error
 	switch attrs.AcctStatusType {
 	case radiuspkg.AcctStatusTypeStart:
-		procErr = h.processor.ProcessStart(ctx, attrs, srcIP, traceID)
+		h.processor.ProcessStart(ctx, attrs, srcIP, traceID)
 	case radiuspkg.AcctStatusTypeStop:
-		procErr = h.processor.ProcessStop(ctx, attrs, srcIP, traceID)
+		h.processor.ProcessStop(ctx, attrs, srcIP, traceID)
 	case radiuspkg.AcctStatusTypeInterim:
-		procErr = h.processor.ProcessInterim(ctx, attrs, srcIP, traceID)
+		h.processor.ProcessInterim(ctx, attrs, srcIP, traceID)
 	case radiuspkg.AcctStatusTypeOn:
-		procErr = h.processor.ProcessOn(ctx, attrs, srcIP, traceID)
+		h.processor.ProcessOn(ctx, attrs, srcIP, traceID)
 	case radiuspkg.AcctStatusTypeOff:
-		procErr = h.processor.ProcessOff(ctx, attrs, srcIP, traceID)
+		h.processor.ProcessOff(ctx, attrs, srcIP, traceID)
 	default:
 		slog.Warn("未対応のAcct-Status-Type",
 			"event_id", "RADIUS_UNKNOWN_CODE",
@@ -92,16 +91,7 @@ func (h *Handler) handleAccountingRequest(w radius.ResponseWriter, r *radius.Req
 		return // パケット破棄
 	}
 
-	// 4. 処理エラーがあってもAccounting-Responseは返す
-	if procErr != nil {
-		slog.Error("処理エラー",
-			"event_id", "SYS_ERR",
-			"trace_id", traceID,
-			"error", procErr.Error(),
-		)
-	}
-
-	// 5. Accounting-Response生成・送信
+	// 4. Accounting-Response生成・送信
 	response := radiuspkg.BuildAccountingResponse(r.Packet, attrs.ProxyStates)
 	if err := w.Write(response); err != nil {
 		slog.Error("RADIUS応答送信失敗",

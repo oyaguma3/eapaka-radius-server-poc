@@ -1,16 +1,22 @@
 package server
 
 import (
+	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/md5"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/auth-server/internal/eap"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/auth-server/internal/mocks"
 	eapaka "github.com/oyaguma3/go-eapaka"
 	"go.uber.org/mock/gomock"
 	"layeh.com/radius"
+	"layeh.com/radius/rfc2865"
 	"layeh.com/radius/rfc2869"
 )
 
@@ -80,7 +86,7 @@ func TestHandler_AccessRequest_Accept(t *testing.T) {
 			SessionID:      "test-session",
 			VlanID:         "100",
 			SessionTimeout: 3600,
-		}, nil)
+		})
 
 	handler := NewHandler(mockEngine)
 
@@ -113,7 +119,7 @@ func TestHandler_AccessRequest_Challenge(t *testing.T) {
 			Action:     eap.ActionChallenge,
 			EAPMessage: []byte{1, 2, 0, 8, 23, 5, 0, 0},
 			State:      []byte("trace-id"),
-		}, nil)
+		})
 
 	handler := NewHandler(mockEngine)
 
@@ -143,7 +149,7 @@ func TestHandler_AccessRequest_Reject(t *testing.T) {
 		Return(&eap.Result{
 			Action:     eap.ActionReject,
 			EAPMessage: []byte{4, 2, 0, 4}, // EAP-Failure
-		}, nil)
+		})
 
 	handler := NewHandler(mockEngine)
 
@@ -172,7 +178,7 @@ func TestHandler_AccessRequest_Drop(t *testing.T) {
 	mockEngine.EXPECT().Process(gomock.Any(), gomock.Any()).
 		Return(&eap.Result{
 			Action: eap.ActionDrop,
-		}, nil)
+		})
 
 	handler := NewHandler(mockEngine)
 
@@ -328,28 +334,67 @@ func TestHandler_UnknownCode(t *testing.T) {
 	}
 }
 
-func TestHandler_AccessRequest_EngineError(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
+func TestHandler_AccessRequest_TraceIDFromState(t *testing.T) {
+	const stateUUID = "550e8400-e29b-41d4-a716-446655440000"
 
-	mockEngine := mocks.NewMockEAPProcessor(ctrl)
-	mockEngine.EXPECT().Process(gomock.Any(), gomock.Any()).
-		Return(nil, errors.New("engine error"))
+	tests := []struct {
+		name      string
+		state     []byte // nil なら State 属性なし
+		wantState bool   // trace_id が State の値と一致すること
+	}{
+		{"state with uuid is inherited", []byte(stateUUID), true},
+		{"state not in uuid format gets new trace id", []byte("not-a-uuid"), false},
+		{"no state gets new trace id", nil, false},
+	}
 
-	handler := NewHandler(mockEngine)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
 
-	secret := []byte("test-secret")
-	eapMsg := buildTestEAPIdentity()
-	p := buildTestAccessRequest(secret, eapMsg)
+			var buf bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+			defer slog.SetDefault(prev)
 
-	rw := &mockResponseWriter{}
-	req := &radius.Request{Packet: p}
+			var gotTraceID string
+			mockEngine := mocks.NewMockEAPProcessor(ctrl)
+			mockEngine.EXPECT().Process(gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, req *eap.Request) *eap.Result {
+					gotTraceID = req.TraceID
+					return &eap.Result{Action: eap.ActionDrop}
+				})
 
-	handler.ServeRADIUS(rw, req)
+			secret := []byte("test-secret")
+			p := &radius.Packet{Code: radius.CodeAccessRequest, Identifier: 1, Secret: secret}
+			_ = rfc2869.EAPMessage_Set(p, buildTestEAPIdentity())
+			if tt.state != nil {
+				_ = rfc2865.State_Set(p, tt.state)
+			}
+			setValidMessageAuthenticator(p, secret)
 
-	// エンジンエラー → 応答なし
-	if len(rw.written) != 0 {
-		t.Errorf("written packets: got %d, want 0 (engine error)", len(rw.written))
+			NewHandler(mockEngine).ServeRADIUS(&mockResponseWriter{}, &radius.Request{Packet: p})
+
+			if (gotTraceID == stateUUID) != tt.wantState {
+				t.Errorf("engine TraceID = %q, inherit state = %v", gotTraceID, tt.wantState)
+			}
+			if _, err := uuid.Parse(gotTraceID); err != nil {
+				t.Errorf("engine TraceID is not a uuid: %q", gotTraceID)
+			}
+			// ハンドラー層のログ（PKT_RECV）もエンジンと同じ trace_id を使う
+			if !strings.Contains(buf.String(), `"event_id":"PKT_RECV","trace_id":"`+gotTraceID+`"`) {
+				t.Errorf("PKT_RECV does not use the same trace_id: %s", buf.String())
+			}
+		})
+	}
+}
+
+func TestHandler_StatusServer_IgnoresState(t *testing.T) {
+	// Access-Request 以外は State を引き継がない
+	r := &radius.Request{Packet: &radius.Packet{Code: radius.CodeStatusServer}}
+	_ = rfc2865.State_Set(r.Packet, []byte("550e8400-e29b-41d4-a716-446655440000"))
+	if got := resolveTraceID(r); got == "550e8400-e29b-41d4-a716-446655440000" {
+		t.Errorf("Status-Server should not inherit State: %q", got)
 	}
 }
 
@@ -367,7 +412,7 @@ func TestHandler_AccessRequest_WriteError(t *testing.T) {
 			SessionID:      "test-session",
 			VlanID:         "100",
 			SessionTimeout: 3600,
-		}, nil)
+		})
 
 	handler := NewHandler(mockEngine)
 

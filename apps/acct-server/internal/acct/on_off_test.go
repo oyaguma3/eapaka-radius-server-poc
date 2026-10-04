@@ -15,10 +15,7 @@ func TestProcessOn(t *testing.T) {
 		NasIdentifier:  "ap-001.example.com",
 	}
 
-	err := p.ProcessOn(context.Background(), attrs, "10.0.0.1", "trace-on-001")
-	if err != nil {
-		t.Errorf("ProcessOn returned error: %v", err)
-	}
+	p.ProcessOn(context.Background(), attrs, "10.0.0.1", "trace-on-001")
 }
 
 func TestProcessOff(t *testing.T) {
@@ -29,8 +26,5 @@ func TestProcessOff(t *testing.T) {
 		NasIdentifier:  "ap-001.example.com",
 	}
 
-	err := p.ProcessOff(context.Background(), attrs, "10.0.0.1", "trace-off-001")
-	if err != nil {
-		t.Errorf("ProcessOff returned error: %v", err)
-	}
+	p.ProcessOff(context.Background(), attrs, "10.0.0.1", "trace-off-001")
 }

@@ -49,25 +49,39 @@ func (d *duplicateDetector) CheckAndMarkStart(ctx context.Context, acctSessionID
 	return false, nil
 }
 
-// CheckInterimDuplicate はInterimの重複をチェックする。
-// 同一のinput/output値の場合は重複とみなす。
-func (d *duplicateDetector) CheckInterimDuplicate(ctx context.Context, acctSessionID string, input, output uint32) (bool, error) {
+// 順序異常の理由
+const (
+	seqReasonNoStart          = "no_start_received"
+	seqReasonInterimAfterStop = "interim_after_stop"
+)
+
+// CheckInterim はInterimの重複と順序異常を判定する。
+// 1回のGetで直前の状態を取得してから判定するため、判定前に自身の書き込みで状態が変わることはない。
+// 同一のinput/output値が直前に記録されていれば重複とし、記録を変更しない。
+// 重複でなければ（順序異常の場合も含め）受信値を記録する。
+func (d *duplicateDetector) CheckInterim(ctx context.Context, acctSessionID string, input, output uint32) (InterimCheckResult, error) {
+	var result InterimCheckResult
 	currentVal := fmt.Sprintf("interim:%d:%d", input, output)
 
 	val, err := d.dupStore.Get(ctx, acctSessionID)
 	if err != nil {
-		return false, err
+		return result, err
 	}
 
-	if val == currentVal {
-		return true, nil
+	switch val {
+	case currentVal:
+		result.Duplicate = true
+		return result, nil
+	case "":
+		result.SequenceReason = seqReasonNoStart
+	case "stop":
+		result.SequenceReason = seqReasonInterimAfterStop
 	}
 
-	// 値を更新
 	if err := d.dupStore.Set(ctx, acctSessionID, currentVal); err != nil {
-		return false, err
+		return result, err
 	}
-	return false, nil
+	return result, nil
 }
 
 // CheckStopDuplicate はStopの重複をチェックする。
@@ -77,20 +91,6 @@ func (d *duplicateDetector) CheckStopDuplicate(ctx context.Context, acctSessionI
 		return false, err
 	}
 	return val == "stop", nil
-}
-
-// HasSeenStart はStartを受信済みかチェックする。
-func (d *duplicateDetector) HasSeenStart(ctx context.Context, acctSessionID string) (bool, error) {
-	val, err := d.dupStore.Get(ctx, acctSessionID)
-	if err != nil {
-		return false, err
-	}
-	return val == "start" || strings.HasPrefix(val, "interim:"), nil
-}
-
-// MarkAsStart はStartとしてマークする（StartなしInterim受信時に使用）。
-func (d *duplicateDetector) MarkAsStart(ctx context.Context, acctSessionID string) error {
-	return d.dupStore.Set(ctx, acctSessionID, "start")
 }
 
 // MarkAsStopped はStopとしてマークする。

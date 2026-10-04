@@ -47,14 +47,6 @@ var (
 		EventID: "CALC_ERR",
 	}
 
-	ErrInvalidIMSI = &ProblemError{
-		Status:  400,
-		Title:   "Bad Request",
-		Detail:  "IMSI must be 15 digits",
-		Message: "invalid IMSI format",
-		EventID: "CALC_ERR",
-	}
-
 	ErrResyncMACFailed = &ProblemError{
 		Status:  400,
 		Title:   "Bad Request",

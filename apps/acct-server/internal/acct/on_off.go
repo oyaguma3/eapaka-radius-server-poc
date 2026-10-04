@@ -8,7 +8,7 @@ import (
 )
 
 // ProcessOn はAccounting-On（NAS起動通知）を処理する。
-func (p *Processor) ProcessOn(_ context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error {
+func (p *Processor) ProcessOn(_ context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) {
 	slog.Info("accounting on",
 		"event_id", "ACCT_ON",
 		"trace_id", traceID,
@@ -16,11 +16,10 @@ func (p *Processor) ProcessOn(_ context.Context, attrs *radius.AccountingAttribu
 		"nas_ip_address", attrs.NasIPAddress,
 		"nas_identifier", attrs.NasIdentifier,
 	)
-	return nil
 }
 
 // ProcessOff はAccounting-Off（NASシャットダウン通知）を処理する。
-func (p *Processor) ProcessOff(_ context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error {
+func (p *Processor) ProcessOff(_ context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) {
 	slog.Info("accounting off",
 		"event_id", "ACCT_OFF",
 		"trace_id", traceID,
@@ -28,5 +27,4 @@ func (p *Processor) ProcessOff(_ context.Context, attrs *radius.AccountingAttrib
 		"nas_ip_address", attrs.NasIPAddress,
 		"nas_identifier", attrs.NasIdentifier,
 	)
-	return nil
 }

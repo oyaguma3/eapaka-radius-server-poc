@@ -295,20 +295,6 @@ func (m *MockTestVectorProvider) EXPECT() *MockTestVectorProviderMockRecorder {
 	return m.recorder
 }
 
-// GetDefaultSQN mocks base method.
-func (m *MockTestVectorProvider) GetDefaultSQN() uint64 {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetDefaultSQN")
-	ret0, _ := ret[0].(uint64)
-	return ret0
-}
-
-// GetDefaultSQN indicates an expected call of GetDefaultSQN.
-func (mr *MockTestVectorProviderMockRecorder) GetDefaultSQN() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDefaultSQN", reflect.TypeOf((*MockTestVectorProvider)(nil).GetDefaultSQN))
-}
-
 // GetTestCryptoParams mocks base method.
 func (m *MockTestVectorProvider) GetTestCryptoParams() ([]byte, []byte, []byte) {
 	m.ctrl.T.Helper()
@@ -391,4 +377,18 @@ func (m *MockVectorUseCaseInterface) GenerateVector(ctx context.Context, req *dt
 func (mr *MockVectorUseCaseInterfaceMockRecorder) GenerateVector(ctx, req any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GenerateVector", reflect.TypeOf((*MockVectorUseCaseInterface)(nil).GenerateVector), ctx, req)
+}
+
+// IsTestMode mocks base method.
+func (m *MockVectorUseCaseInterface) IsTestMode(imsi string) bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsTestMode", imsi)
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// IsTestMode indicates an expected call of IsTestMode.
+func (mr *MockVectorUseCaseInterfaceMockRecorder) IsTestMode(imsi any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsTestMode", reflect.TypeOf((*MockVectorUseCaseInterface)(nil).IsTestMode), imsi)
 }

@@ -22,37 +22,31 @@ type mockProcessor struct {
 	onCalled      bool
 	offCalled     bool
 	lastTraceID   string
-	returnErr     error
 }
 
-func (m *mockProcessor) ProcessStart(_ context.Context, _ *radius.AccountingAttributes, _, traceID string) error {
+func (m *mockProcessor) ProcessStart(_ context.Context, _ *radius.AccountingAttributes, _, traceID string) {
 	m.startCalled = true
 	m.lastTraceID = traceID
-	return m.returnErr
 }
 
-func (m *mockProcessor) ProcessInterim(_ context.Context, _ *radius.AccountingAttributes, _, traceID string) error {
+func (m *mockProcessor) ProcessInterim(_ context.Context, _ *radius.AccountingAttributes, _, traceID string) {
 	m.interimCalled = true
 	m.lastTraceID = traceID
-	return m.returnErr
 }
 
-func (m *mockProcessor) ProcessStop(_ context.Context, _ *radius.AccountingAttributes, _, traceID string) error {
+func (m *mockProcessor) ProcessStop(_ context.Context, _ *radius.AccountingAttributes, _, traceID string) {
 	m.stopCalled = true
 	m.lastTraceID = traceID
-	return m.returnErr
 }
 
-func (m *mockProcessor) ProcessOn(_ context.Context, _ *radius.AccountingAttributes, _, traceID string) error {
+func (m *mockProcessor) ProcessOn(_ context.Context, _ *radius.AccountingAttributes, _, traceID string) {
 	m.onCalled = true
 	m.lastTraceID = traceID
-	return m.returnErr
 }
 
-func (m *mockProcessor) ProcessOff(_ context.Context, _ *radius.AccountingAttributes, _, traceID string) error {
+func (m *mockProcessor) ProcessOff(_ context.Context, _ *radius.AccountingAttributes, _, traceID string) {
 	m.offCalled = true
 	m.lastTraceID = traceID
-	return m.returnErr
 }
 
 // mockResponseWriter はテスト用のResponseWriter実装
@@ -331,21 +325,6 @@ func TestServeRADIUS_StatusServer_InvalidMA(t *testing.T) {
 
 	if w.written != nil {
 		t.Error("Response should not be written for invalid MA")
-	}
-}
-
-func TestServeRADIUS_ProcessorError(t *testing.T) {
-	secret := []byte("testing123")
-	proc := &mockProcessor{returnErr: errors.New("test error")}
-	h := NewHandler(proc)
-	w := &mockResponseWriter{}
-	r := createAccountingRequest(t, secret, radius.AcctStatusTypeStart)
-
-	h.ServeRADIUS(w, r)
-
-	// エラーがあっても応答は返す
-	if w.written == nil {
-		t.Error("Response should be written even on processor error")
 	}
 }
 

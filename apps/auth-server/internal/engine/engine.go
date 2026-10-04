@@ -48,7 +48,7 @@ func NewEngine(
 }
 
 // Process はEAP認証リクエストを処理する
-func (e *EngineImpl) Process(ctx context.Context, req *eap.Request) (*eap.Result, error) {
+func (e *EngineImpl) Process(ctx context.Context, req *eap.Request) *eap.Result {
 	if len(req.State) == 0 {
 		// State無し → 初回Identity処理
 		return e.handleIdentity(ctx, req)
@@ -63,14 +63,14 @@ func (e *EngineImpl) Process(ctx context.Context, req *eap.Request) (*eap.Result
 			"trace_id", traceID,
 			"error", err,
 		)
-		return e.buildReject(0), nil
+		return e.buildReject(0)
 	}
 
 	return e.handleSubsequent(ctx, req, traceID, eapCtx)
 }
 
 // handleIdentity は初回Identity受信を処理する
-func (e *EngineImpl) handleIdentity(ctx context.Context, req *eap.Request) (*eap.Result, error) {
+func (e *EngineImpl) handleIdentity(ctx context.Context, req *eap.Request) *eap.Result {
 	var pkt *eapaka.Packet
 
 	// EAPパケットのType判定（RFC 3748 Identity vs AKA/AKA'）
@@ -97,7 +97,7 @@ func (e *EngineImpl) handleIdentity(ctx context.Context, req *eap.Request) (*eap
 				"trace_id", req.TraceID,
 				"error", err,
 			)
-			return e.buildReject(0), nil
+			return e.buildReject(0)
 		}
 
 		// Subtype=Identity確認
@@ -107,7 +107,7 @@ func (e *EngineImpl) handleIdentity(ctx context.Context, req *eap.Request) (*eap
 				"trace_id", req.TraceID,
 				"subtype", pkt.Subtype,
 			)
-			return &eap.Result{Action: eap.ActionDrop}, nil
+			return &eap.Result{Action: eap.ActionDrop}
 		}
 	}
 
@@ -118,13 +118,13 @@ func (e *EngineImpl) handleIdentity(ctx context.Context, req *eap.Request) (*eap
 			slog.Warn("非対応のIdentity種別",
 				"event_id", "EAP_UNSUPPORTED_TYPE",
 				"trace_id", req.TraceID,
-				"user_name", req.UserName,
+				"user_name", e.maskUserName(req.UserName),
 			)
 		} else {
 			slog.Warn("Identity解析失敗",
 				"event_id", "EAP_IDENTITY_INVALID",
 				"trace_id", req.TraceID,
-				"user_name", req.UserName,
+				"user_name", e.maskUserName(req.UserName),
 				"error", err,
 			)
 		}
@@ -132,7 +132,7 @@ func (e *EngineImpl) handleIdentity(ctx context.Context, req *eap.Request) (*eap
 		return &eap.Result{
 			Action:     eap.ActionReject,
 			EAPMessage: eapFailure,
-		}, nil
+		}
 	}
 
 	// フル認証誘導（仮名/再認証ID）
@@ -146,11 +146,11 @@ func (e *EngineImpl) handleIdentity(ctx context.Context, req *eap.Request) (*eap
 	}
 
 	// ここには到達しないはず
-	return &eap.Result{Action: eap.ActionDrop}, nil
+	return &eap.Result{Action: eap.ActionDrop}
 }
 
 // handleFullAuthRedirect はフル認証への誘導処理を行う
-func (e *EngineImpl) handleFullAuthRedirect(ctx context.Context, req *eap.Request, pkt *eapaka.Packet, identity *eap.ParsedIdentity) (*eap.Result, error) {
+func (e *EngineImpl) handleFullAuthRedirect(ctx context.Context, req *eap.Request, pkt *eapaka.Packet, identity *eap.ParsedIdentity) *eap.Result {
 	// EAPContext作成
 	eapCtx := &session.EAPContext{
 		Stage:                string(eap.StateNew),
@@ -163,7 +163,7 @@ func (e *EngineImpl) handleFullAuthRedirect(ctx context.Context, req *eap.Reques
 			"trace_id", req.TraceID,
 			"error", err,
 		)
-		return e.buildReject(pkt.Identifier + 1), nil
+		return e.buildReject(pkt.Identifier + 1)
 	}
 
 	// AKA-Identity Request構築
@@ -174,7 +174,7 @@ func (e *EngineImpl) handleFullAuthRedirect(ctx context.Context, req *eap.Reques
 			"trace_id", req.TraceID,
 			"error", err,
 		)
-		return e.buildReject(pkt.Identifier + 1), nil
+		return e.buildReject(pkt.Identifier + 1)
 	}
 
 	// Stage更新: WAITING_IDENTITY
@@ -186,18 +186,18 @@ func (e *EngineImpl) handleFullAuthRedirect(ctx context.Context, req *eap.Reques
 			"trace_id", req.TraceID,
 			"error", err,
 		)
-		return e.buildReject(pkt.Identifier + 1), nil
+		return e.buildReject(pkt.Identifier + 1)
 	}
 
 	return &eap.Result{
 		Action:     eap.ActionChallenge,
 		EAPMessage: identityReq,
 		State:      []byte(req.TraceID),
-	}, nil
+	}
 }
 
 // handlePermanentIdentity は永続ID受信時の処理を行う
-func (e *EngineImpl) handlePermanentIdentity(ctx context.Context, req *eap.Request, pkt *eapaka.Packet, identity *eap.ParsedIdentity) (*eap.Result, error) {
+func (e *EngineImpl) handlePermanentIdentity(ctx context.Context, req *eap.Request, pkt *eapaka.Packet, identity *eap.ParsedIdentity) *eap.Result {
 	maskedIMSI := e.maskIMSI(identity.IMSI)
 
 	// EAPContext作成
@@ -213,7 +213,7 @@ func (e *EngineImpl) handlePermanentIdentity(ctx context.Context, req *eap.Reque
 			"imsi", maskedIMSI,
 			"error", err,
 		)
-		return e.buildReject(pkt.Identifier + 1), nil
+		return e.buildReject(pkt.Identifier + 1)
 	}
 
 	// 状態遷移: IDENTITY_RECEIVED → WAITING_VECTOR
@@ -224,7 +224,7 @@ func (e *EngineImpl) handlePermanentIdentity(ctx context.Context, req *eap.Reque
 			"trace_id", req.TraceID,
 			"error", err,
 		)
-		return e.buildReject(pkt.Identifier + 1), nil
+		return e.buildReject(pkt.Identifier + 1)
 	}
 
 	// Vector Gateway呼び出し + Challenge構築
@@ -238,7 +238,7 @@ func (e *EngineImpl) requestVectorAndBuildChallenge(
 	identifier uint8,
 	identity *eap.ParsedIdentity,
 	traceID string,
-) (*eap.Result, error) {
+) *eap.Result {
 	maskedIMSI := e.maskIMSI(identity.IMSI)
 
 	// Vector Gateway呼び出し
@@ -252,7 +252,7 @@ func (e *EngineImpl) requestVectorAndBuildChallenge(
 		return &eap.Result{
 			Action:     eap.ActionReject,
 			EAPMessage: eapFailure,
-		}, nil
+		}
 	}
 
 	// 鍵導出
@@ -266,7 +266,7 @@ func (e *EngineImpl) requestVectorAndBuildChallenge(
 				"imsi", maskedIMSI,
 				"error", err,
 			)
-			return e.buildReject(identifier + 1), nil
+			return e.buildReject(identifier + 1)
 		}
 		kAut = keys.K_aut
 		msk = keys.MSK
@@ -293,7 +293,7 @@ func (e *EngineImpl) requestVectorAndBuildChallenge(
 			"trace_id", traceID,
 			"error", err,
 		)
-		return e.buildReject(identifier + 1), nil
+		return e.buildReject(identifier + 1)
 	}
 
 	// Challenge構築
@@ -309,7 +309,7 @@ func (e *EngineImpl) requestVectorAndBuildChallenge(
 			"trace_id", traceID,
 			"error", err,
 		)
-		return e.buildReject(identifier + 1), nil
+		return e.buildReject(identifier + 1)
 	}
 
 	slog.Info("Challenge送信",
@@ -324,11 +324,11 @@ func (e *EngineImpl) requestVectorAndBuildChallenge(
 		EAPMessage: challengeMsg,
 		State:      []byte(traceID),
 		IMSI:       identity.IMSI,
-	}, nil
+	}
 }
 
 // handleSubsequent はState有りの後続リクエストを処理する
-func (e *EngineImpl) handleSubsequent(ctx context.Context, req *eap.Request, traceID string, eapCtx *session.EAPContext) (*eap.Result, error) {
+func (e *EngineImpl) handleSubsequent(ctx context.Context, req *eap.Request, traceID string, eapCtx *session.EAPContext) *eap.Result {
 	// EAPパケットパース
 	pkt, err := eap.ParseEAPPacket(req.EAPMessage)
 	if err != nil {
@@ -337,7 +337,7 @@ func (e *EngineImpl) handleSubsequent(ctx context.Context, req *eap.Request, tra
 			"trace_id", traceID,
 			"error", err,
 		)
-		return e.buildReject(0), nil
+		return e.buildReject(0)
 	}
 
 	// Subtype分岐
@@ -355,7 +355,7 @@ func (e *EngineImpl) handleSubsequent(ctx context.Context, req *eap.Request, tra
 			"imsi", e.maskIMSI(eapCtx.IMSI),
 		)
 		_ = e.ctxStore.Delete(ctx, traceID)
-		return e.buildReject(pkt.Identifier + 1), nil
+		return e.buildReject(pkt.Identifier + 1)
 
 	case eapaka.SubtypeClientError:
 		slog.Warn("Client-Error受信",
@@ -364,7 +364,7 @@ func (e *EngineImpl) handleSubsequent(ctx context.Context, req *eap.Request, tra
 			"imsi", e.maskIMSI(eapCtx.IMSI),
 		)
 		_ = e.ctxStore.Delete(ctx, traceID)
-		return e.buildReject(pkt.Identifier + 1), nil
+		return e.buildReject(pkt.Identifier + 1)
 
 	case eapaka.SubtypeIdentity:
 		// WAITING_IDENTITY状態の場合のみ受け入れ
@@ -376,7 +376,7 @@ func (e *EngineImpl) handleSubsequent(ctx context.Context, req *eap.Request, tra
 			"trace_id", traceID,
 			"stage", eapCtx.Stage,
 		)
-		return e.buildReject(pkt.Identifier + 1), nil
+		return e.buildReject(pkt.Identifier + 1)
 
 	default:
 		slog.Warn("未知のSubtype",
@@ -384,25 +384,25 @@ func (e *EngineImpl) handleSubsequent(ctx context.Context, req *eap.Request, tra
 			"trace_id", traceID,
 			"subtype", pkt.Subtype,
 		)
-		return e.buildReject(pkt.Identifier + 1), nil
+		return e.buildReject(pkt.Identifier + 1)
 	}
 }
 
 // handleIdentityResponse はWAITING_IDENTITY状態でIdentity応答を処理する
-func (e *EngineImpl) handleIdentityResponse(ctx context.Context, req *eap.Request, traceID string, eapCtx *session.EAPContext, pkt *eapaka.Packet) (*eap.Result, error) {
+func (e *EngineImpl) handleIdentityResponse(ctx context.Context, req *eap.Request, traceID string, eapCtx *session.EAPContext, pkt *eapaka.Packet) *eap.Result {
 	identity, err := eap.ParseIdentity(req.UserName)
 	if err != nil {
 		if errors.Is(err, eap.ErrUnsupportedIdentity) {
 			slog.Warn("非対応のIdentity種別",
 				"event_id", "EAP_UNSUPPORTED_TYPE",
 				"trace_id", traceID,
-				"user_name", req.UserName,
+				"user_name", e.maskUserName(req.UserName),
 			)
 		} else {
 			slog.Warn("Identity解析失敗",
 				"event_id", "EAP_IDENTITY_INVALID",
 				"trace_id", traceID,
-				"user_name", req.UserName,
+				"user_name", e.maskUserName(req.UserName),
 				"error", err,
 			)
 		}
@@ -411,21 +411,21 @@ func (e *EngineImpl) handleIdentityResponse(ctx context.Context, req *eap.Reques
 		return &eap.Result{
 			Action:     eap.ActionReject,
 			EAPMessage: eapFailure,
-		}, nil
+		}
 	}
 
 	if !identity.IsPermanent() {
 		slog.Warn("永続ID応答が仮名/再認証ID",
 			"event_id", "EAP_IDENTITY_INVALID",
 			"trace_id", traceID,
-			"user_name", req.UserName,
+			"user_name", e.maskUserName(req.UserName),
 		)
 		_ = e.ctxStore.Delete(ctx, traceID)
 		eapFailure, _ := eap.BuildEAPFailure(pkt.Identifier + 1)
 		return &eap.Result{
 			Action:     eap.ActionReject,
 			EAPMessage: eapFailure,
-		}, nil
+		}
 	}
 
 	// 状態遷移: WAITING_IDENTITY → IDENTITY_RECEIVED
@@ -436,7 +436,7 @@ func (e *EngineImpl) handleIdentityResponse(ctx context.Context, req *eap.Reques
 			"trace_id", traceID,
 			"error", err,
 		)
-		return e.buildReject(pkt.Identifier + 1), nil
+		return e.buildReject(pkt.Identifier + 1)
 	}
 
 	// Context更新
@@ -450,7 +450,7 @@ func (e *EngineImpl) handleIdentityResponse(ctx context.Context, req *eap.Reques
 			"trace_id", traceID,
 			"error", err,
 		)
-		return e.buildReject(pkt.Identifier + 1), nil
+		return e.buildReject(pkt.Identifier + 1)
 	}
 
 	// Vector取得 + Challenge構築
@@ -458,7 +458,7 @@ func (e *EngineImpl) handleIdentityResponse(ctx context.Context, req *eap.Reques
 }
 
 // handleChallengeResponse はChallenge応答を検証して認証結果を返す
-func (e *EngineImpl) handleChallengeResponse(ctx context.Context, req *eap.Request, traceID string, eapCtx *session.EAPContext, pkt *eapaka.Packet) (*eap.Result, error) {
+func (e *EngineImpl) handleChallengeResponse(ctx context.Context, req *eap.Request, traceID string, eapCtx *session.EAPContext, pkt *eapaka.Packet) *eap.Result {
 	maskedIMSI := e.maskIMSI(eapCtx.IMSI)
 
 	// 状態遷移検証
@@ -468,7 +468,7 @@ func (e *EngineImpl) handleChallengeResponse(ctx context.Context, req *eap.Reque
 			"trace_id", traceID,
 			"stage", eapCtx.Stage,
 		)
-		return e.buildReject(pkt.Identifier + 1), nil
+		return e.buildReject(pkt.Identifier + 1)
 	}
 
 	// Valkey保存値の復元
@@ -479,7 +479,7 @@ func (e *EngineImpl) handleChallengeResponse(ctx context.Context, req *eap.Reque
 			"trace_id", traceID,
 			"error", err,
 		)
-		return e.buildReject(pkt.Identifier + 1), nil
+		return e.buildReject(pkt.Identifier + 1)
 	}
 	xres, err := hex.DecodeString(eapCtx.XRES)
 	if err != nil {
@@ -488,7 +488,7 @@ func (e *EngineImpl) handleChallengeResponse(ctx context.Context, req *eap.Reque
 			"trace_id", traceID,
 			"error", err,
 		)
-		return e.buildReject(pkt.Identifier + 1), nil
+		return e.buildReject(pkt.Identifier + 1)
 	}
 	mskBytes, err := hex.DecodeString(eapCtx.MSK)
 	if err != nil {
@@ -497,7 +497,7 @@ func (e *EngineImpl) handleChallengeResponse(ctx context.Context, req *eap.Reque
 			"trace_id", traceID,
 			"error", err,
 		)
-		return e.buildReject(pkt.Identifier + 1), nil
+		return e.buildReject(pkt.Identifier + 1)
 	}
 
 	// Challenge応答検証（AKA/AKA'分岐）
@@ -528,7 +528,7 @@ func (e *EngineImpl) handleChallengeResponse(ctx context.Context, req *eap.Reque
 		return &eap.Result{
 			Action:     eap.ActionReject,
 			EAPMessage: eapFailure,
-		}, nil
+		}
 	}
 
 	// ポリシー取得
@@ -545,7 +545,7 @@ func (e *EngineImpl) handleChallengeResponse(ctx context.Context, req *eap.Reque
 		return &eap.Result{
 			Action:     eap.ActionReject,
 			EAPMessage: eapFailure,
-		}, nil
+		}
 	}
 
 	// ポリシー評価
@@ -563,7 +563,7 @@ func (e *EngineImpl) handleChallengeResponse(ctx context.Context, req *eap.Reque
 		return &eap.Result{
 			Action:     eap.ActionReject,
 			EAPMessage: eapFailure,
-		}, nil
+		}
 	}
 
 	// セッション作成
@@ -579,7 +579,7 @@ func (e *EngineImpl) handleChallengeResponse(ctx context.Context, req *eap.Reque
 			"trace_id", traceID,
 			"error", err,
 		)
-		return e.buildReject(pkt.Identifier + 1), nil
+		return e.buildReject(pkt.Identifier + 1)
 	}
 	if err := e.sessStore.AddUserIndex(ctx, eapCtx.IMSI, sessionID); err != nil {
 		slog.Warn("ユーザーインデックス追加失敗",
@@ -619,11 +619,11 @@ func (e *EngineImpl) handleChallengeResponse(ctx context.Context, req *eap.Reque
 		MSK:            mskBytes,
 		VlanID:         vlanID,
 		SessionTimeout: sessionTimeout,
-	}, nil
+	}
 }
 
 // handleResync は再同期失敗応答を処理する
-func (e *EngineImpl) handleResync(ctx context.Context, req *eap.Request, traceID string, eapCtx *session.EAPContext, pkt *eapaka.Packet) (*eap.Result, error) {
+func (e *EngineImpl) handleResync(ctx context.Context, req *eap.Request, traceID string, eapCtx *session.EAPContext, pkt *eapaka.Packet) *eap.Result {
 	maskedIMSI := e.maskIMSI(eapCtx.IMSI)
 
 	// 状態遷移検証
@@ -633,7 +633,7 @@ func (e *EngineImpl) handleResync(ctx context.Context, req *eap.Request, traceID
 			"trace_id", traceID,
 			"stage", eapCtx.Stage,
 		)
-		return e.buildReject(pkt.Identifier + 1), nil
+		return e.buildReject(pkt.Identifier + 1)
 	}
 
 	// 再同期回数チェック
@@ -649,7 +649,7 @@ func (e *EngineImpl) handleResync(ctx context.Context, req *eap.Request, traceID
 		return &eap.Result{
 			Action:     eap.ActionReject,
 			EAPMessage: eapFailure,
-		}, nil
+		}
 	}
 
 	// AT_AUTS抽出
@@ -660,7 +660,7 @@ func (e *EngineImpl) handleResync(ctx context.Context, req *eap.Request, traceID
 			"trace_id", traceID,
 			"imsi", maskedIMSI,
 		)
-		return e.buildReject(pkt.Identifier + 1), nil
+		return e.buildReject(pkt.Identifier + 1)
 	}
 
 	// Vector Gateway呼び出し（再同期情報付き）
@@ -679,7 +679,7 @@ func (e *EngineImpl) handleResync(ctx context.Context, req *eap.Request, traceID
 		return &eap.Result{
 			Action:     eap.ActionReject,
 			EAPMessage: eapFailure,
-		}, nil
+		}
 	}
 
 	// Identity情報復元（鍵導出に必要）
@@ -704,7 +704,7 @@ func (e *EngineImpl) handleResync(ctx context.Context, req *eap.Request, traceID
 				"imsi", maskedIMSI,
 				"error", err,
 			)
-			return e.buildReject(pkt.Identifier + 1), nil
+			return e.buildReject(pkt.Identifier + 1)
 		}
 		kAut = keys.K_aut
 		msk = keys.MSK
@@ -730,7 +730,7 @@ func (e *EngineImpl) handleResync(ctx context.Context, req *eap.Request, traceID
 			"trace_id", traceID,
 			"error", err,
 		)
-		return e.buildReject(pkt.Identifier + 1), nil
+		return e.buildReject(pkt.Identifier + 1)
 	}
 
 	// 新Challenge構築
@@ -746,7 +746,7 @@ func (e *EngineImpl) handleResync(ctx context.Context, req *eap.Request, traceID
 			"trace_id", traceID,
 			"error", err,
 		)
-		return e.buildReject(pkt.Identifier + 1), nil
+		return e.buildReject(pkt.Identifier + 1)
 	}
 
 	slog.Info("再同期Challenge送信",
@@ -761,7 +761,7 @@ func (e *EngineImpl) handleResync(ctx context.Context, req *eap.Request, traceID
 		EAPMessage: challengeMsg,
 		State:      []byte(traceID),
 		IMSI:       eapCtx.IMSI,
-	}, nil
+	}
 }
 
 // logVectorError はVectorエラーをログに記録する
@@ -822,4 +822,9 @@ func (e *EngineImpl) buildReject(identifier uint8) *eap.Result {
 // maskIMSI はIMSIマスキングのラッパー
 func (e *EngineImpl) maskIMSI(imsi string) string {
 	return logging.MaskIMSI(imsi, e.cfg.LogMaskIMSI)
+}
+
+// maskUserName はUser-Name（EAP Identity）内のIMSIをマスキングする
+func (e *EngineImpl) maskUserName(userName string) string {
+	return logging.MaskUserName(userName, e.cfg.LogMaskIMSI)
 }

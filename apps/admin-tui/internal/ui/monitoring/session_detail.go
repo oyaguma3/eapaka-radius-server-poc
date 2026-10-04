@@ -3,6 +3,7 @@ package monitoring
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/audit"
@@ -83,13 +84,13 @@ func (s *SessionDetailScreen) ShowSearchDialog() {
 			s.app.RemovePage("search-dialog")
 			go func() {
 				ctx := context.Background()
-				s.auditLogger.LogSearch(audit.TargetSession, value, 0)
 				sessions, err := s.sessionStore.GetByIMSI(ctx, value)
+				s.auditLogger.LogSearch(audit.TargetSession, value, len(sessions), err)
 				s.app.QueueUpdateDraw(func() {
 					if err != nil {
 						s.app.GetStatusBar().ShowError("Search failed: " + err.Error())
 					} else {
-						s.sessions = sessions
+						s.sessions = sortByStartTimeDesc(sessions)
 						s.render()
 					}
 					s.app.SetFocus(s.sessionsList)
@@ -115,16 +116,16 @@ func (s *SessionDetailScreen) ShowSearchDialog() {
 func (s *SessionDetailScreen) Search(ctx context.Context, imsi string) error {
 	s.imsi = imsi
 
-	// 監査ログに検索を記録
-	s.auditLogger.LogSearch(audit.TargetSession, imsi, 0)
-
 	sessions, err := s.sessionStore.GetByIMSI(ctx, imsi)
+
+	// 監査ログに検索を記録（結果件数または失敗理由を含む）
+	s.auditLogger.LogSearch(audit.TargetSession, imsi, len(sessions), err)
 	if err != nil {
 		s.textView.SetText(fmt.Sprintf("[red]Error: %s[-]", err.Error()))
 		return err
 	}
 
-	s.sessions = sessions
+	s.sessions = sortByStartTimeDesc(sessions)
 	s.render()
 	return nil
 }
@@ -273,4 +274,16 @@ func centeredDetail(p tview.Primitive, width, height int) tview.Primitive {
 			AddItem(p, height, 1, true).
 			AddItem(nil, 0, 1, false), width, 1, true).
 		AddItem(nil, 0, 1, false)
+}
+
+// sortByStartTimeDesc は検索結果を開始時刻の新しい順に並べる（同じなら UUID 順）。
+// idx:user の Set から取り出した順は不定なため、表示順をそろえる。
+func sortByStartTimeDesc(sessions []*model.Session) []*model.Session {
+	sort.SliceStable(sessions, func(i, j int) bool {
+		if sessions[i].StartTime != sessions[j].StartTime {
+			return sessions[i].StartTime > sessions[j].StartTime
+		}
+		return sessions[i].UUID < sessions[j].UUID
+	})
+	return sessions
 }

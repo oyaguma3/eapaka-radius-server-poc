@@ -1,6 +1,8 @@
 # INT-AUTH-AKA-007関連: NAS-Identifier不一致による拒否
 # ポリシーでCustomer01のみ許可されているIMSIに対し、Customer02で接続
 # config: config_testvector.yaml（nas_identifierをケース側で上書き）
+#   IMSI 003 だが、テストベクターモードでは AMF=B9B9（Test Set 1 固定値）になるため config_testvector.yaml を使う。
+#   config_testvector_imsi003.yaml（AMF=8000）は実計算モード（TEST_VECTOR_ENABLED=false）専用。
 version: 1
 name: reject_policy_denied_nas
 identity: "0001010000000003@wlan.mnc001.mcc001.3gppnetwork.org"

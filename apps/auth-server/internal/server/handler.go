@@ -23,7 +23,7 @@ func NewHandler(engine eap.EAPProcessor) *Handler {
 
 // ServeRADIUS はRADIUSリクエストを処理する
 func (h *Handler) ServeRADIUS(w radius.ResponseWriter, r *radius.Request) {
-	traceID := uuid.New().String()
+	traceID := resolveTraceID(r)
 	srcIP := extractIP(r.RemoteAddr)
 
 	slog.Info("RADIUSパケット受信",
@@ -48,6 +48,22 @@ func (h *Handler) ServeRADIUS(w radius.ResponseWriter, r *radius.Request) {
 		)
 		// 応答なし
 	}
+}
+
+// resolveTraceID はパケットのTrace IDを決める。
+// 2回目以降のAccess-Request（Access-Challengeへの応答）は、EAPコンテキストのキーである
+// State属性（初回に採番したTrace ID）を引き継ぎ、1回の認証のログを同じtrace_idで追えるようにする。
+// State属性がない、またはUUID形式でない場合は新しいTrace IDを採番する。
+func resolveTraceID(r *radius.Request) string {
+	if r.Code == radius.CodeAccessRequest {
+		if state, ok := radiuspkg.GetState(r.Packet); ok {
+			// エンジンはStateの文字列そのものをコンテキストのキーに使うため、正規化せずにそのまま使う
+			if _, err := uuid.ParseBytes(state); err == nil {
+				return string(state)
+			}
+		}
+	}
+	return uuid.New().String()
 }
 
 // handleAccessRequest はAccess-Requestを処理する
@@ -95,17 +111,8 @@ func (h *Handler) handleAccessRequest(w radius.ResponseWriter, r *radius.Request
 		EAPMessage:    eapMessage,
 	}
 
-	// EAPエンジン処理
-	ctx := context.Background()
-	result, err := h.engine.Process(ctx, eapReq)
-	if err != nil {
-		slog.Error("EAPエンジンエラー",
-			"event_id", "EAP_ENGINE_ERR",
-			"trace_id", traceID,
-			"error", err,
-		)
-		return // 応答なし
-	}
+	// EAPエンジン処理（エンジンは内部エラーをログに記録してRejectに変換するため、常に結果を返す）
+	result := h.engine.Process(context.Background(), eapReq)
 
 	// 結果に基づいてRADIUS応答を構築
 	switch result.Action {

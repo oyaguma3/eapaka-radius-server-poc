@@ -94,14 +94,3 @@ func TestGetTestCryptoParams(t *testing.T) {
 		t.Error("AMF is not a defensive copy")
 	}
 }
-
-func TestGetDefaultSQN(t *testing.T) {
-	p := NewTestVectorProvider("00101")
-
-	sqn := p.GetDefaultSQN()
-
-	expectedSQN := uint64(0xff9bb4d0b607)
-	if sqn != expectedSQN {
-		t.Errorf("GetDefaultSQN() = 0x%x, want 0x%x", sqn, expectedSQN)
-	}
-}
