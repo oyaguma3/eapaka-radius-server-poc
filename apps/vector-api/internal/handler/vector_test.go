@@ -238,4 +238,34 @@ func TestHandleVector_LogAttributes(t *testing.T) {
 			t.Errorf("response must not contain the cause: %s", w.Body.String())
 		}
 	})
+
+	t.Run("SQN conflict returns 409", func(t *testing.T) {
+		err := fmt.Errorf("%w: conflicted 3 times", usecase.ErrSQNConflict)
+		w, logs := run(t, &mockVectorUseCase{err: err})
+		if w.Code != http.StatusConflict {
+			t.Errorf("Status = %d, want 409", w.Code)
+		}
+		var pd dto.ProblemDetail
+		if err := json.Unmarshal(w.Body.Bytes(), &pd); err != nil {
+			t.Fatalf("invalid response body: %v", err)
+		}
+		if pd.Status != http.StatusConflict || pd.Title != "Conflict" || pd.Detail != "SQN update conflict" {
+			t.Errorf("unexpected problem detail: %+v", pd)
+		}
+		for _, want := range []string{
+			`"level":"WARN"`,
+			`"event_id":"SQN_CONFLICT_ERR"`,
+			`"http_status":409`,
+			`"imsi":"001010********1"`,
+			"conflicted 3 times",
+		} {
+			if !strings.Contains(logs, want) {
+				t.Errorf("log does not contain %s: %s", want, logs)
+			}
+		}
+		// 応答には IMSI も原因も含めない
+		if strings.Contains(w.Body.String(), "001010") || strings.Contains(w.Body.String(), "conflicted") {
+			t.Errorf("response must not contain IMSI or cause: %s", w.Body.String())
+		}
+	})
 }

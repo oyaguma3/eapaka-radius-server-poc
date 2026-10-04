@@ -242,6 +242,21 @@ func (m *MockSubscriberRepository) EXPECT() *MockSubscriberRepositoryMockRecorde
 	return m.recorder
 }
 
+// CompareAndSetSQN mocks base method.
+func (m *MockSubscriberRepository) CompareAndSetSQN(ctx context.Context, imsi, oldSQN, newSQN string) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CompareAndSetSQN", ctx, imsi, oldSQN, newSQN)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CompareAndSetSQN indicates an expected call of CompareAndSetSQN.
+func (mr *MockSubscriberRepositoryMockRecorder) CompareAndSetSQN(ctx, imsi, oldSQN, newSQN any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CompareAndSetSQN", reflect.TypeOf((*MockSubscriberRepository)(nil).CompareAndSetSQN), ctx, imsi, oldSQN, newSQN)
+}
+
 // Get mocks base method.
 func (m *MockSubscriberRepository) Get(ctx context.Context, imsi string) (*store.Subscriber, error) {
 	m.ctrl.T.Helper()
@@ -255,20 +270,6 @@ func (m *MockSubscriberRepository) Get(ctx context.Context, imsi string) (*store
 func (mr *MockSubscriberRepositoryMockRecorder) Get(ctx, imsi any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockSubscriberRepository)(nil).Get), ctx, imsi)
-}
-
-// UpdateSQN mocks base method.
-func (m *MockSubscriberRepository) UpdateSQN(ctx context.Context, imsi, sqn string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateSQN", ctx, imsi, sqn)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// UpdateSQN indicates an expected call of UpdateSQN.
-func (mr *MockSubscriberRepositoryMockRecorder) UpdateSQN(ctx, imsi, sqn any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateSQN", reflect.TypeOf((*MockSubscriberRepository)(nil).UpdateSQN), ctx, imsi, sqn)
 }
 
 // MockTestVectorProvider is a mock of TestVectorProvider interface.
