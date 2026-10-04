@@ -295,20 +295,6 @@ func (m *MockTestVectorProvider) EXPECT() *MockTestVectorProviderMockRecorder {
 	return m.recorder
 }
 
-// GetDefaultSQN mocks base method.
-func (m *MockTestVectorProvider) GetDefaultSQN() uint64 {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetDefaultSQN")
-	ret0, _ := ret[0].(uint64)
-	return ret0
-}
-
-// GetDefaultSQN indicates an expected call of GetDefaultSQN.
-func (mr *MockTestVectorProviderMockRecorder) GetDefaultSQN() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDefaultSQN", reflect.TypeOf((*MockTestVectorProvider)(nil).GetDefaultSQN))
-}
-
 // GetTestCryptoParams mocks base method.
 func (m *MockTestVectorProvider) GetTestCryptoParams() ([]byte, []byte, []byte) {
 	m.ctrl.T.Helper()
