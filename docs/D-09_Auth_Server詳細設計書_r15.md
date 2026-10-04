@@ -1,4 +1,4 @@
-﻿# D-09 Auth Server詳細設計書 (r14)
+﻿# D-09 Auth Server詳細設計書 (r15)
 
 ## ■セクション1: 概要
 
@@ -2222,6 +2222,8 @@ func BuildAKAIdentityRequest(identifier uint8, eapType uint8) ([]byte, error) {
 | ---------------------- | ---- |
 | 接続タイムアウト       | 2秒  |
 | リクエストタイムアウト | 5秒  |
+
+> **注記（Vector Gateway側のタイムアウトとの関係）：** Vector Gateway のバックエンド向けタイムアウト（`VECTOR_GATEWAY_INTERNAL_TIMEOUT` / `VECTOR_GATEWAY_AKAONLY_TIMEOUT`、既定 3秒）は、本節のリクエストタイムアウト（`VectorRequestTimeout`、5秒）より短くしている。バックエンド（vector-api / aka-only-server）障害時に Vector Gateway が 502 を返す前に Auth Server がタイムアウトすると、ログが `VECTOR_API_ERR`（`http_status`=502）ではなく `VECTOR_CONN_ERR` になるためである。Vector Gateway は起動時に、設定値が 5秒以上なら WARN を出す（D-12 §5.3）。その判定に使う定数 `authServerVectorTimeout`（`apps/vector-gateway/main.go`）は `VectorRequestTimeout` と同じ値であり、`VectorRequestTimeout` を変更するときは Vector Gateway 側の定数も合わせて変更すること。
 
 ### 7.3 リクエスト仕様
 
@@ -4587,3 +4589,4 @@ Auth Server内で直接参照する外部パッケージの型：
 | r12 | 2026-10-04 | §9.5 のセッションTTL超過時の Acct Server の挙動を、Interim 時も `ACCT_SESSION_NOT_FOUND` を出力し不在のキーを作らない実装に合わせて修正 |
 | r13 | 2026-10-04 | ポリシーの `nas_id` で `"*"` を任意の NAS に一致させた実装修正の反映（セクション8）: 8.3.2/8.3.3 のルール構造・8.4.2 と 10.4.3 の `PolicyRule` 型・8.5 の評価入力・評価ロジック・注意点・8.6.1 の注記・8.8 の NAS-ID/SSID 不在時の扱い・8.11 を、実装の構造（`nas_id` / `allowed_ssids` / `vlan_id` / `session_timeout`）と評価（`nas_id` は `"*"` 単独で任意の NAS に一致・部分一致なし・それ以外は完全一致、`allowed_ssids` は `"*"` で全SSID・大文字小文字無視、両方に一致した最初のルールで許可、VLAN・Session-Timeout は一致したルールから付与）に修正。r9 で記載した `ssid` / `action` / `time_min` / `time_max` によるルール評価は実装に存在しないため削除。関連ドキュメントの D-02 参照版数を更新（r10→r15） |
 | r14 | 2026-10-04 | trace_id の認証単位での引き継ぎ・LOG_LEVEL 対応の実装修正の反映: §4.2 / §4.3 / §4.4 / §5.3 / §5.9 の Trace ID 生成を「決定（`resolveTraceID`）」に修正し、§5.3 に決め方（2回目以降の Access-Request は UUID 形式の State 属性をそのまま Trace ID とし、State がない・UUID 形式でない場合と Access-Request 以外は新規 UUID を生成）と、ハンドラー層のログ・エンジンのログ・X-Trace-ID が1回の認証を通して同じ値になる旨を追記、§7.7.2 に再同期時も同じ Trace ID である旨を追記。EAPエンジンの `Process` が error を返さなくなったことに合わせ、§5.10 から `EAP_ENGINE_ERR` を削除して注記を追加、§10.5.6 に `eap.EAPProcessor`（`Process(ctx, req) *Result`）を追加、§2 の `types.go` / `engine.go` の主要型と §10.7.4 / §10.7.11 のエクスポート一覧を実装（`Request` / `Result` / `Action` / `EAPProcessor`、`EngineImpl` / `NewEngine()`）に合わせて修正。§3.1 環境変数一覧・§3.2 / §10.3.1 設定構造体に `LOG_LEVEL`（既定 INFO）を追加、§3.3 初期化シーケンス・§3.4 main.go のロガー初期化を `pkg/logging.ParseLevel(cfg.LogLevel)` と起動ログの `log_level` に修正、§3.8 にログレベルの説明を追加、§7.10 の `vector api success`（DEBUG）が `LOG_LEVEL=DEBUG` 時のみ出力される旨を追記。§1.3 参照版数更新（D-04 r20→r23） |
+| r15 | 2026-10-04 | vector-gateway のバックエンド向けタイムアウトを auth-server より短くした実装修正の反映: §7.2 タイムアウト設定に、Vector Gateway 側のタイムアウト（既定 3秒）を `VectorRequestTimeout`（5秒）より短くしている理由と、Vector Gateway の定数 `authServerVectorTimeout` を `VectorRequestTimeout` と同じ値に保つ必要がある旨の注記を追加（Auth Server の実装は変更なし） |

@@ -96,10 +96,11 @@ docker compose up -d
 | `RADIUS_SECRET` | Yes | RADIUS 共有シークレット |
 | `VECTOR_GATEWAY_MODE` | No | 動作モード (`gateway` / `passthrough`) |
 | `VECTOR_GATEWAY_PLMN_MAP` | No | PLMN と接続方式 ID の対応 (例: `44010:01`。未一致 PLMN は `00` = 内部 vector-api) |
+| `VECTOR_GATEWAY_INTERNAL_TIMEOUT` | No | 内部 vector-api 呼び出しタイムアウト (デフォルト: `3s`。auth-server のタイムアウト 5 秒より短くすること) |
 | `VECTOR_GATEWAY_AKAONLY_URL` | No | aka-only-server のベース URL (空なら接続方式01は無効。`https://` で mTLS、`http://` で平文) |
 | `VECTOR_GATEWAY_AKAONLY_CLIENT_CERT` / `_CLIENT_KEY` | No | aka-only-server 用クライアント証明書・秘密鍵 (例: `/certs/av-client.pem`。鍵は省略時 CLIENT_CERT から読む) |
 | `VECTOR_GATEWAY_AKAONLY_SERVER_CERT` | No | aka-only-server の AV 用サーバー証明書 (例: `/certs/av-server.pem`) |
-| `VECTOR_GATEWAY_AKAONLY_TIMEOUT` | No | aka-only-server 呼び出しタイムアウト (デフォルト: `5s`) |
+| `VECTOR_GATEWAY_AKAONLY_TIMEOUT` | No | aka-only-server 呼び出しタイムアウト (デフォルト: `3s`。auth-server のタイムアウト 5 秒より短くすること) |
 | `LOG_MASK_IMSI` | No | IMSI マスキング有効化 (デフォルト: `true`) |
 | `LOG_LEVEL` | No | ログレベル (`DEBUG` / `INFO` / `WARN` / `ERROR`、デフォルト: `INFO`。対象: auth-server / acct-server / vector-gateway / vector-api) |
 | `TEST_VECTOR_ENABLED` | No | テストベクターモード (デフォルト: `false`、本番では無効のこと) |
@@ -129,7 +130,7 @@ go test -cover ./...
 go test ./apps/auth-server/...
 ```
 
-テスト規模: 98 テストファイル、1,250 テストケース (T-02 単体テスト仕様書準拠)
+テスト規模: 98 テストファイル、1,254 テストケース (T-02 単体テスト仕様書準拠)
 
 ## 実装状況
 
@@ -178,7 +179,7 @@ go test ./apps/auth-server/...
 | No. | ドキュメント名 | 内容 |
 |---|---|---|
 | T-01 | テスト戦略書 | テスト方針・カバレッジ目標 |
-| T-02 | 単体テスト仕様書 | 全 1,250 テストケース定義 |
+| T-02 | 単体テスト仕様書 | 全 1,254 テストケース定義 |
 | T-03 | 結合テスト仕様書 | コンポーネント間連携テスト |
 | T-04 | E2E テスト仕様書 | 実機テスト・擬似 E2E (計 11 シナリオ) |
 
@@ -205,7 +206,7 @@ go test ./apps/auth-server/...
 |---|---|---|
 | S-01 | eapaka_test 利用ノウハウ | eapaka_test の設定・テストケース解説・トラブルシューティング |
 
-詳細は [ドキュメント一覧](docs/EAP-AKA_RADIUS_PoC環境_ドキュメント一覧_r43.md) を参照してください。
+詳細は [ドキュメント一覧](docs/EAP-AKA_RADIUS_PoC環境_ドキュメント一覧_r44.md) を参照してください。
 
 ## ライセンス
 
