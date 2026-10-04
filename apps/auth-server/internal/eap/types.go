@@ -37,5 +37,5 @@ type Result struct {
 
 // EAPProcessor はEAP認証処理のインターフェース
 type EAPProcessor interface {
-	Process(ctx context.Context, req *Request) (*Result, error)
+	Process(ctx context.Context, req *Request) *Result
 }

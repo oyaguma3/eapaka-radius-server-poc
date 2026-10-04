@@ -42,12 +42,11 @@ func (m *MockEAPProcessor) EXPECT() *MockEAPProcessorMockRecorder {
 }
 
 // Process mocks base method.
-func (m *MockEAPProcessor) Process(ctx context.Context, req *eap.Request) (*eap.Result, error) {
+func (m *MockEAPProcessor) Process(ctx context.Context, req *eap.Request) *eap.Result {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Process", ctx, req)
 	ret0, _ := ret[0].(*eap.Result)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	return ret0
 }
 
 // Process indicates an expected call of Process.
