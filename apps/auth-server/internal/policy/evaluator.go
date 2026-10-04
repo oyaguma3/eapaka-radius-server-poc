@@ -17,8 +17,8 @@ func (e *evaluator) Evaluate(p *Policy, nasID string, ssid string) *EvaluationRe
 	for i := range p.Rules {
 		rule := &p.Rules[i]
 
-		// NAS-ID完全一致（大文字小文字区別）
-		if rule.NasID != nasID {
+		// NAS-ID一致（"*" は任意のNAS-IDに一致。それ以外は完全一致・大文字小文字区別）
+		if !matchNasID(rule.NasID, nasID) {
 			continue
 		}
 
@@ -44,6 +44,13 @@ func (e *evaluator) Evaluate(p *Policy, nasID string, ssid string) *EvaluationRe
 		Allowed:    false,
 		DenyReason: "no matching rule and default is deny",
 	}
+}
+
+// matchNasID はNAS-IDがルールのnas_idに一致するかを判定する。
+// "*" 単独はワイルドカードとして任意のNAS-IDに一致する（部分一致は行わない）。
+// それ以外は完全一致（大文字小文字を区別）。
+func matchNasID(ruleNasID, nasID string) bool {
+	return ruleNasID == "*" || ruleNasID == nasID
 }
 
 // matchSSID はSSIDがAllowedSSIDsリストに一致するかを判定する。

@@ -13,7 +13,7 @@ type Policy struct {
 
 // PolicyRule はポリシールールを表す。
 type PolicyRule struct {
-	NasID          string   `json:"nas_id"`                    // NAS識別子（ワイルドカード可）
+	NasID          string   `json:"nas_id"`                    // NAS識別子（"*" 単独で任意のNASに一致。それ以外は完全一致）
 	AllowedSSIDs   []string `json:"allowed_ssids"`             // 許可SSIDリスト
 	VlanID         string   `json:"vlan_id,omitempty"`         // VLAN ID（空文字は未設定）
 	SessionTimeout int      `json:"session_timeout,omitempty"` // セッションタイムアウト秒（0は未設定）
