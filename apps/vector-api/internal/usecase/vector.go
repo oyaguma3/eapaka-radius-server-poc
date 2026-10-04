@@ -8,6 +8,7 @@ import (
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-api/internal/config"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-api/internal/dto"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-api/internal/milenage"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/logging"
 )
 
 // VectorUseCase はベクター生成ユースケースを実装する。
@@ -46,7 +47,7 @@ func NewVectorUseCase(
 // テストモード（TEST_VECTOR_ENABLED=true かつ対象プレフィックスのIMSI）では、
 // Ki/OPc/AMF をテスト用の固定値に置き換える。加入者の取得・SQNの管理・エラー処理は通常モードと同じ。
 func (u *VectorUseCase) GenerateVector(ctx context.Context, req *dto.VectorRequest) (*dto.VectorResponse, error) {
-	testMode := u.testVectorProvider != nil && u.testVectorProvider.IsTestIMSI(req.IMSI)
+	testMode := u.IsTestMode(req.IMSI)
 
 	// 1. 加入者情報取得（テストモードでも登録が必要）
 	sub, err := u.subscriberStore.Get(ctx, req.IMSI)
@@ -81,7 +82,7 @@ func (u *VectorUseCase) GenerateVector(ctx context.Context, req *dto.VectorReque
 
 	// 3. 再同期処理 or 通常処理
 	if req.ResyncInfo != nil {
-		newSQN, err = u.processResync(ki, opc, req.ResyncInfo, currentSQN)
+		newSQN, err = u.processResync(ctx, req.IMSI, ki, opc, req.ResyncInfo, currentSQN)
 		if err != nil {
 			return nil, err
 		}
@@ -104,20 +105,12 @@ func (u *VectorUseCase) GenerateVector(ctx context.Context, req *dto.VectorReque
 		return nil, fmt.Errorf("%w: %v", ErrValkeyConnection, err)
 	}
 
-	if testMode {
-		slog.Info("test vector generated",
-			"event_id", "CALC_OK",
-			"test_mode", true,
-			"sqn", newSQNHex,
-		)
-	}
-
 	// 6. レスポンス変換
 	return milenage.VectorToResponse(vector), nil
 }
 
 // processResync は再同期処理を行う。
-func (u *VectorUseCase) processResync(ki, opc []byte, resyncInfo *dto.ResyncInfo, currentSQN uint64) (uint64, error) {
+func (u *VectorUseCase) processResync(ctx context.Context, imsi string, ki, opc []byte, resyncInfo *dto.ResyncInfo, currentSQN uint64) (uint64, error) {
 	// 1. RAND/AUTS をバイト列に変換
 	randVal, err := milenage.HexDecode(resyncInfo.RAND)
 	if err != nil {
@@ -142,13 +135,8 @@ func (u *VectorUseCase) processResync(ki, opc []byte, resyncInfo *dto.ResyncInfo
 
 	// 4. デルタ検証
 	if err := u.sqnValidator.ValidateResyncSQN(sqnMS, currentSQN); err != nil {
-		slog.Warn("SQN delta validation failed",
-			"event_id", "SQN_RESYNC_DELTA_ERR",
-			"sqn_ms", fmt.Sprintf("%012x", sqnMS),
-			"sqn_he", fmt.Sprintf("%012x", currentSQN),
-			"error", err.Error(),
-		)
-		return 0, ErrResyncDeltaExceeded
+		// ログはハンドラーが1行で出力する（SQN値はエラー文に含める）
+		return 0, fmt.Errorf("%w: sqn_ms=%012x sqn_he=%012x: %v", ErrResyncDeltaExceeded, sqnMS, currentSQN, err)
 	}
 
 	// 5. 新SQN計算（SQN_MS + 32）
@@ -160,10 +148,27 @@ func (u *VectorUseCase) processResync(ki, opc []byte, resyncInfo *dto.ResyncInfo
 	// 6. SQN再同期成功ログ
 	slog.Info("SQN resync successful",
 		"event_id", "SQN_RESYNC",
+		"trace_id", traceIDFromContext(ctx),
+		"imsi", u.maskIMSI(imsi),
 		"sqn_old", fmt.Sprintf("%012x", currentSQN),
 		"sqn_ms", fmt.Sprintf("%012x", sqnMS),
 		"sqn_new", fmt.Sprintf("%012x", newSQN),
 	)
 
 	return newSQN, nil
+}
+
+// IsTestMode はIMSIがテストベクターモードの対象かを返す。
+func (u *VectorUseCase) IsTestMode(imsi string) bool {
+	return u.testVectorProvider != nil && u.testVectorProvider.IsTestIMSI(imsi)
+}
+
+// maskIMSI はログ出力用にIMSIをマスキングする。
+// 設定が無い場合はマスキングを有効として扱う（LOG_MASK_IMSI の既定値 true に合わせる）。
+func (u *VectorUseCase) maskIMSI(imsi string) string {
+	enabled := true
+	if u.cfg != nil {
+		enabled = u.cfg.LogMaskIMSI
+	}
+	return logging.MaskIMSI(imsi, enabled)
 }

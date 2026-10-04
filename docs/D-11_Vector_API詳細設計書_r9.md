@@ -1,4 +1,4 @@
-# D-11 Vector API詳細設計書 (r8)
+# D-11 Vector API詳細設計書 (r9)
 
 ## ■セクション1: 概要
 
@@ -33,14 +33,14 @@
 | D-01 | ミニPC版設計仕様書 (r10) | システム構成、パッケージ利用マップ |
 | D-02 | Valkeyデータ設計仕様書 (r14) | 加入者データ構造、キー設計、Go構造体、SQN更新方式（現行実装） |
 | D-03 | Vector-API/ステートマシン設計書 (r6) | API仕様、リクエスト/レスポンス定義 |
-| D-04 | ログ仕様設計書 (r22) | event_id定義、ログフォーマット |
+| D-04 | ログ仕様設計書 (r24) | event_id定義、ログフォーマット |
 | D-09 | Auth Server詳細設計書 (r10) | Auth Server連携仕様 |
-| D-06 | エラーハンドリング詳細設計書 (r7) | エラー分類、タイムアウト設定、SQN競合エラー（設計済み・未実装） |
+| D-06 | エラーハンドリング詳細設計書 (r12) | エラー分類、タイムアウト設定、SQN競合エラー（設計済み・未実装） |
 | D-07 | Admin TUI詳細設計書【後半】 (r8) | 管理用TUIアプリケーション仕様 |
 | D-08 | インフラ設定・運用設計書 (r14) | 環境変数設定、テストベクターモード |
 | D-12 | Vector Gateway詳細設計書 (r5) | X-Trace-ID伝搬、呼び出し元仕様 |
 | E-02 | コーディング規約（簡易版） (r3) | コーディング規約 |
-| E-03 | 共通ライブラリ(pkg)設計書 (r3) | 共通ライブラリ（pkg） |
+| E-03 | 共通ライブラリ(pkg)設計書 (r7) | 共通ライブラリ（pkg）。`logging.MaskIMSI`, `logging.ParseLevel` |
 
 ### 1.4 準拠規格
 
@@ -121,6 +121,7 @@ apps/vector-api/
         ├── error_test.go       # error パッケージテスト
         ├── interfaces.go       # ユースケース層インターフェース定義
         ├── mock_interfaces.go  # テスト用モックインターフェース
+        ├── trace.go            # Trace IDのcontext受け渡し（ContextWithTraceID）
         ├── vector.go           # ベクター生成・再同期ユースケース（統合）
         └── vector_test.go      # vector パッケージテスト
 ```
@@ -219,9 +220,10 @@ type TestVectorProvider interface {
     GetTestCryptoParams() (ki, opc, amf []byte) // テスト用 Ki/OPc/AMF（防御的コピー）
 }
 
-// handler/interfaces.go
-type VectorUseCase interface {
+// usecase/interfaces.go（ハンドラーが依存するユースケースのインターフェース）
+type VectorUseCaseInterface interface {
     GenerateVector(ctx context.Context, req *VectorRequest) (*VectorResponse, error)
+    IsTestMode(imsi string) bool // テストベクターモードの対象IMSIか（CALC_OK の test_mode 属性用）
 }
 ```
 
@@ -300,9 +302,10 @@ ENTRYPOINT ["/usr/local/bin/vector-api"]
 
 | ファイル | 責務 | 主要関数・型 |
 |---------|------|-------------|
-| `vector.go` | ベクター生成・再同期ユースケース（統合） | `VectorUseCase`, `GenerateVector()`, `processResync()` |
-| `interfaces.go` | ユースケース層インターフェース定義 | `MilenageCalculator`, `ResyncProcessor`, `SQNManager`, `SubscriberRepository`, `TestVectorProvider` |
-| `error.go` | ユースケースエラー型定義 | `ProblemError`, `ErrSubscriberNotFound`, `ErrResyncMACFailed` 等（`ErrSQNConflict` はSQN競合制御が未実装のため定義なし） |
+| `vector.go` | ベクター生成・再同期ユースケース（統合） | `VectorUseCase`, `GenerateVector()`, `processResync()`, `IsTestMode()` |
+| `interfaces.go` | ユースケース層インターフェース定義 | `MilenageCalculator`, `ResyncProcessor`, `SQNManager`, `SQNValidator`, `SubscriberRepository`, `TestVectorProvider`, `VectorUseCaseInterface` |
+| `trace.go` | Trace IDのcontext受け渡し | `ContextWithTraceID()`（ハンドラーが呼ぶ）, `traceIDFromContext()` |
+| `error.go` | ユースケースエラー型定義 | `ProblemError`, `ErrSubscriberNotFound`, `ErrResyncMACFailed` 等（`ErrSQNConflict` はSQN競合制御が未実装のため定義なし。IMSI形式不正はハンドラーが直接400を返すため `ErrInvalidIMSI` は定義しない） |
 | `mock_interfaces.go` | テスト用モックインターフェース | 各インターフェースのモック実装 |
 
 #### `internal/milenage/`
@@ -325,7 +328,7 @@ ENTRYPOINT ["/usr/local/bin/vector-api"]
 | ファイル | 責務 | 主要関数・型 |
 |---------|------|-------------|
 | `valkey.go` | Valkeyクライアント初期化・管理 | `ValkeyClient`, `NewValkeyClient()`, `Ping()` |
-| `subscriber.go` | 加入者データアクセス | `SubscriberStore`, `Get()`, `UpdateSQN()` |
+| `subscriber.go` | 加入者データアクセス（アプリ独自のリトライなし） | `SubscriberStore`, `Get()`, `UpdateSQN()` |
 
 #### `internal/testmode/`
 
@@ -353,7 +356,7 @@ ENTRYPOINT ["/usr/local/bin/vector-api"]
 | `REDIS_PORT` | Yes | - | string | Valkeyポート番号 |
 | `REDIS_PASS` | Yes | - | string | Valkeyパスワード |
 | `LISTEN_ADDR` | No | `:8080` | string | HTTPリッスンアドレス |
-| `LOG_LEVEL` | No | `INFO` | string | ログレベル（DEBUG/INFO/WARN/ERROR） |
+| `LOG_LEVEL` | No | `INFO` | string | ログレベル（DEBUG/INFO/WARN/ERROR）。`pkg/logging.ParseLevel` で変換（大文字小文字を区別せず前後の空白を無視、`WARNING` も `WARN`、未知の値は `INFO`） |
 | `LOG_MASK_IMSI` | No | `true` | bool | IMSIマスキング有効化 |
 | `GIN_MODE` | No | `release` | string | Gin動作モード（debug/release） |
 | `TEST_VECTOR_ENABLED` | No | `false` | bool | テストベクターモード有効化 |
@@ -404,7 +407,7 @@ main()
    │      └─ 環境変数読み込み・検証
    │
    ├─2. slog.SetDefault()
-   │      └─ ロガー初期化（JSON形式）
+   │      └─ ロガー初期化（JSON形式。LOG_LEVEL は logging.ParseLevel で変換）
    │
    ├─3. store.NewValkeyClient()
    │      └─ Valkey接続確立・Ping確認
@@ -629,11 +632,11 @@ func SetupRouter(engine *gin.Engine, handler *handler.VectorHandler) {
 // internal/handler/vector.go
 
 type VectorHandler struct {
-    useCase VectorUseCase
+    useCase usecase.VectorUseCaseInterface
     cfg     *config.Config
 }
 
-func NewVectorHandler(useCase VectorUseCase, cfg *config.Config) *VectorHandler {
+func NewVectorHandler(useCase usecase.VectorUseCaseInterface, cfg *config.Config) *VectorHandler {
     return &VectorHandler{
         useCase: useCase,
         cfg:     cfg,
@@ -642,7 +645,8 @@ func NewVectorHandler(useCase VectorUseCase, cfg *config.Config) *VectorHandler 
 
 func (h *VectorHandler) HandleVector(c *gin.Context) {
     traceID, _ := c.Get(TraceIDKey)
-    ctx := c.Request.Context()
+    // Trace IDをcontextに載せ、ユースケース層のログ（SQN_RESYNC）にも出力させる
+    ctx := usecase.ContextWithTraceID(c.Request.Context(), fmt.Sprint(traceID))
     
     // 1. リクエストバインド
     var req dto.VectorRequest
@@ -665,7 +669,7 @@ func (h *VectorHandler) HandleVector(c *gin.Context) {
         slog.Warn("invalid IMSI format",
             "trace_id", traceID,
             "event_id", "CALC_ERR",
-            "imsi", h.maskIMSI(req.IMSI),
+            "imsi", logging.MaskIMSI(req.IMSI, h.cfg.LogMaskIMSI),
             "error", err.Error(),
         )
         c.JSON(http.StatusBadRequest, dto.NewProblemDetail(
@@ -679,7 +683,7 @@ func (h *VectorHandler) HandleVector(c *gin.Context) {
     // 3. ユースケース実行
     resp, err := h.useCase.GenerateVector(ctx, &req)
     if err != nil {
-        h.handleError(c, traceID.(string), req.IMSI, err)
+        h.handleError(c, traceID, req.IMSI, err)
         return
     }
     
@@ -687,20 +691,23 @@ func (h *VectorHandler) HandleVector(c *gin.Context) {
     slog.Info("vector generated",
         "trace_id", traceID,
         "event_id", "CALC_OK",
-        "imsi", h.maskIMSI(req.IMSI),
+        "imsi", logging.MaskIMSI(req.IMSI, h.cfg.LogMaskIMSI),
         "http_status", http.StatusOK,
+        "test_mode", h.useCase.IsTestMode(req.IMSI),
     )
     c.JSON(http.StatusOK, resp)
 }
 
-func (h *VectorHandler) handleError(c *gin.Context, traceID, imsi string, err error) {
+func (h *VectorHandler) handleError(c *gin.Context, traceID any, imsi string, err error) {
     var problemErr *usecase.ProblemError
     if errors.As(err, &problemErr) {
         slog.Log(c.Request.Context(), problemErr.LogLevel(), problemErr.Message,
             "trace_id", traceID,
             "event_id", problemErr.EventID,
-            "imsi", h.maskIMSI(imsi),
+            "imsi", logging.MaskIMSI(imsi, h.cfg.LogMaskIMSI),
             "http_status", problemErr.Status,
+            // 原因（Valkeyのエラー、SQN値など）を含むエラー文。応答の detail には含めない
+            "error", err.Error(),
         )
         c.JSON(problemErr.Status, problemErr.ToProblemDetail())
         return
@@ -710,7 +717,7 @@ func (h *VectorHandler) handleError(c *gin.Context, traceID, imsi string, err er
     slog.Error("unexpected error",
         "trace_id", traceID,
         "event_id", "CALC_ERR",
-        "imsi", h.maskIMSI(imsi),
+        "imsi", logging.MaskIMSI(imsi, h.cfg.LogMaskIMSI),
         "error", err.Error(),
     )
     c.JSON(http.StatusInternalServerError, dto.NewProblemDetail(
@@ -732,19 +739,9 @@ func validateIMSI(imsi string) error {
     }
     return nil
 }
-
-// maskIMSI はログ出力用にIMSIをマスクする
-// 環境変数 LOG_MASK_IMSI が false の場合はマスクしない
-func (h *VectorHandler) maskIMSI(imsi string) string {
-    if !h.cfg.LogMaskIMSI {
-        return imsi
-    }
-    if len(imsi) <= 6 {
-        return imsi
-    }
-    return imsi[:6] + "********" + imsi[len(imsi)-1:]
-}
 ```
+
+> **注記（r9）:** IMSIのマスクは共通ライブラリの `logging.MaskIMSI`（E-03。`LOG_MASK_IMSI` に従う）を使う。ProblemError の経路のログ（`handleError`）は `error` 属性に原因を含むエラー文（`err.Error()`）を出力するが、HTTP応答の `detail` は `ToProblemDetail()` による定義済みエラーの `Detail` のみで、原因は含めない（§9.3）。`CALC_OK` の `test_mode` は `IsTestMode()` の結果（テストベクターモードの対象IMSIは `true`）。
 
 ### 5.2 GET /health
 
@@ -1232,53 +1229,9 @@ func (s *SubscriberStore) UpdateSQN(ctx context.Context, imsi string, sqn string
 
 ### 8.3 リトライ処理
 
-> **注記（実装状況）:** `GetWithRetry` は実装されているが、現行コードから呼び出されていない（ユースケースは `Get` を使用）。このため下記の `VALKEY_CONN_ERR`（WARN、`Valkey connection failed, retrying`）は出力されない（D-04 §3.4.1）。
+Valkeyエラー時のアプリ独自のリトライは行わない（go-redis v9 の既定の自動リトライ（`redis.Options` で `MaxRetries` を指定していないため既定の最大3回、バックオフ 8ms〜512ms）は働く）。`Get` / `UpdateSQN` がエラーを返すと、ユースケースは `ErrValkeyConnection` に原因を付けたエラー（`Database connection error: <Valkeyのエラー>`）を返し、ハンドラーが500と `VALKEY_CONN_ERR`（ERROR、`error` 属性に原因）を出力する（§9.4）。接続の張り直しはgo-redisのコネクションプールが次のコマンド実行時に行う。
 
-```go
-// internal/store/subscriber.go (リトライ付き)
-
-const (
-    maxRetries    = 2
-    retryInterval = 100 * time.Millisecond
-)
-
-func (s *SubscriberStore) GetWithRetry(ctx context.Context, imsi string) (*Subscriber, error) {
-    var lastErr error
-    
-    for i := 0; i <= maxRetries; i++ {
-        sub, err := s.Get(ctx, imsi)
-        if err == nil {
-            return sub, nil
-        }
-        
-        lastErr = err
-        
-        // 接続エラーの場合のみリトライ
-        if !isConnectionError(err) {
-            return nil, err
-        }
-        
-        if i < maxRetries {
-            slog.Warn("Valkey connection failed, retrying",
-                "event_id", "VALKEY_CONN_ERR",
-                "retry", i+1,
-                "error", err.Error(),
-            )
-            time.Sleep(retryInterval)
-        }
-    }
-    
-    return nil, lastErr
-}
-
-func isConnectionError(err error) bool {
-    // go-redisの接続エラーを判定
-    return err != nil && (
-        strings.Contains(err.Error(), "connection refused") ||
-        strings.Contains(err.Error(), "i/o timeout") ||
-        strings.Contains(err.Error(), "connection reset"))
-}
-```
+> **注記（r9）:** r8 まで本節に記載していたリトライ付き取得 `GetWithRetry`（最大2回リトライ、間隔100ms、`isConnectionError` で接続エラーのみリトライ、リトライ時に `VALKEY_CONN_ERR`（WARN、`Valkey connection failed, retrying`）を出力）は、どこからも呼び出されていなかったため実装から削除した。
 
 ### 8.4 データアクセスフロー
 
@@ -1409,14 +1362,6 @@ var (
         EventID: "CALC_ERR",
     }
     
-    ErrInvalidIMSI = &ProblemError{
-        Status:  400,
-        Title:   "Bad Request",
-        Detail:  "IMSI must be 15 digits",
-        Message: "invalid IMSI format",
-        EventID: "CALC_ERR",
-    }
-    
     ErrResyncMACFailed = &ProblemError{
         Status:  400,
         Title:   "Bad Request",
@@ -1467,14 +1412,18 @@ var (
 )
 ```
 
+> **注記（r9）:**
+> - IMSI形式不正（15桁の数字でない）はハンドラーが `validateIMSI` で検出して直接400（`CALC_ERR`、msg `invalid IMSI format`）を返すため、ユースケースのエラーとしては定義しない（r8 まで記載していた未使用の `ErrInvalidIMSI` は実装から削除した）。
+> - ユースケースは原因があるエラーを `fmt.Errorf("%w: ...", ErrXxx, ...)` でラップして返す。ハンドラーは `errors.As` で `ProblemError` を取り出し、応答は `ToProblemDetail()`（定義済みの `Detail` のみ）、ログの `error` 属性はラップ後のエラー文（`<Detail>: <原因>`）とする。例: `Database connection error: failed to get subscriber: ...`、`SQN difference exceeds allowed range: sqn_ms=xxxxxxxxxxxx sqn_he=xxxxxxxxxxxx: <原因>`。原因のないエラー（`ErrSubscriberNotFound`、`ErrResyncMACFailed`、`ErrSQNOverflow` 等）は `Detail` と同じ文になる。
+
 ### 9.4 Valkey障害時の動作
 
 D-06に基づく障害時動作:
 
 | 障害種別 | 検出条件 | 対処 | HTTP応答 |
 |---------|---------|------|---------|
-| 接続失敗 | TCP接続エラー | アプリ独自のリトライなし（§8.3 の `GetWithRetry` は未使用） | 500 Internal Server Error（ERROR: `VALKEY_CONN_ERR`） |
-| コマンドタイムアウト | 応答なし（2秒超過） | 同上 | 500 Internal Server Error（ERROR: `VALKEY_CONN_ERR`） |
+| 接続失敗 | TCP接続エラー | アプリ独自のリトライなし（§8.3） | 500 Internal Server Error（ERROR: `VALKEY_CONN_ERR`。`error` 属性にValkeyのエラー） |
+| コマンドタイムアウト | 応答なし（2秒超過） | 同上 | 500 Internal Server Error（ERROR: `VALKEY_CONN_ERR`。`error` 属性にValkeyのエラー） |
 
 ---
 
@@ -1518,7 +1467,7 @@ func NewVectorUseCase(
 // テストモード（TEST_VECTOR_ENABLED=true かつ対象プレフィックスのIMSI）では、
 // Ki/OPc/AMF をテスト用の固定値に置き換える。加入者の取得・SQNの管理・エラー処理は通常モードと同じ。
 func (u *VectorUseCase) GenerateVector(ctx context.Context, req *dto.VectorRequest) (*dto.VectorResponse, error) {
-    testMode := u.testVectorProvider != nil && u.testVectorProvider.IsTestIMSI(req.IMSI)
+    testMode := u.IsTestMode(req.IMSI)
     
     // 1. 加入者情報取得（テストモードでも登録が必要）
     sub, err := u.subscriberStore.Get(ctx, req.IMSI)
@@ -1553,7 +1502,7 @@ func (u *VectorUseCase) GenerateVector(ctx context.Context, req *dto.VectorReque
     
     // 3. 再同期処理 or 通常処理
     if req.ResyncInfo != nil {
-        newSQN, err = u.processResync(ki, opc, req.ResyncInfo, currentSQN)
+        newSQN, err = u.processResync(ctx, req.IMSI, ki, opc, req.ResyncInfo, currentSQN)
         if err != nil {
             return nil, err
         }
@@ -1576,19 +1525,11 @@ func (u *VectorUseCase) GenerateVector(ctx context.Context, req *dto.VectorReque
         return nil, fmt.Errorf("%w: %v", ErrValkeyConnection, err)
     }
     
-    if testMode {
-        slog.Info("test vector generated",
-            "event_id", "CALC_OK",
-            "test_mode", true,
-            "sqn", newSQNHex,
-        )
-    }
-    
     // 6. レスポンス変換
     return milenage.VectorToResponse(vector), nil
 }
 
-func (u *VectorUseCase) processResync(ki, opc []byte, resyncInfo *dto.ResyncInfo, currentSQN uint64) (uint64, error) {
+func (u *VectorUseCase) processResync(ctx context.Context, imsi string, ki, opc []byte, resyncInfo *dto.ResyncInfo, currentSQN uint64) (uint64, error) {
     // 1. RAND/AUTS をバイト列に変換
     rand, err := milenage.HexDecode(resyncInfo.RAND)
     if err != nil {
@@ -1613,13 +1554,8 @@ func (u *VectorUseCase) processResync(ki, opc []byte, resyncInfo *dto.ResyncInfo
     
     // 4. デルタ検証
     if err := u.sqnValidator.ValidateResyncSQN(sqnMS, currentSQN); err != nil {
-        slog.Warn("SQN delta validation failed",
-            "event_id", "SQN_RESYNC_DELTA_ERR",
-            "sqn_ms", fmt.Sprintf("%012x", sqnMS),
-            "sqn_he", fmt.Sprintf("%012x", currentSQN),
-            "error", err.Error(),
-        )
-        return 0, ErrResyncDeltaExceeded
+        // ログはハンドラーが1行で出力する（SQN値はエラー文に含める）
+        return 0, fmt.Errorf("%w: sqn_ms=%012x sqn_he=%012x: %v", ErrResyncDeltaExceeded, sqnMS, currentSQN, err)
     }
     
     // 5. 新SQN計算（SQN_MS + 32）
@@ -1631,6 +1567,8 @@ func (u *VectorUseCase) processResync(ki, opc []byte, resyncInfo *dto.ResyncInfo
     // 6. SQN再同期成功ログ
     slog.Info("SQN resync successful",
         "event_id", "SQN_RESYNC",
+        "trace_id", traceIDFromContext(ctx), // ハンドラーが ContextWithTraceID で設定
+        "imsi", u.maskIMSI(imsi),
         "sqn_old", fmt.Sprintf("%012x", currentSQN),
         "sqn_ms", fmt.Sprintf("%012x", sqnMS),
         "sqn_new", fmt.Sprintf("%012x", newSQN),
@@ -1638,7 +1576,40 @@ func (u *VectorUseCase) processResync(ki, opc []byte, resyncInfo *dto.ResyncInfo
     
     return newSQN, nil
 }
+
+// IsTestMode はIMSIがテストベクターモードの対象かを返す（ハンドラーの CALC_OK の test_mode 属性にも使う）
+func (u *VectorUseCase) IsTestMode(imsi string) bool {
+    return u.testVectorProvider != nil && u.testVectorProvider.IsTestIMSI(imsi)
+}
+
+// maskIMSI はログ出力用にIMSIをマスキングする（cfg が nil の場合はマスク有効として扱う）
+func (u *VectorUseCase) maskIMSI(imsi string) string {
+    enabled := true
+    if u.cfg != nil {
+        enabled = u.cfg.LogMaskIMSI
+    }
+    return logging.MaskIMSI(imsi, enabled)
+}
 ```
+
+```go
+// internal/usecase/trace.go
+
+type traceIDKey struct{}
+
+// ContextWithTraceID はTrace IDをコンテキストに設定する（ハンドラーから呼ぶ）
+func ContextWithTraceID(ctx context.Context, traceID string) context.Context {
+    return context.WithValue(ctx, traceIDKey{}, traceID)
+}
+
+// traceIDFromContext はコンテキストからTrace IDを取り出す（未設定なら空文字）
+func traceIDFromContext(ctx context.Context) string {
+    id, _ := ctx.Value(traceIDKey{}).(string)
+    return id
+}
+```
+
+> **注記（ログ、r9）:** ユースケース層が出力するログは再同期成功時の `SQN_RESYNC` だけである。`trace_id` はハンドラーが context に載せた値（`X-Trace-ID` ヘッダの値。ない場合は `no-trace-id`）、`imsi` はマスク済み。SQNデルタ超過はログを出さず、SQN値をエラー文に含めて返し、ハンドラーが `SQN_RESYNC_DELTA_ERR` を1行出力する。テストモードの成功時もユースケース層はログを出さず、ハンドラーの `CALC_OK` の `test_mode` 属性で区別する（r8 まで出力していた `test vector generated`（`test_mode` / `sqn` 属性）は削除）。
 
 > **注記（テストモード、r8）:** テストモードで通常モードと異なるのは、Milenage 計算に使う Ki / OPc / AMF を `GetTestCryptoParams()` の固定値（3GPP TS 35.208 Test Set 1、AMF `B9B9`）に置き換える点だけである。加入者 `sub:{IMSI}` の取得・SQN の解析と書き戻し・再同期・エラー処理は通常モードと同じで、未登録IMSIは `ErrSubscriberNotFound`（404）、Valkeyエラーと SQN 書き戻し失敗は `ErrValkeyConnection`（500）、SQN の解析失敗はエラー（500）になる。`sub:{IMSI}` の `ki` / `opc` / `amf` は参照しない（形式チェックもしない）が、`sqn` を使うため加入者の登録は必須である。r7 以前の実装にあった既定 SQN（`ff9bb4d0b607`）へのフォールバック（`TEST_SQN_FALLBACK` / `TEST_SQN_PARSE_ERR` / `TEST_SQN_PERSIST_ERR`）と `GetDefaultSQN()` は削除した（未登録IMSIに `sqn` だけを持つ `sub:{IMSI}` が作られる問題を解消）。
 
@@ -1652,16 +1623,16 @@ D-04で定義されたVector API用event_id:
 
 | event_id | レベル | 説明 |
 |----------|--------|------|
-| `CALC_OK` | INFO | ベクター生成成功（テストベクターモードではユースケース層の `test vector generated`（`test_mode`, `sqn`）も出力） |
+| `CALC_OK` | INFO | ベクター生成成功（`test_mode` 属性でテストベクターモードかを区別。テストベクターモードも1行） |
 | `CALC_ERR` | INFO/WARN/ERROR | 計算・データエラー（リクエスト不正・IMSI形式不正=WARN、IMSI不在=INFO（テストベクターモードの対象IMSIも同じ）、Milenage計算エラー・予期しないエラー=ERROR） |
-| `SQN_RESYNC` | INFO | SQN再同期成功（ユースケース層。`trace_id`・`imsi` なし） |
+| `SQN_RESYNC` | INFO | SQN再同期成功（ユースケース層。`trace_id`・マスク済み `imsi` あり） |
 | `SQN_RESYNC_MAC_ERR` | WARN | AUTS MAC検証失敗（AUTSからのSQN抽出失敗を含む） |
 | `SQN_RESYNC_FORMAT_ERR` | WARN | AUTS形式不正（RAND/AUTSのHexデコード失敗を含む） |
-| `SQN_RESYNC_DELTA_ERR` | WARN | SQNデルタ超過（ユースケース層・ハンドラー層の2行） |
+| `SQN_RESYNC_DELTA_ERR` | WARN | SQNデルタ超過（ハンドラー層の1行。SQN値は `error` 属性の文中） |
 | `SQN_OVERFLOW_ERR` | ERROR | SQNオーバーフロー |
 | `VALKEY_CONN_ERR` | ERROR | 加入者取得・SQN更新時のValkeyエラー（500返却。テストベクターモードの対象IMSIも同じ） |
 
-> **注記:** 各event_idの `msg`・属性はD-04 §3.4を参照。起動時のValkey接続失敗は event_id なしの `failed to connect to Valkey` で出力する。Valkey接続の復旧検知ログは出力しない。`SQN_CONFLICT_RETRY` / `SQN_CONFLICT_ERR` は §13.6 で設計済みだが**未実装**のため出力されない。テストベクターモード専用のエラー系 event_id はない（r7 まで記載していた `TEST_SQN_FALLBACK` / `TEST_SQN_PARSE_ERR` / `TEST_SQN_PERSIST_ERR` は r8 で廃止。エラーは通常モードと同じ event_id で出力する）。
+> **注記:** 各event_idの `msg`・属性はD-04 §3.4を参照。ハンドラーが定義済みエラー（`ProblemError`）から出力するログ（`CALC_ERR` の一部 / `SQN_RESYNC_*_ERR` / `SQN_OVERFLOW_ERR` / `VALKEY_CONN_ERR`）は `error` 属性に原因を含むエラー文を持つ（§9.3）。起動時のValkey接続失敗は event_id なしの `failed to connect to Valkey` で出力する。Valkey接続の復旧検知ログは出力しない。`SQN_CONFLICT_RETRY` / `SQN_CONFLICT_ERR` は §13.6 で設計済みだが**未実装**のため出力されない。テストベクターモード専用のエラー系 event_id はない（r7 まで記載していた `TEST_SQN_FALLBACK` / `TEST_SQN_PARSE_ERR` / `TEST_SQN_PERSIST_ERR` は r8 で廃止。エラーは通常モードと同じ event_id で出力する）。
 
 ### 11.2 ログ出力例
 
@@ -1676,7 +1647,8 @@ D-04で定義されたVector API用event_id:
   "trace_id": "550e8400-e29b-41d4-a716-446655440000",
   "event_id": "CALC_OK",
   "imsi": "440101********0",
-  "http_status": 200
+  "http_status": 200,
+  "test_mode": false
 }
 ```
 
@@ -1693,7 +1665,8 @@ D-04で定義されたVector API用event_id:
   "trace_id": "550e8400-e29b-41d4-a716-446655440001",
   "event_id": "CALC_ERR",
   "imsi": "440109********0",
-  "http_status": 404
+  "http_status": 404,
+  "error": "IMSI does not exist in subscriber DB"
 }
 ```
 
@@ -1706,6 +1679,8 @@ D-04で定義されたVector API用event_id:
   "app": "vector-api",
   "msg": "SQN resync successful",
   "event_id": "SQN_RESYNC",
+  "trace_id": "550e8400-e29b-41d4-a716-446655440002",
+  "imsi": "440101********0",
   "sqn_old": "000000000020",
   "sqn_ms": "000000000060",
   "sqn_new": "000000000080"
@@ -1714,18 +1689,19 @@ D-04で定義されたVector API用event_id:
 
 #### デルタ超過時
 
-ユースケース層のログ（`trace_id`・`imsi` なし。再同期成功時の `SQN_RESYNC` も同様）。続いてハンドラー層から `SQN_RESYNC_DELTA_ERR`（msg `SQN delta exceeded`、`trace_id`, `imsi`, `http_status`=400）が出力される。
+ハンドラー層の1行のみ（r8 まではユースケース層の `SQN delta validation failed` も出力していた）。SQN_MS・SQN_HEは `error` 属性の文中に12桁Hexで含まれる。
 
 ```json
 {
   "time": "2026-01-14T10:00:01.123Z",
   "level": "WARN",
   "app": "vector-api",
-  "msg": "SQN delta validation failed",
+  "msg": "SQN delta exceeded",
+  "trace_id": "550e8400-e29b-41d4-a716-446655440003",
   "event_id": "SQN_RESYNC_DELTA_ERR",
-  "sqn_ms": "100000000000",
-  "sqn_he": "000000000020",
-  "error": "SQN difference exceeds delta"
+  "imsi": "440101********0",
+  "http_status": 400,
+  "error": "SQN difference exceeds allowed range: sqn_ms=100000000000 sqn_he=000000000020: SQN difference exceeds delta: 17592186044384 > 268435456"
 }
 ```
 
@@ -1836,8 +1812,9 @@ type TestVectorProvider interface {
     GetTestCryptoParams() (ki, opc, amf []byte) // テスト用 Ki/OPc/AMF（防御的コピー）
 }
 
-type VectorUseCase interface {
+type VectorUseCaseInterface interface {
     GenerateVector(ctx context.Context, req *VectorRequest) (*VectorResponse, error)
+    IsTestMode(imsi string) bool // テストベクターモードの対象IMSIか（ログ出力用）
 }
 ```
 
@@ -2266,3 +2243,4 @@ func (h *VectorHandler) HandleVector(c *gin.Context) {
 | r6 | 2026-02-18 | ディレクトリ構造全面更新、usecase統合反映、関連ドキュメント版数更新 |
 | r7 | 2026-10-04 | D-04 r19 の event_id 全面整合に合わせて修正: §11.1 event_id一覧から実装に存在しない `SQN_RESYNC_DECODE_ERR`（AUTSからのSQN抽出失敗は `SQN_RESYNC_MAC_ERR`）と `VALKEY_CONN_RESTORED` を削除し、`TEST_SQN_FALLBACK` / `TEST_SQN_PARSE_ERR` / `TEST_SQN_PERSIST_ERR` を追加、各説明を実装に合わせて修正。§11.2 ログ出力例を実装の属性に修正（`CALC_OK` / `CALC_ERR` から `method`・`path`・`latency_ms` を削除、ユースケース層の `SQN_RESYNC` / `SQN_RESYNC_DELTA_ERR` から `trace_id` を削除）。SQN競合制御（WATCH/MULTI による CAS、リトライ上限3回、HTTP 409、`SQN_CONFLICT_RETRY` / `SQN_CONFLICT_ERR`）は設計を残したまま「設計済み・未実装（現行は単純な HSET による後勝ち）」と明記（§7.5、§13.3、§13.6 冒頭・各見出し、§2.7 の `ErrSQNConflict` 記載、§1.3）。§8.3 `GetWithRetry` が未使用でリトライログが出力されない旨を注記し、§9.4 のリトライ記載を修正。§1.3 関連ドキュメントの版数を現行版に更新（D-01 r10、D-02 r12、D-03 r6、D-04 r19、D-06 r7、D-07 r8、D-08 r14、D-12 r5、E-02 r3。Auth Server詳細設計書の文書番号を D-09 に修正）。関連ドキュメント表の E-03 を実在の文書名（共通ライブラリ(pkg)設計書）に修正 |
 | r8 | 2026-10-04 | テストベクターモードでも加入者登録を必須にした実装修正の反映: §10.1 `GenerateVector` をテストモードと通常モードの共通処理に更新（テストモードで置き換えるのは Ki/OPc/AMF だけ。加入者の取得・SQN の解析と書き戻し・エラー処理は通常モードと同じで、未登録IMSIは404、Valkeyエラー・SQN書き戻し失敗は500、SQN解析失敗はエラー）し、旧 `generateTestVector` を削除、テストモードの注記を追加。§11.1 から `TEST_SQN_FALLBACK` / `TEST_SQN_PARSE_ERR` / `TEST_SQN_PERSIST_ERR` を削除し、`CALC_ERR` / `VALKEY_CONN_ERR` / `CALC_OK` の説明にテストベクターモードの扱いを追記。§13.5 の概要・判定ロジック・注意事項を実装どおりに修正（固定ベクター返却・SQN非永続・再同期スキップの記述を、固定 Ki/OPc/AMF で計算・加入者登録必須・SQN は通常どおり管理・再同期も通常どおりに訂正）し、テストベクター実装のコード例を現行の `testvector.go`（`NewTestVectorProvider(imsiPrefix)`、`GetTestCryptoParams()`）に更新。§2.5・§12.3 の `TestVectorProvider` インターフェースに `GetTestCryptoParams()` を追記し、§2.1 ディレクトリ構造のコメント・§2.3 パッケージ一覧・§2.7 ファイル別責務を更新。§1.3 関連ドキュメントの版数を更新（D-02 r14、D-04 r22） |
+| r9 | 2026-10-04 | vector-api のログ整理・未使用コード削除の実装修正の反映: §5.1 ハンドラーのコードを実装に合わせ更新（`usecase.ContextWithTraceID` で Trace ID を context に載せる、`CALC_OK` に `test_mode`、ProblemError 経路のログに `error` 属性（原因を含むエラー文。応答の detail は従来どおり）、IMSIマスクは `logging.MaskIMSI`、依存インターフェースは `usecase.VectorUseCaseInterface`）。§10.1 `processResync` に `ctx` / `imsi` 引数を追加し `SQN_RESYNC` に `trace_id`・マスク済み `imsi` を出力、SQNデルタ超過時のユースケース層のログを削除しSQN値をエラー文に含める形に、テストモードの `test vector generated` ログを削除、`IsTestMode()` / `maskIMSI()` と `internal/usecase/trace.go`（`ContextWithTraceID`）を追記。§8.3 から未使用で削除した `GetWithRetry`（リトライ・`isConnectionError`）のコードを削除しアプリ独自のリトライなし（go-redis の既定の自動リトライのみ）の説明に変更、§9.3 から削除した `ErrInvalidIMSI` を削除しエラー文の扱いを注記、§9.4 に `error` 属性を追記。§11.1・§11.2 のログ（`CALC_OK` の `test_mode`、`SQN_RESYNC` の `trace_id` / `imsi`、`SQN_RESYNC_DELTA_ERR` の1行化、`error` 属性）を更新。§2.1・§2.5・§2.7・§12.3 に `trace.go` と `VectorUseCaseInterface`（`IsTestMode` を追加）を反映。§3.1・§3.3 に `LOG_LEVEL` を `pkg/logging.ParseLevel` で変換する旨を追記。§1.3 の D-04 / D-06 / E-03 の参照版数を更新 |

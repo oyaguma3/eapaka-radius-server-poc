@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -20,6 +19,7 @@ import (
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-api/internal/store"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-api/internal/testmode"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-api/internal/usecase"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/logging"
 )
 
 func main() {
@@ -109,18 +109,8 @@ func main() {
 
 // initLogger はロガーを初期化する。
 func initLogger(cfg *config.Config) {
-	level := slog.LevelInfo
-	switch strings.ToUpper(cfg.LogLevel) {
-	case "DEBUG":
-		level = slog.LevelDebug
-	case "WARN":
-		level = slog.LevelWarn
-	case "ERROR":
-		level = slog.LevelError
-	}
-
 	opts := &slog.HandlerOptions{
-		Level: level,
+		Level: logging.ParseLevel(cfg.LogLevel),
 	}
 
 	handler := slog.NewJSONHandler(os.Stdout, opts)

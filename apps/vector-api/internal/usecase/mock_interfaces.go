@@ -378,3 +378,17 @@ func (mr *MockVectorUseCaseInterfaceMockRecorder) GenerateVector(ctx, req any) *
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GenerateVector", reflect.TypeOf((*MockVectorUseCaseInterface)(nil).GenerateVector), ctx, req)
 }
+
+// IsTestMode mocks base method.
+func (m *MockVectorUseCaseInterface) IsTestMode(imsi string) bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsTestMode", imsi)
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// IsTestMode indicates an expected call of IsTestMode.
+func (mr *MockVectorUseCaseInterfaceMockRecorder) IsTestMode(imsi any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsTestMode", reflect.TypeOf((*MockVectorUseCaseInterface)(nil).IsTestMode), imsi)
+}
