@@ -1,4 +1,4 @@
-# D-02 Valkey データ設計仕様書 (r16)
+# D-02 Valkey データ設計仕様書 (r17)
 
 ## 1. 全体方針
 
@@ -301,7 +301,7 @@ Acct Serverが重複パケットおよび順序異常を検出するためのキ
 >   - 値が `stop` → `start` に上書きし `ACCT_SEQUENCE_ERR`（reason: `start_after_stop`）を出力して処理継続（セッションは存在すれば更新。新規作成はしない）
 >   - 値が `start` または `interim:*` → `ACCT_DUPLICATE_START` を出力し、以降の処理（セッション更新・`ACCT_START` ログ）をスキップ
 > - **Interim:**（1回の GET で直前の値を取得して判定してから SET する。判定前に自身の書き込みで値が変わることはない）
->   - 値が今回と同一の `interim:{input}:{output}` → `ACCT_DUPLICATE_START`（msg: `duplicate accounting interim`）を出力し、値は変更せず、以降の処理をスキップ
+>   - 値が今回と同一の `interim:{input}:{output}` → `ACCT_DUPLICATE_INTERIM`（msg: `duplicate accounting interim`）を出力し、値は変更せず、以降の処理をスキップ
 >   - 値なし → `ACCT_SEQUENCE_ERR`（reason: `no_start_received`）を出力し、`interim:{input}:{output}` をセットして処理継続（課金データの欠損を避けるため）
 >   - 値が `stop` → `ACCT_SEQUENCE_ERR`（reason: `interim_after_stop`）を出力し、`interim:{input}:{output}` をセットして処理継続
 >   - 値が `start` または別値の `interim:*` → 正常。`interim:{input}:{output}` をセットして処理継続
@@ -578,3 +578,4 @@ type Subscriber struct {
 | r14 | 2026-10-04 | テストベクターモードでも加入者登録を必須にした Vector API の実装修正の反映（2.A）: テストベクターモードで置き換えるのは Ki/OPc/AMF だけで、`sub:{IMSI}` の取得・`sqn` の解析と書き戻し・エラー処理は通常モードと同じ（未登録は404、Valkeyエラー・書き戻し失敗は500、`sqn` 解析エラーも500）に修正。既定 SQN `ff9bb4d0b607` へのフォールバック、`sqn` だけを持つ Hash の作成、`TEST_SQN_PERSIST_ERR` の記述を削除し、旧実装で作られた `sqn` だけの Hash の扱いを注記。SQN更新方式の注記に、書き戻し失敗時・未登録時の扱いがテストベクターモードでも同じである旨を追記 |
 | r15 | 2026-10-04 | ポリシーの `nas_id` で `"*"` を任意の NAS に一致させた Auth Server の実装修正の反映（2.C）: `nas_id` の説明を「`"*"` 単独は任意の NAS-Identifier（NAS-Identifier が無い場合を含む）に一致、部分一致は行わない、それ以外は完全一致（大文字小文字区別）」に改め、r12 で記載した「ワイルドカード不可」を削除。JSON 例に `nas_id` `"*"` のルールを追加し、評価順（個別のNASのルールを前に置く）を説明。評価ロジック2に `nas_id` / `allowed_ssids` の一致条件を追記。5 の `PolicyRule.NasID` のコメントを `pkg/model` の更新後のコメントに合わせて修正 |
 | r16 | 2026-10-04 | auth-server の trace_id 引き継ぎの実装修正の反映: 3.D の UUID の「生成」を、State属性の無い初回 Access-Request で生成し、以降は UUID 形式の State属性の値をそのまま Trace ID とする（ハンドラー層のログを含め1回の認証で同じ値。UUID 形式でない State は新規 UUID）記述に修正、4章の処理フロー 1. の Trace ID の「生成」を「決定」に修正 |
+| r17 | 2026-10-04 | acct-server の重複 Interim の event_id 分離の実装修正の反映（3.G）: 重複・順序異常の検出ロジックで、直前と同一の `interim:{input}:{output}` の Interim（重複）に出力する event_id を `ACCT_DUPLICATE_START` から `ACCT_DUPLICATE_INTERIM` に変更（重複 Start は従来どおり `ACCT_DUPLICATE_START`） |

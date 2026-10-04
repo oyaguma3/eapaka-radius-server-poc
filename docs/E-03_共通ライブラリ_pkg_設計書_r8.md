@@ -1,4 +1,4 @@
-# E-03 共通ライブラリ(pkg)設計書 (r7)
+# E-03 共通ライブラリ(pkg)設計書 (r8)
 
 ## 1. 概要
 
@@ -28,7 +28,7 @@
 |-------------|---------|
 | D-01 ミニPC版設計仕様書 (r9) | リポジトリ構成、パッケージ利用マップ |
 | D-02 Valkeyデータ設計仕様書 (r15) | Go構造体定義、ストア層変換方式 |
-| D-04 ログ仕様設計書 (r23) | IMSIマスキング仕様（User-Nameのマスク規則を含む）、ログレベル設定（LOG_LEVEL） |
+| D-04 ログ仕様設計書 (r25) | IMSIマスキング仕様（User-Nameのマスク規則を含む）、ログレベル設定（LOG_LEVEL） |
 | D-06 エラーハンドリング詳細設計書 (r6) | エラー定義パターン |
 | D-11 Vector API詳細設計書 (r6) | RFC 7807 Problem Details |
 | E-02 コーディング規約（簡易版）(r1) | pkg配置方針、命名規則 |
@@ -750,7 +750,7 @@ func (m *Masker) IsEnabled() bool
 func ParseLevel(s string) slog.Level
 ```
 
-**利用箇所:** Auth Server / Vector Gateway / Vector API のロガー初期化（`apps/auth-server/main.go`、`apps/vector-gateway/main.go` と `apps/vector-api/main.go` の `initLogger`。いずれも `slog.HandlerOptions.Level` に `logging.ParseLevel(cfg.LogLevel)` を渡す）。このため3コンポーネントとも `LOG_LEVEL` の解釈（大文字小文字を区別しない、前後の空白を無視、`WARNING` も `WARN`、未知の値は `INFO`）は同じである（D-04 §4.6）。Acct Server は `LOG_LEVEL` に対応しておらず使っていない。
+**利用箇所:** Auth Server / Acct Server / Vector Gateway / Vector API のロガー初期化（`apps/auth-server/main.go`、`apps/acct-server/main.go`、`apps/vector-gateway/main.go` と `apps/vector-api/main.go` の `initLogger`。いずれも `slog.HandlerOptions.Level` に `logging.ParseLevel(cfg.LogLevel)` を渡す）。このため4コンポーネントとも `LOG_LEVEL` の解釈（大文字小文字を区別しない、前後の空白を無視、`WARNING` も `WARN`、未知の値は `INFO`）は同じである（D-04 §4.6）。
 
 ### 5.7 使用例
 
@@ -1260,3 +1260,4 @@ func (h *GatewayHandler) handleBackendError(c *gin.Context, err error) {
 | r5 | 2026-10-04 | ポリシーの `nas_id` で `"*"` を任意の NAS に一致させた Auth Server の実装修正に伴う pkg/model のコメント更新の反映: §6.4 の `PolicyRule` を実装（`NasID` / `AllowedSSIDs` / `VlanID` / `SessionTimeout`、`NasID` のコメント「`"*"` 単独で任意のNASに一致。それ以外は完全一致」）に合わせて修正（r2 で記載した `SSID` / `Action` / `TimeMin` / `TimeMax` は実装に存在しないため削除）。PolicyRule JSONサンプルを実装の形式に修正し、評価仕様は D-02 セクション2.C を参照する旨を追記。関連ドキュメントの D-02 参照版数を更新（r11→r15） |
 | r6 | 2026-10-04 | auth-server の LOG_LEVEL 対応に伴う pkg/logging の公開API追加の反映: §5.6 ログレベル変換を新設し `ParseLevel()`（`pkg/logging/level.go`。DEBUG / INFO / WARN（WARNING）/ ERROR を大文字小文字を区別せず変換、前後の空白を除去、未知の値・空文字は INFO）と利用箇所（Auth Server のロガー初期化。Vector Gateway / Vector API は未使用）を追加、旧 §5.6 使用例を §5.7 に繰り下げてロガー初期化の例を追加、§2.1 ディレクトリ構造に `level.go`、§2.2 パッケージ一覧・§5.1 責務に `ParseLevel()` / ログレベル変換を追加。§1.3 参照版数更新（D-04 r20→r23） |
 | r7 | 2026-10-04 | vector-api / vector-gateway のログレベル変換を `pkg/logging.ParseLevel` に統一した実装修正の反映: §5.6 の利用箇所に Vector Gateway / Vector API（各 `main.go` の `initLogger`）を追加し、「Vector Gateway / Vector API は独自に変換しており本関数を使っていない」旨の記述を削除（3コンポーネントで `LOG_LEVEL` の解釈が同じになった。`WARNING` も `WARN`） |
+| r8 | 2026-10-04 | acct-server の LOG_LEVEL 対応の実装修正の反映: §5.6 の `ParseLevel` の利用箇所に Acct Server（`apps/acct-server/main.go` のロガー初期化）を追加して4コンポーネントとし、「Acct Server は LOG_LEVEL に対応しておらず使っていない」を削除。§1.3 関連ドキュメントの D-04 の版数を r25 に更新 |
