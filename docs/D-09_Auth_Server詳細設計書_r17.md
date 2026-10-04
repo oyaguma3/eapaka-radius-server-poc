@@ -1,4 +1,4 @@
-﻿# D-09 Auth Server詳細設計書 (r16)
+﻿# D-09 Auth Server詳細設計書 (r17)
 
 ## ■セクション1: 概要
 
@@ -26,9 +26,9 @@
 | D-01 | ミニPC版設計仕様書 (r16) | システム構成、パッケージ利用マップ |
 | D-02 | Valkeyデータ設計仕様書 (r15) | データ構造、キー設計、Go構造体 |
 | D-03 | Vector-API/ステートマシン設計書 (r6) | API仕様、EAP状態遷移、Vector Gateway経由接続 |
-| D-04 | ログ仕様設計書 (r30) | event_id定義、ログフォーマット、IMSIマスキング |
+| D-04 | ログ仕様設計書 (r31) | event_id定義、ログフォーマット、IMSIマスキング |
 | D-05 | Acct Server詳細設計書 (r5) | セッション管理連携、Accounting処理 |
-| D-06 | エラーハンドリング詳細設計書 (r16) | エラー分類、タイムアウト、Circuit Breaker |
+| D-06 | エラーハンドリング詳細設計書 (r17) | エラー分類、タイムアウト、Circuit Breaker |
 | D-07 | TUI管理ツール詳細設計書 (r3) | 管理用TUIアプリケーション |
 | D-08 | インフラ設定・運用設計書 (r19) | Docker Compose構成、環境変数 |
 | D-12 | Vector Gateway詳細設計書 (r5) | Gateway API仕様、ルーティング、IMSIマスキング |
@@ -344,7 +344,7 @@ ENTRYPOINT ["/usr/local/bin/auth-server"]
 
 | ファイル | 責務 | 主要関数・型 |
 |---------|------|-------------|
-| `server.go` | PacketServer初期化・起動・シャットダウン | `Server`, `New()`, `ListenAndServe()`, `Shutdown()` |
+| `server.go` | PacketServer初期化（`InsecureSkipVerify` / `ErrorLog` の設定。§4.3）・起動・シャットダウン | `Server`, `New()`, `ListenAndServe()`, `Shutdown()` |
 | `handler.go` | `radius.Handler`実装、Code判定、処理振り分け | `Handler`, `ServeRADIUS()` |
 | `secret.go` | `radius.SecretSource`実装、Valkey/フォールバック解決 | `SecretSource`, `RADIUSSecret()` |
 
@@ -959,14 +959,15 @@ PacketServer
     │       ├── ヒット → その secret
     │       └── ミス → 環境変数 RADIUS_SECRET（フォールバック。空ならパケット破棄）
     │
-    ├── パケットパース・検証（内部処理）
+    ├── パケットのデコード（内部処理。失敗時は RADIUS_LIB_ERR を出して破棄）
+    │       ※ パケットの認証は行わない（InsecureSkipVerify: true。ハンドラーで検証）
     │
-    └── Handler.ServeRADIUS() 呼び出し
+    └── Handler.ServeRADIUS() 呼び出し（Codeを問わず全パケット）
             ├── Trace ID決定（State属性のUUIDを引き継ぎ、なければ生成）
             ├── Code判定・処理振り分け
             │       ├── Code=1  → EAP認証処理
             │       ├── Code=12 → Status-Server処理
-            │       └── その他  → ログ出力、破棄
+            │       └── その他  → ログ出力（PKT_UNKNOWN_CODE）、破棄
             └── 応答パケット返却
 ```
 
@@ -984,6 +985,42 @@ PacketServer
 - `radius.Handler` インターフェースを実装
 - `ServeRADIUS(w ResponseWriter, r *Request)` メソッドで処理
 - Trace IDの決定（`resolveTraceID`）は `ServeRADIUS` の冒頭で実施（§5.3）
+
+#### PacketServerの設定（パケットの認証とライブラリのログ）
+
+`internal/server/server.go` の `NewServer` は、`PacketServer` に次の2つを設定する（Acct Server も同じ。D-10 §4.1）。
+
+| フィールド | 設定値 | 目的 |
+|-----------|--------|------|
+| `InsecureSkipVerify` | `true` | パケットの認証（Request Authenticator / Message-Authenticator）をライブラリでは行わず、ハンドラーで検証する。失敗したら送信元IP付きのログを出して破棄する |
+| `ErrorLog` | `logging.NewRADIUSLibraryLogger()` | ライブラリが出すエラー（パケットのデコード失敗など）を、JSONのslog（`event_id`=`RADIUS_LIB_ERR`）に流す（E-03 共通ライブラリ（pkg）設計書） |
+
+```go
+// NewServer は新しいServerを生成する
+func NewServer(addr string, handler radius.Handler, secretSource radius.SecretSource) *Server {
+	return &Server{
+		ps: &radius.PacketServer{
+			Addr:         addr,
+			SecretSource: secretSource,
+			Handler:      handler,
+			// パケットの認証（Request Authenticator / Message-Authenticator）はハンドラーで検証し、
+			// 失敗したら送信元IP付きのログを出して破棄する。ライブラリにも検証させると、
+			// Accounting-Request などのシークレット不一致や未知のCodeのパケットが、
+			// ハンドラーに届く前に素のテキストのログだけで捨てられてしまうため、ライブラリの検証は使わない
+			InsecureSkipVerify: true,
+			// ライブラリが出すエラー（パケットの解析失敗など）を JSON の slog に流す
+			ErrorLog: logging.NewRADIUSLibraryLogger(),
+		},
+	}
+}
+```
+
+**方針と理由：**
+
+- `layeh.com/radius` の `PacketServer` は、`InsecureSkipVerify` が `false`（既定）だと、ハンドラーに渡す前に Accounting-Request / Disconnect-Request / CoA-Request の Request Authenticator を検証し、一致しなければ捨てる。また、Access-Request / Status-Server / Accounting-Request / Disconnect-Request / CoA-Request 以外の Code（未知の Code）も検証失敗として捨てる。このとき出るのは標準の `log` パッケージによるテキスト1行（`radius: packet validation failed; bad secret`）だけで、`event_id` も送信元IPもない。
+- Auth Server が処理する Access-Request / Status-Server は、もともとライブラリが検証しない（Message-Authenticator はハンドラーで検証する。`PKT_MA_INVALID` / `RADIUS_STATUS_AUTH_FAIL`）。ライブラリの検証をやめたことで、それ以外の Code のパケット（Accounting-Request、未知の Code 等）も共有シークレットの正否にかかわらずハンドラーに届き、`PKT_UNKNOWN_CODE`（直前の `PKT_RECV` に `src_ip`）を出して応答しない。
+- 検証に失敗したパケットを処理せず応答しない点は従来と変わらない（セキュリティ上の扱いは同じ）。変わるのは、ログが送信元IP付きのJSONになる点である。
+- ライブラリは、共有シークレットの解決（SecretSource）→ パケットのデコード の順に処理する。シークレットが決まらずに捨てたとき（`radius: empty secret returned from secret source`）は、SecretSource が `RADIUS_NO_SECRET` 等を送信元の情報付きで出しているため、`RADIUS_LIB_ERR` は DEBUG とする。デコード失敗（`radius: unable to parse packet: ...`）・受信エラー（`radius: could not read packet: ...`）は WARN とする。ライブラリのメッセージには送信元IPが含まれないため、`RADIUS_LIB_ERR` は `src_ip` を持たない（D-04 §3.1.3）。
 
 #### シャットダウン
 
@@ -1025,6 +1062,7 @@ PacketServer
 | -------------- | ------------------ | --------------- | ---------------------- |
 | サーバー起動   | -                  | INFO            | リッスンアドレス       |
 | Secret解決失敗 | `RADIUS_NO_SECRET` | WARN            | 送信元IP               |
+| ライブラリのエラー（デコード失敗等） | `RADIUS_LIB_ERR` | WARN（Secret不明で破棄したときは DEBUG） | ライブラリのメッセージ（`error`） |
 | パケット受信   | `PKT_RECV`         | INFO            | 送信元IP、RADIUSコード |
 | 処理完了       | `AUTH_SUCCESS` 等  | INFO/WARN/ERROR | 結果に応じたevent_id   |
 
@@ -1032,7 +1070,7 @@ PacketServer
 
 ```
 server/
-├── server.go       ← layeh.com/radius (PacketServer)
+├── server.go       ← layeh.com/radius (PacketServer), pkg/logging (NewRADIUSLibraryLogger)
 ├── secret.go       ← store/ (SecretSource実装)
 └── handler.go      ← radius/, eap/, policy/, session/, vector/
 ```
@@ -1120,7 +1158,9 @@ type Handler interface {
 | --------------- | ---- | ------------------ |
 | `AccessRequest` | 1    | EAP認証処理へ      |
 | `StatusServer`  | 12   | Status-Server応答  |
-| その他          | -    | ログ出力、応答なし |
+| その他          | -    | ログ出力（`PKT_UNKNOWN_CODE`）、応答なし |
+
+> **注記:** ライブラリはパケットの認証を行わない（`InsecureSkipVerify: true`。§4.3）ため、Accounting-Request や未知の Code のパケットも、Request Authenticator の正否にかかわらずハンドラーに届き「その他」として扱われる。
 
 **Trace IDの決定・伝搬：**
 
@@ -1326,7 +1366,8 @@ PacketServer
     │       ├── フォールバック判定
     │       └── Secret 返却（nil時はパケット破棄）
     │
-    ├── パケットパース・検証（PacketServer内部）
+    ├── パケットのデコード（PacketServer内部。失敗時は RADIUS_LIB_ERR、破棄）
+    │       ※ パケットの認証は行わない（InsecureSkipVerify: true）
     │
     └── Handler.ServeRADIUS()
             │
@@ -1351,8 +1392,8 @@ PacketServer
             │       │       │
             │       │       └── Access-Accept 応答
             │       │
-            │       └── [その他]
-            │               └── ログ出力、応答なし
+            │       └── [その他]（Accounting-Request、未知のCode等）
+            │               └── ログ出力（PKT_UNKNOWN_CODE）、応答なし
             │
             └── 応答パケット送信
 ```
@@ -1364,7 +1405,7 @@ PacketServer
 | RADIUSパケット受信（全Code）  | `PKT_RECV`            | INFO   | `trace_id`, `src_ip`, `code` |
 | Message-Authenticator検証失敗 | `PKT_MA_INVALID`      | WARN   | `trace_id`, `src_ip`    |
 | EAP-Message属性なし           | `PKT_NO_EAP`          | WARN   | `trace_id`, `src_ip`    |
-| 未知のCode                    | `PKT_UNKNOWN_CODE`    | WARN   | `trace_id`, `code`      |
+| Access-Request / Status-Server 以外のCode（Accounting-Request、未知のCode等） | `PKT_UNKNOWN_CODE`    | WARN   | `trace_id`, `code`（送信元IPは直前の `PKT_RECV` の `src_ip`） |
 | パケットドロップ              | `PKT_DROP`            | INFO   | `trace_id`              |
 | 応答送信失敗                  | `PKT_SEND_ERR`        | ERROR  | `trace_id`, `error`     |
 | Status-Server応答             | `RADIUS_STATUS_OK`    | INFO   | `trace_id`, `src_ip`    |
@@ -1372,8 +1413,10 @@ PacketServer
 | 送信元IP抽出不可              | `RADIUS_IP_EXTRACT_ERR` | WARN | `remote_addr`           |
 | Secret解決時のValkeyエラー    | `RADIUS_SECRET_ERR`   | WARN   | `src_ip`, `error`       |
 | Secret不明                    | `RADIUS_NO_SECRET`    | WARN   | `src_ip`                |
+| ライブラリのエラー（デコード失敗・受信エラー） | `RADIUS_LIB_ERR` | WARN | `error`（`src_ip` なし） |
+| ライブラリのエラー（Secret不明で破棄） | `RADIUS_LIB_ERR` | DEBUG | `error` |
 
-> **注記:** RADIUSパケットのデコード失敗は `layeh.com/radius` が処理し、ログは出力しない。EAPエンジン（`eap.EAPProcessor` の `Process(ctx, req) *Result`）はerrorを返さず、内部エラーをログに記録してReject結果に変換するため、ハンドラーにエンジンエラーのログはない（§10.5.6）。
+> **注記:** RADIUSパケットのデコード失敗は `layeh.com/radius` が処理し、`RADIUS_LIB_ERR`（`ErrorLog` 経由。§4.3）を出してパケットを破棄する（ハンドラーには届かない）。EAPエンジン（`eap.EAPProcessor` の `Process(ctx, req) *Result`）はerrorを返さず、内部エラーをログに記録してReject結果に変換するため、ハンドラーにエンジンエラーのログはない（§10.5.6）。
 
 ### 5.11 実装時の注意点まとめ
 
@@ -4634,3 +4677,4 @@ Auth Server内で直接参照する外部パッケージの型：
 | r14 | 2026-10-04 | trace_id の認証単位での引き継ぎ・LOG_LEVEL 対応の実装修正の反映: §4.2 / §4.3 / §4.4 / §5.3 / §5.9 の Trace ID 生成を「決定（`resolveTraceID`）」に修正し、§5.3 に決め方（2回目以降の Access-Request は UUID 形式の State 属性をそのまま Trace ID とし、State がない・UUID 形式でない場合と Access-Request 以外は新規 UUID を生成）と、ハンドラー層のログ・エンジンのログ・X-Trace-ID が1回の認証を通して同じ値になる旨を追記、§7.7.2 に再同期時も同じ Trace ID である旨を追記。EAPエンジンの `Process` が error を返さなくなったことに合わせ、§5.10 から `EAP_ENGINE_ERR` を削除して注記を追加、§10.5.6 に `eap.EAPProcessor`（`Process(ctx, req) *Result`）を追加、§2 の `types.go` / `engine.go` の主要型と §10.7.4 / §10.7.11 のエクスポート一覧を実装（`Request` / `Result` / `Action` / `EAPProcessor`、`EngineImpl` / `NewEngine()`）に合わせて修正。§3.1 環境変数一覧・§3.2 / §10.3.1 設定構造体に `LOG_LEVEL`（既定 INFO）を追加、§3.3 初期化シーケンス・§3.4 main.go のロガー初期化を `pkg/logging.ParseLevel(cfg.LogLevel)` と起動ログの `log_level` に修正、§3.8 にログレベルの説明を追加、§7.10 の `vector api success`（DEBUG）が `LOG_LEVEL=DEBUG` 時のみ出力される旨を追記。§1.3 参照版数更新（D-04 r20→r23） |
 | r15 | 2026-10-04 | vector-gateway のバックエンド向けタイムアウトを auth-server より短くした実装修正の反映: §7.2 タイムアウト設定に、Vector Gateway 側のタイムアウト（既定 3秒）を `VectorRequestTimeout`（5秒）より短くしている理由と、Vector Gateway の定数 `authServerVectorTimeout` を `VectorRequestTimeout` と同じ値に保つ必要がある旨の注記を追加（Auth Server の実装は変更なし） |
 | r16 | 2026-10-04 | インターネット公開（VPS 等）に向けた安全面の修正の反映: §3.1 環境変数一覧の `RADIUS_SECRET` を任意（既定は空）・空を推奨とし、フォールバックの意味（登録のない送信元IPのパケットも受け付ける。インターネットに公開するサーバーでは空にする。空なら `RADIUS_NO_SECRET` で破棄）の注記を追加。§3.2 / §10.3.1 設定構造体に `RadiusSecret` が任意で空ならフォールバック無効である旨を注記。§3.3 初期化シーケンス・§3.4 main.go に起動ログの `radius_secret_fallback` と `warnFallbackSecret`（`RADIUS_SECRET` 設定時の WARN）を追加。§3.8 起動ログの例に `radius_secret_fallback` を追加し、WARN の msg と公開サーバーでの確認方法を追記。§4.2 / §4.3 / §5.2 Shared Secret解決にフォールバックが空のときの動作（パケット破棄）とフォールバックの注意を追記。§1.3 参照版数更新（D-01 r10→r16、D-04 r23→r30、D-06 r8→r16、D-08 r14→r19） |
+| r17 | 2026-10-04 | RADIUSパケットの検証をハンドラーに一本化し、RADIUSライブラリのログをJSONにした実装修正の反映: §4.3 に「PacketServerの設定（パケットの認証とライブラリのログ）」を新設（`InsecureSkipVerify: true` と `ErrorLog: logging.NewRADIUSLibraryLogger()`、`NewServer` のコード、方針と理由）。§4.2 / §5.9 の処理フローのライブラリ内部処理を「デコード（失敗時は `RADIUS_LIB_ERR`）、認証は行わない」に修正し、その他のCodeを `PKT_UNKNOWN_CODE` と明記。§5.3 Code別処理に、Accounting-Request や未知のCodeもハンドラーに届く旨の注記を追加。§4.6 / §5.10 のログ表に `RADIUS_LIB_ERR`（WARN、Secret不明で破棄したときはDEBUG）を追加し、`PKT_UNKNOWN_CODE` の条件を修正、§5.10 注記の「デコード失敗はログを出力しない」を修正。§2.7 / §4.7 の `server.go` の記述を更新。§1.3 参照版数更新（D-04 r30→r31、D-06 r16→r17） |
