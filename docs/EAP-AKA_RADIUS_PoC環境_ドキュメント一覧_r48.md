@@ -1,4 +1,4 @@
-# EAP-AKA RADIUS PoC環境 ドキュメント一覧 (r47)
+# EAP-AKA RADIUS PoC環境 ドキュメント一覧 (r48)
 
 **作成日:** 2025-12-30
 **最終更新:** 2026-10-04
@@ -65,7 +65,7 @@
 |-----|---------------|------|---------|------|
 | T-01 | テスト戦略書 | r4 | 2026-10-04 | テストレベル定義、テスト範囲、テスト環境、モック戦略、テストデータ戦略、品質ゲート、テストベクターモード運用注記、.env例の環境変数名（RADIUS_SECRET）を実装に整合、テストベクターモードの動作を実装に整合（加入者登録必須） |
 | T-02 | 単体テスト仕様書 | r14 | 2026-10-04 | コンポーネント別テストケース（全1,314件）、モック戦略、テストデータ設計、Vector Gateway接続方式01のテストケース追加、IMSIマスク漏れ修正のテストケース追加、acct-server Interimシーケンス判定修正のテストケース反映、vector-apiテストベクターモードの加入者登録必須化のテストケース反映、auth-serverポリシーnas_idワイルドカード（`*`）のテストケース追加、auth-server trace_id引き継ぎ・LOG_LEVEL対応のテストケース反映（ParseLevel・TraceIDFromState等を追加、EngineErrorを欠番）、vector-apiログ整理のテストケース反映（LogAttributes・LogsTraceIDAndMaskedIMSI等を追加、ErrInvalidIMSIの検証を欠番）、acct-server の重複Interim分離・SYS_ERR削除・LOG_LEVEL対応のテストケース反映（TestLoadLogLevel を追加、ProcessorError を欠番）、admin-tui 監査ログの件数・検索IMSI記録修正のテストケース反映（LogExport_ZeroRecords・LogCreate_NoCounts を追加、LogSearch を4件のテーブル駆動に）、vector-gateway のタイムアウト既定値変更・起動時 WARN のテストケース反映（TestWarnBackendConfig_Timeouts を追加）、admin-tui のキー配線漏れ修正のテストケース追加（`internal/ui` 配下に初のテスト。一覧の Enter / F6、IsTextInput、入力ダイアログの Esc、Session List のソート、Session Search の検索結果の並べ替え。新カテゴリ UT-TUI-UI）、SQN競合制御のテストケース追加（store の CompareAndSetSQN、競合時のやり直し・409・再同期、同一IMSIへの並行リクエスト）、Admin TUI の加入者編集（Update / UpdateWithSQN、編集・新規作成画面）のテストケース追加 |
-| T-03 | 結合テスト仕様書 | r13 | 2026-10-04 | コンポーネント間連携テスト、シナリオテスト、テストベクターモード検証、Valkeyデータ整合性検証、Secret体系明確化、SQN再同期手順改訂、IMSI 003専用config追加、障害系PASS条件修正、identityオーバーライドIMSIのSQNリセット運用補足、Dockerイメージ再ビルド注意事項追加、eapaka_testパス参照をsupplement配下に一般化、INT-ACCT-ON-017/INT-ACCT-OFF-018追加、aka-only-server結合シナリオ追加、INT-GW-PLMN-010の未実装IDを02に変更、テストベクターモードでも加入者登録必須（テストIMSI帯でも未登録は404）・事前準備での登録を明記、INT-006 の期待結果に Auth Server の全パケットの PKT_RECV も同一 trace_id であることを追記、INT-006-03 に Vector API の SQN_RESYNC も同一 trace_id であることを追記、G6 と INT-005 の ACCT_DUPLICATE_INTERIM、INT-FAULT の Acct Server ベストエフォート動作を現行ハンドラー（SYS_ERR なし）に整合、INT-FAULT-001（Vector API停止）の PASS 条件を VECTOR_API_ERR（502）のみに（vector-gateway のタイムアウト 3s） |
+| T-03 | 結合テスト仕様書 | r14 | 2026-10-04 | コンポーネント間連携テスト、シナリオテスト、テストベクターモード検証、Valkeyデータ整合性検証、Secret体系明確化、SQN再同期手順改訂、IMSI 003専用config追加、障害系PASS条件修正、identityオーバーライドIMSIのSQNリセット運用補足、Dockerイメージ再ビルド注意事項追加、eapaka_testパス参照をsupplement配下に一般化、INT-ACCT-ON-017/INT-ACCT-OFF-018追加、aka-only-server結合シナリオ追加、INT-GW-PLMN-010の未実装IDを02に変更、テストベクターモードでも加入者登録必須（テストIMSI帯でも未登録は404）・事前準備での登録を明記、INT-006 の期待結果に Auth Server の全パケットの PKT_RECV も同一 trace_id であることを追記、INT-006-03 に Vector API の SQN_RESYNC も同一 trace_id であることを追記、G6 と INT-005 の ACCT_DUPLICATE_INTERIM、INT-FAULT の Acct Server ベストエフォート動作を現行ハンドラー（SYS_ERR なし）に整合、INT-FAULT-001（Vector API停止）の PASS 条件を VECTOR_API_ERR（502）のみに（vector-gateway のタイムアウト 3s）、G3（SQN再同期）の手順を訂正（サーバー側 SQN を IND=7 の `FF9BB4D0B587` にして確実に再同期を起こす、PASS 条件に再同期ログ） |
 | T-04 | E2Eテスト仕様書 | r8 | 2026-10-04 | 実機テスト（SIM/AP）3件、擬似E2E（eapaka_test）5件、実機異常系3件の計11シナリオ、SQN管理注意事項追加、Valkey再起動後データ残存確認追加、eapaka_testパス参照をsupplement配下に一般化、aka-only-server接続E2Eシナリオと実施結果（2026-10-04）追加、テストベクターモードのT-03との差分（加入者登録必須）を実装に整合、認可ポリシーのnas_id `*`（任意のNASに一致）を反映、E2E-002 のログ確認に ACCT_DUPLICATE_INTERIM を追加 |
 
 ### 3.2 未作成
@@ -116,7 +116,7 @@
 
 | No. | ドキュメント名 | 版数 | 最終更新 | 内容 |
 |-----|---------------|------|---------|------|
-| S-01 | eapaka_test利用ノウハウ | r3 | 2026-10-04 | eapaka_testの設定・テストケース解説、SQN管理、configとIMSIの使い分け、トラブルシューティング、プロジェクト固有の運用知見。設定ファイル5件・テストケース15件をsupplement配下に格納、aka-only-server相手の再同期確認時のSQN（IND）注意、テストベクターモードでも加入者登録必須（未登録IMSIは404）を反映 |
+| S-01 | eapaka_test利用ノウハウ | r4 | 2026-10-04 | eapaka_testの設定・テストケース解説、SQN管理、configとIMSIの使い分け、トラブルシューティング、プロジェクト固有の運用知見。設定ファイル5件・テストケース15件をsupplement配下に格納、aka-only-server相手の再同期確認時のSQN（IND）注意、テストベクターモードでも加入者登録必須（未登録IMSIは404）を反映、内部 Vector API 相手の再同期の条件（サーバー側 SQN を `sqn_initial_hex` と同じ IND の少し古い値にする） |
 
 > **格納場所**: `docs/supplement/eapaka_test/` 配下
 
@@ -152,7 +152,7 @@
     │                                                                   │
     ├─ T-01: テスト戦略書 (r4) ✓                                        │
     ├─ T-02: 単体テスト仕様書 (r14) ✓                                    │
-    ├─ T-03: 結合テスト仕様書 (r13) ✓                                   │
+    ├─ T-03: 結合テスト仕様書 (r14) ✓                                   │
     └─ T-04: E2Eテスト仕様書 (r8) ✓                                    │
                     │                                                   │
                     ▼                                                   │
@@ -200,7 +200,7 @@
 | 順序 | ドキュメントID | ドキュメント名 | ステータス |
 |-----|---------------|---------------|-----------|
 | 11 | T-02 | 単体テスト仕様書 | **完了 (r14)** |
-| 12 | T-03 | 結合テスト仕様書 | **完了 (r13)** |
+| 12 | T-03 | 結合テスト仕様書 | **完了 (r14)** |
 | 13 | T-04 | E2Eテスト仕様書 | **完了 (r8)** |
 
 ### フェーズ4: 構築・デプロイ
@@ -289,3 +289,4 @@
 | r45 | 2026-10-04 | Admin TUI のキー配線漏れを修正した実装修正（加入者・クライアント・ポリシーの一覧で Enter を押すと編集画面（ポリシーは Policy Details）を開く、? でヘルプを開く（入力欄にフォーカスがあるときは文字として入力）、加入者・クライアント・ポリシー・セッションの一覧で F6 でもフィルタを開く、Session List の s キーのソートの向きを項目ごとに固定（Start Time は新しい順 ▼、NAS IP と IMSI は昇順 ▲。同値は開始時刻の新しい順→UUID順。以前は常に降順）、フィルタ・IMSI検索の入力ダイアログを Esc でも閉じられる）に伴う版数更新: O-01(r4→r5)、D-05(r10→r11)、D-07(r9→r10)、T-02(r11→r12)、O-02(r2→r3)。O-01 は r4 で入れた「? ではヘルプを開かない」「一覧の Enter では開かない・F6 は使わない」「ソートはいずれも降順」の記述を修正後の動作に改めた。D-07 は Session List のソート仕様を元設計の2モード（start_time 降順 / IMSI 昇順、i / t キー）から現行の3項目の切り替えに改めた。T-02 は全1,269件（ID付与済み1,272件）に更新（admin-tui に ui パッケージのテスト15件を追加）。あわせて、キー操作・ボタン名・ダイアログの記述を実装（main.go、internal/ui）に合わせて修正: D-05（終了確認・変更破棄確認・上書き確認ダイアログを削除、Default allow 警告を Continue / Cancel に、ポリシーフォームの Ctrl+S を削除、ページ切替を ← / → から PgUp / PgDn に、フィルタ・ステータスバー・起動時の接続エラーの記述を修正）、D-07（Session Search へは Session List の Enter、Session Search の PgUp / PgDn・r / F5 を削除し Esc / q は Session List へ、ページ切替を PgUp / PgDn に、Statistics・Session Search のエラー表示を修正）、O-01（ルール編集ダイアログは Esc で閉じない、確認ダイアログの Esc）、O-02（Ctrl+S を削除、Default allow 警告を Continue / Cancel に、F6 はフォーム→ルールリストの一方向、ルール追加ダイアログのタイトル・初期値、マウス操作は無効、バリデーション規則を実装に整合）。また、Session Search の検索結果を開始時刻の新しい順（同じなら UUID 順）に並べる実装修正（画面側の sortByStartTimeDesc。テスト TestSortByStartTimeDesc を追加）に合わせて D-07 の処理フロー・コード例を修正し、D-07 の PoC 対象外・将来課題の「NAS-IP / Client-IP フィルタ」を Session List のフィルタの実装に合わせて修正、D-07 §4 / §8.1 の統計キャッシュを実装（件数4項目、要求時更新の1分キャッシュ）に合わせて修正。さらに D-07 の設計初期のまま残っていたコード片・型名（§5.6 の Acct-ID 切り詰め、§5.8.4 の fetchAllSessions、§8.2 / §8.3 の SessionListItem・SessionDetailSummary 等、§9 の KB 表記のフォーマット関数）を実装（SessionStore.List、model.Session、SessionListScreen / SessionDetailScreen、internal/format）に差し替え、Session List の Duration の色・Traffic の表記（1.2K 形式）を D-07 / O-01 で実装に合わせた |
 | r46 | 2026-10-04 | Vector API の SQN競合制御（CAS）の実装（D-11 r9 までの WATCH/MULTI の設計に代えて、`sub:{IMSI}` の `sqn` が読んだ値と一致するときだけ書き換える Lua スクリプト（`CompareAndSetSQN`）を store に新設し `UpdateSQN` を削除。競合したら 1〜10ms 待って加入者の読み出しからやり直し、最大3回試行して3回とも競合したら 409（`SQN_CONFLICT_ERR`）、やり直すたびに `SQN_CONFLICT_RETRY`（`attempt`）。再同期のやり直しで SQN_HE が SQN_MS 以上なら同期済みとみなして +32。ベクター生成と `SQN_RESYNC` は SQN の書き換えに成功した後。lnav フォーマットに `attempt`）に伴う版数更新: D-02(r17→r18)、D-03(r7→r8)、D-04(r27→r28)、D-06(r14→r15)、D-11(r9→r10)、B-02(r14→r15)、O-03(r7→r8)、O-05(r15→r16)、T-02(r12→r13。テストケース 1,269→1,299件)。Admin TUI の加入者編集が `sqn` を上書きする制約は別途対応予定と各文書に記載 |
 | r47 | 2026-10-04 | Admin TUI の加入者編集が SQN を巻き戻す問題の修正（SQN を変えずに保存したときは `sqn` を書き換えない（ki / opc / amf だけを更新）。SQN を変えたときは、編集開始時に読んだ値と一致するときだけ書き換え、編集中に認証で SQN が進んでいたら何も保存せずエラーを表示。存在チェックと更新を1つの Lua スクリプトで行い、途中で削除された加入者の一部フィールドだけの Hash を作らない。SQN の変更判定を大文字小文字を区別しない比較にし、Vector API が小文字で書き戻した SQN で誤って警告が出て古い値で上書きされていた問題も修正）に伴う版数更新: D-02(r18→r19)、D-04(r28→r29)、D-05(r11→r12)、D-11(r10→r11)、O-01(r5→r6)、O-03(r8→r9)、O-05(r16→r17)、T-02(r13→r14。テストケース 1,299→1,314件)。PR #23（r46）で「別PRで対応予定」とした制約を解消済みに改めた |
+| r48 | 2026-10-04 | T-03 G3（SQN再同期）の手順の誤りの訂正（サーバー側 SQN を `000000000001`（IND=1）にすると eapaka_test の別の IND スロットと比較されて再同期が起きずに Accept になっていたため、`sqn_initial_hex` `FF9BB4D0B607` と同じ IND=7 の少し古い値 `FF9BB4D0B587` に変更。2026-10-04 に simwifi 実機で、修正前は再同期が起きないこと・修正後は INT-003-01/02 とも再同期が起きて Accept となることを確認）に伴う版数更新: T-03(r13→r14)、S-01(r3→r4) |
