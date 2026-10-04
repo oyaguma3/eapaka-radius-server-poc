@@ -24,14 +24,20 @@ type AccountingProcessor interface {
 type DuplicateDetector interface {
 	// CheckAndMarkStart はStartの重複をチェックし、未登録ならマークする
 	CheckAndMarkStart(ctx context.Context, acctSessionID string) (isDuplicate bool, err error)
-	// CheckInterimDuplicate はInterimの重複をチェックする
-	CheckInterimDuplicate(ctx context.Context, acctSessionID string, input, output uint32) (isDuplicate bool, err error)
+	// CheckInterim はInterimの重複と順序異常を判定し、重複でなければ受信値を記録する
+	CheckInterim(ctx context.Context, acctSessionID string, input, output uint32) (InterimCheckResult, error)
 	// CheckStopDuplicate はStopの重複をチェックする
 	CheckStopDuplicate(ctx context.Context, acctSessionID string) (isDuplicate bool, err error)
-	// HasSeenStart はStartを受信済みかチェックする
-	HasSeenStart(ctx context.Context, acctSessionID string) (bool, error)
-	// MarkAsStart はStartとしてマークする
-	MarkAsStart(ctx context.Context, acctSessionID string) error
 	// MarkAsStopped はStopとしてマークする
 	MarkAsStopped(ctx context.Context, acctSessionID string) error
+}
+
+// InterimCheckResult はInterim受信時の重複・順序判定の結果
+type InterimCheckResult struct {
+	// Duplicate は直前に受信したInterimと同一値（重複）かどうか
+	Duplicate bool
+	// SequenceReason は順序異常の理由（正常なら空）
+	//   - "no_start_received": Start（およびInterim）を受信していない
+	//   - "interim_after_stop": Stop受信後のInterim
+	SequenceReason string
 }
