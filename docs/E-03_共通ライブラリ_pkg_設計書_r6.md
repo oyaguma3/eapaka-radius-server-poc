@@ -1,4 +1,4 @@
-# E-03 共通ライブラリ(pkg)設計書 (r5)
+# E-03 共通ライブラリ(pkg)設計書 (r6)
 
 ## 1. 概要
 
@@ -28,7 +28,7 @@
 |-------------|---------|
 | D-01 ミニPC版設計仕様書 (r9) | リポジトリ構成、パッケージ利用マップ |
 | D-02 Valkeyデータ設計仕様書 (r15) | Go構造体定義、ストア層変換方式 |
-| D-04 ログ仕様設計書 (r20) | IMSIマスキング仕様（User-Nameのマスク規則を含む） |
+| D-04 ログ仕様設計書 (r23) | IMSIマスキング仕様（User-Nameのマスク規則を含む）、ログレベル設定（LOG_LEVEL） |
 | D-06 エラーハンドリング詳細設計書 (r6) | エラー定義パターン |
 | D-11 Vector API詳細設計書 (r6) | RFC 7807 Problem Details |
 | E-02 コーディング規約（簡易版）(r1) | pkg配置方針、命名規則 |
@@ -81,7 +81,8 @@ pkg/
 │   └── options.go            # 接続オプション・BuildAddr
 ├── logging/                  # ログユーティリティ
 │   ├── masking.go            # IMSI・User-Nameマスキング・Masker構造体
-│   └── fields.go             # フィールド定数・CommonFields・AuthLogFields
+│   ├── fields.go             # フィールド定数・CommonFields・AuthLogFields
+│   └── level.go              # LOG_LEVEL文字列→slog.Level変換（ParseLevel）
 ├── model/                    # 共通データ構造体
 │   ├── subscriber.go         # Subscriber構造体・NewSubscriber
 │   ├── client.go             # RadiusClient構造体・NewRadiusClient
@@ -98,7 +99,7 @@ pkg/
 |-----------|------|---------------|
 | `apperr` | 共通エラー定義 | センチネルエラー、カスタムエラー型（ValidationError, BackendError, ValkeyError, EAPIdentityError） |
 | `valkey` | Valkeyクライアント初期化 | `NewClient()`, `Options`, `DefaultOptions()`, `TUIOptions()`, `BuildAddr()` |
-| `logging` | ログユーティリティ | `MaskIMSI()`, `MaskUserName()`, `Masker`, `CommonFields`, `AuthLogFields()`, フィールド定数8種 |
+| `logging` | ログユーティリティ | `MaskIMSI()`, `MaskUserName()`, `Masker`, `CommonFields`, `AuthLogFields()`, `ParseLevel()`, フィールド定数8種 |
 | `model` | 共通データ構造体 | `Subscriber`, `RadiusClient`, `Session`, `EAPContext`, `Policy`, `PolicyRule`, `Stage` |
 | `httputil` | HTTPユーティリティ | `ProblemDetail`, `ContentType`, `WriteError()`, `AbortWithError()` |
 
@@ -623,6 +624,7 @@ func main() {
 - IMSIマスキング処理の提供（User-Name（EAP Identity）に含まれるIMSIのマスキングを含む）
 - 共通ログフィールドの定義
 - マスキング設定の一元管理
+- ログレベル設定（環境変数 `LOG_LEVEL`）の文字列から `slog.Level` への変換
 
 ### 5.2 フィールド名定数
 
@@ -732,7 +734,25 @@ func (m *Masker) IsEnabled() bool
 
 **利用箇所（User-Name）:** Auth Serverの `EAP_UNSUPPORTED_TYPE` / `EAP_IDENTITY_INVALID` の `user_name` 属性、Acct Serverの課金ログでUser-NameからIMSIを抽出できない場合の `imsi` 属性（D-04 §4.5）。
 
-### 5.6 使用例
+### 5.6 ログレベル変換
+
+**ファイル: `pkg/logging/level.go`**
+
+```go
+// ParseLevel はLOG_LEVEL環境変数の値（DEBUG / INFO / WARN / ERROR、大文字小文字を区別しない）を
+// slog.Levelに変換する。未知の値や空文字はINFOとして扱う。
+//
+//   - 前後の空白を除去してから大文字に変換して比較する
+//   - "DEBUG" → slog.LevelDebug
+//   - "WARN" / "WARNING" → slog.LevelWarn
+//   - "ERROR" → slog.LevelError
+//   - それ以外（"INFO"、空文字、未知の値） → slog.LevelInfo
+func ParseLevel(s string) slog.Level
+```
+
+**利用箇所:** Auth Serverのロガー初期化（`apps/auth-server/main.go`。`slog.HandlerOptions.Level` に `logging.ParseLevel(cfg.LogLevel)` を渡す）。Vector Gateway / Vector API は各 `main.go` の `initLogger` で独自に変換しており、現時点では本関数を使っていない（D-04 §4.6）。
+
+### 5.7 使用例
 
 ```go
 // マスキング有効での認証ログ出力
@@ -755,6 +775,12 @@ slog.Warn("非対応のIdentity種別",
     "trace_id", traceID,
     "user_name", logging.MaskUserName(userName, cfg.LogMaskIMSI), // 1440101********0@realm
 )
+
+// ロガー初期化（LOG_LEVEL の値で出力レベルを設定。既定 INFO）
+logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+    Level: logging.ParseLevel(cfg.LogLevel),
+})).With("app", "auth-server")
+slog.SetDefault(logger)
 ```
 
 ---
@@ -1232,3 +1258,4 @@ func (h *GatewayHandler) handleBackendError(c *gin.Context, err error) {
 | r3 | 2026-03-01 | 実装・現行ドキュメントとの整合: IMSIマスキング仕様をD-04 r17準拠に修正（先頭6桁+末尾1桁）、関連ドキュメント版数更新 |
 | r4 | 2026-10-04 | ログのIMSIマスク漏れ修正に伴う pkg/logging の公開API追加の反映: §5.5に `MaskUserName()`（User-Name（EAP Identity）の "@" より前をマスクし realm を残す）と `Masker.UserName()` を追加し利用箇所を追記、§5.6に使用例を追加、§2.1 / §2.2 / §5.1を更新。§1.3関連ドキュメント参照版数更新（D-04 r17→r20） |
 | r5 | 2026-10-04 | ポリシーの `nas_id` で `"*"` を任意の NAS に一致させた Auth Server の実装修正に伴う pkg/model のコメント更新の反映: §6.4 の `PolicyRule` を実装（`NasID` / `AllowedSSIDs` / `VlanID` / `SessionTimeout`、`NasID` のコメント「`"*"` 単独で任意のNASに一致。それ以外は完全一致」）に合わせて修正（r2 で記載した `SSID` / `Action` / `TimeMin` / `TimeMax` は実装に存在しないため削除）。PolicyRule JSONサンプルを実装の形式に修正し、評価仕様は D-02 セクション2.C を参照する旨を追記。関連ドキュメントの D-02 参照版数を更新（r11→r15） |
+| r6 | 2026-10-04 | auth-server の LOG_LEVEL 対応に伴う pkg/logging の公開API追加の反映: §5.6 ログレベル変換を新設し `ParseLevel()`（`pkg/logging/level.go`。DEBUG / INFO / WARN（WARNING）/ ERROR を大文字小文字を区別せず変換、前後の空白を除去、未知の値・空文字は INFO）と利用箇所（Auth Server のロガー初期化。Vector Gateway / Vector API は未使用）を追加、旧 §5.6 使用例を §5.7 に繰り下げてロガー初期化の例を追加、§2.1 ディレクトリ構造に `level.go`、§2.2 パッケージ一覧・§5.1 責務に `ParseLevel()` / ログレベル変換を追加。§1.3 参照版数更新（D-04 r20→r23） |
