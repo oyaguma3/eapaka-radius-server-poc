@@ -127,37 +127,58 @@ func (s *SessionListScreen) GetSelectedUUID() string {
 	return pageItems[idx].UUID
 }
 
-// ToggleSort はソートを切り替える。
+// ToggleSort はソート項目を Start Time → NAS IP → IMSI の順に切り替える。
+// 向きは項目ごとに固定で、Start Time は新しい順（降順）、NAS IP と IMSI は昇順。
 func (s *SessionListScreen) ToggleSort() {
-	s.sortField = (s.sortField + 1) % 3
+	s.sortField = nextSortField(s.sortField)
+	s.sortDesc = s.sortField == SortByStartTime
 	s.sortSessions()
 	s.render()
 }
 
-func (s *SessionListScreen) sortSessions() {
-	switch s.sortField {
-	case SortByIMSI:
-		sort.Slice(s.sessions, func(i, j int) bool {
-			if s.sortDesc {
-				return s.sessions[i].IMSI > s.sessions[j].IMSI
-			}
-			return s.sessions[i].IMSI < s.sessions[j].IMSI
-		})
+// nextSortField は次のソート項目を返す（Start Time → NAS IP → IMSI → Start Time）。
+func nextSortField(f SortField) SortField {
+	switch f {
 	case SortByStartTime:
-		sort.Slice(s.sessions, func(i, j int) bool {
-			if s.sortDesc {
-				return s.sessions[i].StartTime > s.sessions[j].StartTime
-			}
-			return s.sessions[i].StartTime < s.sessions[j].StartTime
-		})
+		return SortByNasIP
 	case SortByNasIP:
-		sort.Slice(s.sessions, func(i, j int) bool {
-			if s.sortDesc {
-				return s.sessions[i].NasIP > s.sessions[j].NasIP
-			}
-			return s.sessions[i].NasIP < s.sessions[j].NasIP
-		})
+		return SortByIMSI
+	default:
+		return SortByStartTime
 	}
+}
+
+// sortSessions は現在のソート項目・向きで並べ替える。
+// 値が同じ場合は開始時刻の新しい順に並べ、さらに同じなら UUID 順にして表示順を安定させる。
+func (s *SessionListScreen) sortSessions() {
+	key := func(sess *model.Session) string {
+		switch s.sortField {
+		case SortByIMSI:
+			return sess.IMSI
+		case SortByNasIP:
+			return sess.NasIP
+		default:
+			return ""
+		}
+	}
+	sort.SliceStable(s.sessions, func(i, j int) bool {
+		a, b := s.sessions[i], s.sessions[j]
+		if s.sortField != SortByStartTime {
+			if ka, kb := key(a), key(b); ka != kb {
+				if s.sortDesc {
+					return ka > kb
+				}
+				return ka < kb
+			}
+		}
+		if a.StartTime != b.StartTime {
+			if s.sortField == SortByStartTime && !s.sortDesc {
+				return a.StartTime < b.StartTime
+			}
+			return a.StartTime > b.StartTime
+		}
+		return a.UUID < b.UUID
+	})
 }
 
 func (s *SessionListScreen) getFilteredSessions() []*model.Session {
@@ -292,6 +313,9 @@ func (s *SessionListScreen) setupKeyBindings() {
 					}
 				})
 			}()
+			return nil
+		case tcell.KeyF6:
+			s.showFilterDialog()
 			return nil
 		case tcell.KeyPgUp:
 			if s.pagination.PrevPage() {

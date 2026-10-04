@@ -176,6 +176,12 @@ func NewInputDialog(title, label, defaultValue string, onSubmit func(value strin
 			onCancel()
 		}
 	})
+	// Esc でも Cancel と同じくダイアログを閉じる
+	form.SetCancelFunc(func() {
+		if onCancel != nil {
+			onCancel()
+		}
+	})
 
 	form.SetBorder(true).
 		SetTitle(" " + title + " ").
