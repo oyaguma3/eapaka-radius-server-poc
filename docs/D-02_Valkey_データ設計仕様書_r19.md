@@ -1,4 +1,4 @@
-# D-02 Valkey データ設計仕様書 (r17)
+# D-02 Valkey データ設計仕様書 (r19)
 
 ## 1. 全体方針
 
@@ -37,21 +37,67 @@ Vector APIがEAP-AKA認証ベクターを計算するための鍵情報。
 | `ki`         | Yes      | 秘密鍵 (K)             | Hex 32桁                              |
 | `opc`        | Yes      | オペレータコード (OPc) | Hex 32桁                              |
 | `amf`        | Yes      | AMF                    | Hex 4桁 (例: 8000)                    |
-| `sqn`        | Yes      | シーケンス番号 (SQN)   | Hex 12桁。**Vector APIが認証ごとに更新する**（下記） |
+| `sqn`        | Yes      | シーケンス番号 (SQN)   | Hex 12桁。**Vector APIが認証ごとに更新する**（Lua スクリプトによる比較・置き換え（CAS）。下記）。Admin TUI の加入者編集は SQN を変更したときだけ書き換える（編集開始時の値との比較・置き換え。下記） |
 | `created_at` | -        | 作成日時               | RFC3339（UTC）。Admin TUIが作成時に未指定なら現在時刻を設定。更新時は変更しない。Vector APIは参照しない |
 
-> **Hex表記:** Admin TUI は大文字・小文字どちらの16進数も受け付け、入力どおりに保存する。Vector API が書き戻す `sqn` は常に12桁の**小文字** hex（`%012x`）となる。
+> **Hex表記:** Admin TUI は大文字・小文字どちらの16進数も受け付け、**大文字に正規化して**保存する（加入者の作成・編集、CSVインポートとも。`internal/validation` の `NormalizeSubscriberInput`）。Vector API が書き戻す `sqn` は常に12桁の**小文字** hex（`%012x`）となる。このため、Admin TUI の加入者編集では SQN の変更有無を大文字小文字を区別せずに判定する（下記）。
 
 > **SQN更新方式（現行実装）:**
-> - Vector API は `HGETALL sub:{IMSI}` で Ki/OPc/AMF/SQN を取得し、新SQNを算出してベクターを計算した後、`HSET sub:{IMSI} sqn {新SQN}` で書き戻す
+> - Vector API は `HGETALL sub:{IMSI}` で Ki/OPc/AMF/SQN を取得し、新SQNを算出した後、Lua スクリプトで `sqn` を**比較・置き換え（CAS: Compare-And-Swap）**する。ベクターはこの書き換えに成功した後に計算する（書き換えに失敗した場合はベクターを計算しない）
 > - 新SQNの算出:
 >   - 通常: 現SQN + 32（SQN = SEQ(43bit) || IND(5bit) のうち SEQ を +1、IND は不変）
 >   - 再同期: AUTS から取り出した SQN_MS を検証（SQN_MS > SQN_HE かつ差が 2^28 以下）し、SQN_MS + 32
 >   - 48bit 上限を超える場合は `SQN_OVERFLOW_ERR`（HTTP 500）
 > - `sqn` は12桁でなければ解析エラーとなる
-> - 書き戻しに失敗した場合は HTTP 500（`VALKEY_CONN_ERR`）とし、ベクターは返さない（テストベクターモードも同じ）
+> - 比較・置き換え（`apps/vector-api/internal/store/subscriber.go` の `CompareAndSetSQN`。`EVALSHA` で実行し、スクリプトが未ロードの場合は go-redis が `EVAL` にフォールバックする）:
+>
+>   ```lua
+>   local cur = redis.call('HGET', KEYS[1], 'sqn')
+>   if cur == false or cur ~= ARGV[1] then
+>     return 0
+>   end
+>   redis.call('HSET', KEYS[1], 'sqn', ARGV[2])
+>   return 1
+>   ```
+>
+>   - `KEYS[1]` は `sub:{IMSI}`、`ARGV[1]` は `HGETALL` で読んだ `sqn` の値（読んだ文字列をそのまま渡す。Admin TUI が大文字で保存した値も正規化せずに比較する）、`ARGV[2]` は新SQN（12桁小文字hex）
+>   - `sqn` が読んだ値と一致するときだけ書き換えて 1 を返す。一致しない（他のリクエストが先に書き換えた）ときは書き換えずに 0 を返す
+>   - キーまたは `sqn` フィールドが無い（読み出し後に加入者が削除された）ときも 0 を返し、キーを新たに作成しない（やり直しの `HGETALL` で未登録となり HTTP 404）
+>   - 比較するのは `sqn` フィールドだけで、Admin TUI が `ki` / `opc` / `amf` だけを変更しても競合とはしない
+> - 競合（0）した場合は、1〜10ms のランダムな時間待ってから `HGETALL` からやり直す（最大3回試行）。やり直すたびに `SQN_CONFLICT_RETRY`（WARN）を出力する。3回とも競合した場合、または待っている間にリクエストの期限切れ・キャンセルとなった場合は HTTP 409 Conflict（`SQN_CONFLICT_ERR`）を返し、ベクターは返さない（D-04 §3.4.7）
+> - 再同期のやり直しで、読み直した SQN_HE が SQN_MS 以上の場合は、別のリクエスト（同じ再同期の再送など）が先に同期済みとみなし、デルタ検証をせずに通常どおり SQN_HE + 32 とする（端末の SQN_MS より大きいため受け入れられる）
+> - 書き換え時の Valkey エラーは HTTP 500（`VALKEY_CONN_ERR`）とし、ベクターは返さない（テストベクターモードも同じ）。アプリ独自のリトライは行わない（go-redis 既定の自動リトライのみ）
+> - 書き換え後のベクター計算に失敗した場合は HTTP 500（`CALC_ERR` "Milenage calculation error"）となり、`sqn` は進んだままとなる（SQN が飛ぶだけで、端末は SEQ が増えていれば受け入れるため問題ない）
 > - `sub:{IMSI}` が存在しない場合は HTTP 404（`CALC_ERR` "subscriber not found"）を返し、キーは作成しない（テストベクターモードも同じ）
-> - **WATCH/MULTI による CAS・リトライ・HTTP 409 は実装していない**（単純な HSET による後勝ち）。同一IMSIへの並行リクエストでは SQN が同値になる・飛ぶ可能性がある（PoCの制約）。D-11「Vector API詳細設計書」セクション13.6 の CAS 方式は現行実装には未反映
+> - これにより、同一IMSIへの並行リクエストでも、発行するベクターの SQN は IMSI ごとに一意で単調に増加する（同値・巻き戻りを起こさない）。SQN が飛ぶ（使われない値が生じる）ことは許容する
+> - 経緯: D-11 r9 までは WATCH/MULTI による CAS で設計していたが、r10 で Lua による `sqn` フィールドの比較・置き換えに変更して実装した（本書 r17 までは、単純な HSET による後勝ちの書き戻しと記載していた）。詳細は D-11「Vector API詳細設計書」セクション7.5・13.6 を参照
+>
+> **Admin TUI からの書き込み（加入者編集）:**
+> - Admin TUI の加入者編集（`apps/admin-tui/internal/store/subscriber.go`）は、1つの Lua スクリプト（`updateSubscriberScript`。`EVALSHA` で実行）で、`sub:{IMSI}` の存在チェックと更新をまとめて行う
+>
+>   ```lua
+>   if redis.call('EXISTS', KEYS[1]) == 0 then
+>     return 0
+>   end
+>   if ARGV[4] == '1' then
+>     if redis.call('HGET', KEYS[1], 'sqn') ~= ARGV[5] then
+>       return -1
+>     end
+>     redis.call('HSET', KEYS[1], 'ki', ARGV[1], 'opc', ARGV[2], 'amf', ARGV[3], 'sqn', ARGV[6])
+>   else
+>     redis.call('HSET', KEYS[1], 'ki', ARGV[1], 'opc', ARGV[2], 'amf', ARGV[3])
+>   end
+>   return 1
+>   ```
+>
+>   - `KEYS[1]` は `sub:{IMSI}`、`ARGV[1]`〜`ARGV[3]` は Ki / OPc / AMF、`ARGV[4]` は `sqn` も更新するか（`1` / `0`）、`ARGV[5]` は編集開始時（編集画面を開いたとき）に読んだ `sqn`、`ARGV[6]` は新しい SQN（大文字に正規化した入力値）
+>   - 戻り値: 1 = 更新した、0 = 加入者が存在しない（`ErrSubscriberNotFound`。キーは作成しない）、-1 = `sqn` が編集開始時の値と一致しない（何も更新しない。`ErrSQNChanged`）
+>   - `created_at` は変更しない
+> - SQN を変更していない場合（大文字小文字の違いだけの場合を含む）は `Update` で **`ki` / `opc` / `amf` だけ**を更新し、`sqn` は書き換えない。編集画面を開いている間に認証で Vector API が進めた `sqn` はそのまま残る
+> - SQN を変更した場合は `UpdateWithSQN` で、現在の `sqn` が編集開始時に読んだ値と**一致するときだけ** `ki` / `opc` / `amf` と `sqn` を更新する。一致しない（編集中に認証で `sqn` が進んだ）ときは何も更新せず、Admin TUI はエラーを表示する（D-05 セクション4.2.2）
+> - これにより、Admin TUI の保存で `sqn` が巻き戻ることはない。Vector API 側から見ると、Admin TUI が `ki` / `opc` / `amf` だけを更新した場合は `sqn` が変わらないので競合にならず、Admin TUI が `sqn` を変更した場合は競合として検出してやり直す
+> - 例外として、Admin TUI の新規作成と CSV インポート（既存キーを上書きする）は、比較せずに `sqn` を入力値・CSV の値で書き込む
+> - 経緯: 本書 r18 までの Admin TUI は、SQN を変更していなくても `sqn` をフォームの値（編集開始時の値）で上書きしていた（`EXISTS` の後に `HSET`）ため、編集中に認証が進むと保存時に `sqn` が巻き戻る可能性があった。また `EXISTS` と `HSET` の間に加入者が削除されると、一部のフィールドだけの Hash が作られる可能性があった。r19 でいずれも解消した
 >
 > **テストベクターモード（`TEST_VECTOR_ENABLED=true`）時:**
 > - IMSI が `TEST_VECTOR_IMSI_PREFIX`（既定 `00101`）で始まる場合、Ki/OPc/AMF は Vector API 内蔵の固定値（3GPP TS 35.208 Test Set 1、AMF `b9b9`）を使い、`sub:{IMSI}` の `ki` / `opc` / `amf` は参照しない
@@ -388,6 +434,7 @@ Acct Serverが重複パケットおよび順序異常を検出するためのキ
 
 1. **管理機能:**
    - `sub:{IMSI}`, `client:{IP}`, `policy:{IMSI}` の CRUD操作（一覧は SCAN + パイプライン HGETALL、一括登録は TxPipeline）。
+   - `sub:{IMSI}` の編集は Lua スクリプトで存在チェックと更新をまとめて行い、`sqn` は SQN を変更したときだけ、編集開始時の値との比較・置き換えで書き換える（セクション2.A）。
 2. **モニタリング:**
    - セッション一覧: `sess:*` を SCAN して表示。
    - IMSI指定: `idx:user:{IMSI}` から `sess:{UUID}` を取得して表示（セクション3.F のクリーンアップを実施）。
@@ -552,8 +599,8 @@ type Subscriber struct {
 
 > **ストア層変換方式の補足:**
 > - Auth Server / Acct Server: `internal/store/convert.go` の `StructToMap` / `MapToStruct` が、上記のアプリ内構造体の `redis` タグをリフレクションで読み、`map[string]any` ⇔ 構造体を変換する（対応型: string, int/int64, uint8, bool）。bool は `1` / `0` として保存される。Acct Server の Start/Interim 更新は、更新対象フィールドだけの map を直接 HSET する
-> - Admin TUI: `pkg/model` の構造体（Policy は Admin TUI の `internal/model`、構造は `pkg/model` と同一）を使い、`internal/store` の関数（`subscriberFromHash`, `clientFromHash`, `mapToSession` 等）で Hash フィールドと手動で対応付ける。`model.Session.AcctSessionID` は Valkey の `acct_id` に対応する
-> - Vector API: `sub:{IMSI}` を HGETALL して手動で詰め替え、`sqn` のみ HSET で書き戻す
+> - Admin TUI: `pkg/model` の構造体（Policy は Admin TUI の `internal/model`、構造は `pkg/model` と同一）を使い、`internal/store` の関数（`subscriberFromHash`, `clientFromHash`, `mapToSession` 等）で Hash フィールドと手動で対応付ける。`model.Session.AcctSessionID` は Valkey の `acct_id` に対応する。`sub:{IMSI}` の編集（`Update` / `UpdateWithSQN`）は Lua スクリプト（`updateSubscriberScript`）で行う（セクション2.A）
+> - Vector API: `sub:{IMSI}` を HGETALL して手動で詰め替え、`sqn` のみ Lua スクリプト（`CompareAndSetSQN`）で比較・置き換えする（セクション2.A）
 > - `pkg/model` の構造体には redis タグを付与しない設計とし、Valkey 実装に依存させない
 
 ------
@@ -579,3 +626,5 @@ type Subscriber struct {
 | r15 | 2026-10-04 | ポリシーの `nas_id` で `"*"` を任意の NAS に一致させた Auth Server の実装修正の反映（2.C）: `nas_id` の説明を「`"*"` 単独は任意の NAS-Identifier（NAS-Identifier が無い場合を含む）に一致、部分一致は行わない、それ以外は完全一致（大文字小文字区別）」に改め、r12 で記載した「ワイルドカード不可」を削除。JSON 例に `nas_id` `"*"` のルールを追加し、評価順（個別のNASのルールを前に置く）を説明。評価ロジック2に `nas_id` / `allowed_ssids` の一致条件を追記。5 の `PolicyRule.NasID` のコメントを `pkg/model` の更新後のコメントに合わせて修正 |
 | r16 | 2026-10-04 | auth-server の trace_id 引き継ぎの実装修正の反映: 3.D の UUID の「生成」を、State属性の無い初回 Access-Request で生成し、以降は UUID 形式の State属性の値をそのまま Trace ID とする（ハンドラー層のログを含め1回の認証で同じ値。UUID 形式でない State は新規 UUID）記述に修正、4章の処理フロー 1. の Trace ID の「生成」を「決定」に修正 |
 | r17 | 2026-10-04 | acct-server の重複 Interim の event_id 分離の実装修正の反映（3.G）: 重複・順序異常の検出ロジックで、直前と同一の `interim:{input}:{output}` の Interim（重複）に出力する event_id を `ACCT_DUPLICATE_START` から `ACCT_DUPLICATE_INTERIM` に変更（重複 Start は従来どおり `ACCT_DUPLICATE_START`） |
+| r18 | 2026-10-04 | SQN競合制御の実装（Lua による `sqn` の比較・置き換え、競合時のやり直し最大3回、HTTP 409）の反映（2.A、5.2）: `sqn` フィールドの備考と「SQN更新方式（現行実装）」を、単純な HSET による後勝ちから、Lua スクリプト（`CompareAndSetSQN`。EVALSHA）で読んだ値と一致するときだけ書き換える方式に改めた。スクリプト本体、比較は `sqn` フィールドのみ・大文字小文字を正規化しない・キー不在時は作成しないこと、ベクター計算を書き換え成功後に行う順序、競合時のやり直し（1〜10ms待機、最大3回、`SQN_CONFLICT_RETRY`）と上限超過・期限切れ時の 409（`SQN_CONFLICT_ERR`）、再同期のやり直しで同期済みとみなす場合、書き換え後のベクター計算失敗時は SQN が進んだままになること、守る性質（IMSIごとに一意・単調増加）、WATCH/MULTI 設計からの経緯を記載。「WATCH/MULTI による CAS・リトライ・HTTP 409 は実装していない」の記述を削除。残っている制約として Admin TUI の加入者編集が `sqn` を上書きし巻き戻りうること（別PRで対応予定）を追記。5.2 ストア層変換方式の補足の Vector API の書き戻し方法を更新 |
+| r19 | 2026-10-04 | Admin TUI の加入者編集による `sqn` の上書き（巻き戻り）を解消した実装修正の反映（2.A、4、5.2）: r18 で「残っている制約」として記載した Admin TUI による `sqn` の上書きを解消済みとし、「Admin TUI からの書き込み（加入者編集）」に改めた。Lua スクリプト（`updateSubscriberScript`）で存在チェックと更新をまとめて行うこと、SQN を変更していないとき（大文字小文字の違いだけを含む）は `ki` / `opc` / `amf` だけを更新し `sqn` を書き換えないこと、変更したときは編集開始時の値と一致する場合だけ更新し一致しなければ何も更新しないこと、加入者が削除されていればキーを作らないこと、新規作成・CSVインポートは例外であることを記載。`sqn` フィールドの備考を補足。Hex表記の「入力どおりに保存する」を「大文字に正規化して保存する」に訂正。4 の Admin TUI のデータアクセスと 5.2 ストア層変換方式の補足に編集時の Lua スクリプトを追記 |

@@ -34,6 +34,17 @@ const testIMSI = "001010000000001"
 // normalIMSI は通常フロー用IMSI。
 const normalIMSI = "440101234567890"
 
+// resyncRequest は再同期情報付きのリクエストを返すヘルパー。
+func resyncRequest() *dto.VectorRequest {
+	return &dto.VectorRequest{
+		IMSI: normalIMSI,
+		ResyncInfo: &dto.ResyncInfo{
+			RAND: "0102030405060708090a0b0c0d0e0f10",
+			AUTS: "0102030405060708090a0b0c0d0e",
+		},
+	}
+}
+
 // dummyVector はテスト用固定ベクターを返すヘルパー。
 func dummyVector() *milenage.Vector {
 	return &milenage.Vector{
@@ -75,6 +86,7 @@ func setupUseCase(ctrl *gomock.Controller) (
 
 	cfg := &config.Config{}
 	uc := NewVectorUseCase(mockRepo, mockCalc, mockSQNMgr, mockSQNVal, mockResync, mockTestVP, cfg)
+	uc.waitBeforeRetry = func(context.Context) error { return nil }
 
 	return uc, mockRepo, mockCalc, mockSQNMgr, mockSQNVal, mockResync, mockTestVP
 }
@@ -106,7 +118,7 @@ func TestGenerateVector_TestMode(t *testing.T) {
 	mockSQNMgr.EXPECT().Increment(testDefaultSQN).Return(testDefaultSQN+0x20, nil)
 	mockCalc.EXPECT().GenerateVector(testKi, testOPc, testAMF, testDefaultSQN+0x20).Return(dummyVector(), nil)
 	mockSQNMgr.EXPECT().FormatHex(testDefaultSQN + 0x20).Return("ff9bb4d0b627")
-	mockRepo.EXPECT().UpdateSQN(gomock.Any(), testIMSI, "ff9bb4d0b627").Return(nil)
+	mockRepo.EXPECT().CompareAndSetSQN(gomock.Any(), testIMSI, "ff9bb4d0b607", "ff9bb4d0b627").Return(true, nil)
 
 	req := &dto.VectorRequest{IMSI: testIMSI}
 	resp, err := uc.GenerateVector(context.Background(), req)
@@ -170,7 +182,7 @@ func TestGenerateVector_TestMode_Resync(t *testing.T) {
 
 	mockCalc.EXPECT().GenerateVector(testKi, testOPc, testAMF, uint64(0x30)).Return(dummyVector(), nil)
 	mockSQNMgr.EXPECT().FormatHex(uint64(0x30)).Return("000000000030")
-	mockRepo.EXPECT().UpdateSQN(gomock.Any(), testIMSI, "000000000030").Return(nil)
+	mockRepo.EXPECT().CompareAndSetSQN(gomock.Any(), testIMSI, "ff9bb4d0b607", "000000000030").Return(true, nil)
 
 	req := &dto.VectorRequest{
 		IMSI: testIMSI,
@@ -200,6 +212,8 @@ func TestGenerateVector_TestMode_CalcError(t *testing.T) {
 	mockRepo.EXPECT().Get(gomock.Any(), testIMSI).Return(&store.Subscriber{IMSI: testIMSI, SQN: "ff9bb4d0b607"}, nil)
 	mockSQNMgr.EXPECT().ParseHex("ff9bb4d0b607").Return(testDefaultSQN, nil)
 	mockSQNMgr.EXPECT().Increment(testDefaultSQN).Return(testDefaultSQN+0x20, nil)
+	mockSQNMgr.EXPECT().FormatHex(testDefaultSQN + 0x20).Return("ff9bb4d0b627")
+	mockRepo.EXPECT().CompareAndSetSQN(gomock.Any(), testIMSI, "ff9bb4d0b607", "ff9bb4d0b627").Return(true, nil)
 	mockCalc.EXPECT().GenerateVector(testKi, testOPc, testAMF, testDefaultSQN+0x20).
 		Return(nil, errors.New("calculation failed"))
 
@@ -228,7 +242,7 @@ func TestGenerateVector_TestMode_SQNParseError(t *testing.T) {
 func TestGenerateVector_TestMode_SQNPersistError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	uc, mockRepo, mockCalc, mockSQNMgr, _, _, mockTestVP := setupUseCase(ctrl)
+	uc, mockRepo, _, mockSQNMgr, _, _, mockTestVP := setupUseCase(ctrl)
 
 	// SQN書き戻し失敗は通常モードと同じく接続エラー（ベクターは返さない）
 	mockTestVP.EXPECT().IsTestIMSI(testIMSI).Return(true)
@@ -236,9 +250,8 @@ func TestGenerateVector_TestMode_SQNPersistError(t *testing.T) {
 	mockRepo.EXPECT().Get(gomock.Any(), testIMSI).Return(&store.Subscriber{IMSI: testIMSI, SQN: "ff9bb4d0b607"}, nil)
 	mockSQNMgr.EXPECT().ParseHex("ff9bb4d0b607").Return(testDefaultSQN, nil)
 	mockSQNMgr.EXPECT().Increment(testDefaultSQN).Return(testDefaultSQN+0x20, nil)
-	mockCalc.EXPECT().GenerateVector(testKi, testOPc, testAMF, testDefaultSQN+0x20).Return(dummyVector(), nil)
 	mockSQNMgr.EXPECT().FormatHex(testDefaultSQN + 0x20).Return("ff9bb4d0b627")
-	mockRepo.EXPECT().UpdateSQN(gomock.Any(), testIMSI, "ff9bb4d0b627").Return(errors.New("persist failed"))
+	mockRepo.EXPECT().CompareAndSetSQN(gomock.Any(), testIMSI, "ff9bb4d0b607", "ff9bb4d0b627").Return(false, errors.New("persist failed"))
 
 	resp, err := uc.GenerateVector(context.Background(), &dto.VectorRequest{IMSI: testIMSI})
 	if !errors.Is(err, ErrValkeyConnection) {
@@ -282,7 +295,7 @@ func TestGenerateVector_TestMode_IgnoresSubscriberKeys(t *testing.T) {
 	mockSQNMgr.EXPECT().Increment(uint64(0x20)).Return(uint64(0x40), nil)
 	mockCalc.EXPECT().GenerateVector(testKi, testOPc, testAMF, uint64(0x40)).Return(dummyVector(), nil)
 	mockSQNMgr.EXPECT().FormatHex(uint64(0x40)).Return("000000000040")
-	mockRepo.EXPECT().UpdateSQN(gomock.Any(), testIMSI, "000000000040").Return(nil)
+	mockRepo.EXPECT().CompareAndSetSQN(gomock.Any(), testIMSI, validHexSQN, "000000000040").Return(true, nil)
 
 	if _, err := uc.GenerateVector(context.Background(), &dto.VectorRequest{IMSI: testIMSI}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -302,7 +315,7 @@ func TestGenerateVector_Success(t *testing.T) {
 	mockSQNMgr.EXPECT().Increment(uint64(0x20)).Return(uint64(0x40), nil)
 	mockCalc.EXPECT().GenerateVector(gomock.Any(), gomock.Any(), gomock.Any(), uint64(0x40)).Return(dummyVector(), nil)
 	mockSQNMgr.EXPECT().FormatHex(uint64(0x40)).Return("000000000040")
-	mockRepo.EXPECT().UpdateSQN(gomock.Any(), normalIMSI, "000000000040").Return(nil)
+	mockRepo.EXPECT().CompareAndSetSQN(gomock.Any(), normalIMSI, validHexSQN, "000000000040").Return(true, nil)
 
 	req := &dto.VectorRequest{IMSI: normalIMSI}
 	resp, err := uc.GenerateVector(context.Background(), req)
@@ -467,6 +480,8 @@ func TestGenerateVector_CalculatorError(t *testing.T) {
 	mockRepo.EXPECT().Get(gomock.Any(), normalIMSI).Return(validSubscriber(), nil)
 	mockSQNMgr.EXPECT().ParseHex(validHexSQN).Return(uint64(0x20), nil)
 	mockSQNMgr.EXPECT().Increment(uint64(0x20)).Return(uint64(0x40), nil)
+	mockSQNMgr.EXPECT().FormatHex(uint64(0x40)).Return("000000000040")
+	mockRepo.EXPECT().CompareAndSetSQN(gomock.Any(), normalIMSI, validHexSQN, "000000000040").Return(true, nil)
 	mockCalc.EXPECT().GenerateVector(gomock.Any(), gomock.Any(), gomock.Any(), uint64(0x40)).
 		Return(nil, errors.New("calculation failed"))
 
@@ -478,20 +493,19 @@ func TestGenerateVector_CalculatorError(t *testing.T) {
 	}
 }
 
-// --- TestGenerateVector_UpdateSQNError ---
+// --- TestGenerateVector_CompareAndSetSQNError ---
 
-func TestGenerateVector_UpdateSQNError(t *testing.T) {
+func TestGenerateVector_CompareAndSetSQNError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	uc, mockRepo, mockCalc, mockSQNMgr, _, _, mockTestVP := setupUseCase(ctrl)
+	uc, mockRepo, _, mockSQNMgr, _, _, mockTestVP := setupUseCase(ctrl)
 
 	mockTestVP.EXPECT().IsTestIMSI(normalIMSI).Return(false)
 	mockRepo.EXPECT().Get(gomock.Any(), normalIMSI).Return(validSubscriber(), nil)
 	mockSQNMgr.EXPECT().ParseHex(validHexSQN).Return(uint64(0x20), nil)
 	mockSQNMgr.EXPECT().Increment(uint64(0x20)).Return(uint64(0x40), nil)
-	mockCalc.EXPECT().GenerateVector(gomock.Any(), gomock.Any(), gomock.Any(), uint64(0x40)).Return(dummyVector(), nil)
 	mockSQNMgr.EXPECT().FormatHex(uint64(0x40)).Return("000000000040")
-	mockRepo.EXPECT().UpdateSQN(gomock.Any(), normalIMSI, "000000000040").Return(errors.New("update failed"))
+	mockRepo.EXPECT().CompareAndSetSQN(gomock.Any(), normalIMSI, validHexSQN, "000000000040").Return(false, errors.New("update failed"))
 
 	req := &dto.VectorRequest{IMSI: normalIMSI}
 	_, err := uc.GenerateVector(context.Background(), req)
@@ -524,13 +538,13 @@ func TestProcessResync_Success(t *testing.T) {
 	ki, _ := milenage.HexDecode(validHexKi)
 	opc, _ := milenage.HexDecode(validHexOPc)
 
-	newSQN, err := uc.processResync(context.Background(), testIMSI, ki, opc, resyncInfo, uint64(0x20))
+	res, err := uc.processResync(ki, opc, resyncInfo, uint64(0x20), false)
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if newSQN != uint64(0x30) {
-		t.Errorf("expected newSQN=0x30, got: 0x%x", newSQN)
+	if res.newSQN != uint64(0x30) || res.sqnMS != uint64(0x10) || res.alreadySynced {
+		t.Errorf("unexpected result: %+v", res)
 	}
 }
 
@@ -549,7 +563,7 @@ func TestProcessResync_InvalidRAND(t *testing.T) {
 	ki, _ := milenage.HexDecode(validHexKi)
 	opc, _ := milenage.HexDecode(validHexOPc)
 
-	_, err := uc.processResync(context.Background(), testIMSI, ki, opc, resyncInfo, uint64(0x20))
+	_, err := uc.processResync(ki, opc, resyncInfo, uint64(0x20), false)
 
 	if !errors.Is(err, ErrResyncInvalidFormat) {
 		t.Errorf("expected ErrResyncInvalidFormat, got: %v", err)
@@ -571,7 +585,7 @@ func TestProcessResync_InvalidAUTS(t *testing.T) {
 	ki, _ := milenage.HexDecode(validHexKi)
 	opc, _ := milenage.HexDecode(validHexOPc)
 
-	_, err := uc.processResync(context.Background(), testIMSI, ki, opc, resyncInfo, uint64(0x20))
+	_, err := uc.processResync(ki, opc, resyncInfo, uint64(0x20), false)
 
 	if !errors.Is(err, ErrResyncInvalidFormat) {
 		t.Errorf("expected ErrResyncInvalidFormat, got: %v", err)
@@ -594,7 +608,7 @@ func TestProcessResync_AUTSLengthError(t *testing.T) {
 	ki, _ := milenage.HexDecode(validHexKi)
 	opc, _ := milenage.HexDecode(validHexOPc)
 
-	_, err := uc.processResync(context.Background(), testIMSI, ki, opc, resyncInfo, uint64(0x20))
+	_, err := uc.processResync(ki, opc, resyncInfo, uint64(0x20), false)
 
 	if !errors.Is(err, ErrResyncInvalidFormat) {
 		t.Errorf("expected ErrResyncInvalidFormat, got: %v", err)
@@ -619,7 +633,7 @@ func TestProcessResync_ExtractSQNFailed(t *testing.T) {
 	ki, _ := milenage.HexDecode(validHexKi)
 	opc, _ := milenage.HexDecode(validHexOPc)
 
-	_, err := uc.processResync(context.Background(), testIMSI, ki, opc, resyncInfo, uint64(0x20))
+	_, err := uc.processResync(ki, opc, resyncInfo, uint64(0x20), false)
 
 	if !errors.Is(err, ErrResyncMACFailed) {
 		t.Errorf("expected ErrResyncMACFailed, got: %v", err)
@@ -644,7 +658,7 @@ func TestProcessResync_DeltaExceeded(t *testing.T) {
 	ki, _ := milenage.HexDecode(validHexKi)
 	opc, _ := milenage.HexDecode(validHexOPc)
 
-	_, err := uc.processResync(context.Background(), testIMSI, ki, opc, resyncInfo, uint64(0x20))
+	_, err := uc.processResync(ki, opc, resyncInfo, uint64(0x20), false)
 
 	if !errors.Is(err, ErrResyncDeltaExceeded) {
 		t.Errorf("expected ErrResyncDeltaExceeded, got: %v", err)
@@ -670,7 +684,7 @@ func TestProcessResync_ComputeResyncOverflow(t *testing.T) {
 	ki, _ := milenage.HexDecode(validHexKi)
 	opc, _ := milenage.HexDecode(validHexOPc)
 
-	_, err := uc.processResync(context.Background(), testIMSI, ki, opc, resyncInfo, uint64(0x20))
+	_, err := uc.processResync(ki, opc, resyncInfo, uint64(0x20), false)
 
 	if !errors.Is(err, ErrSQNOverflow) {
 		t.Errorf("expected ErrSQNOverflow, got: %v", err)
@@ -695,7 +709,7 @@ func TestGenerateVector_Resync_Success(t *testing.T) {
 
 	mockCalc.EXPECT().GenerateVector(gomock.Any(), gomock.Any(), gomock.Any(), uint64(0x30)).Return(dummyVector(), nil)
 	mockSQNMgr.EXPECT().FormatHex(uint64(0x30)).Return("000000000030")
-	mockRepo.EXPECT().UpdateSQN(gomock.Any(), normalIMSI, "000000000030").Return(nil)
+	mockRepo.EXPECT().CompareAndSetSQN(gomock.Any(), normalIMSI, validHexSQN, "000000000030").Return(true, nil)
 
 	req := &dto.VectorRequest{
 		IMSI: normalIMSI,
@@ -714,10 +728,10 @@ func TestGenerateVector_Resync_Success(t *testing.T) {
 	}
 }
 
-func TestProcessResync_LogsTraceIDAndMaskedIMSI(t *testing.T) {
+func TestGenerateVector_Resync_LogsTraceIDAndMaskedIMSI(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	uc, _, _, _, mockSQNVal, mockResync, _ := setupUseCase(ctrl)
+	uc, mockRepo, mockCalc, mockSQNMgr, mockSQNVal, mockResync, mockTestVP := setupUseCase(ctrl)
 	uc.cfg.LogMaskIMSI = true
 
 	var buf bytes.Buffer
@@ -725,27 +739,66 @@ func TestProcessResync_LogsTraceIDAndMaskedIMSI(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
 	defer slog.SetDefault(prev)
 
-	mockResync.EXPECT().ExtractSQN(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(uint64(0x10), nil)
-	mockSQNVal.EXPECT().ValidateResyncSQN(uint64(0x10), uint64(0x20)).Return(nil)
-	mockSQNVal.EXPECT().ComputeResyncSQN(uint64(0x10)).Return(uint64(0x30), nil)
+	mockTestVP.EXPECT().IsTestIMSI(normalIMSI).Return(false)
+	mockRepo.EXPECT().Get(gomock.Any(), normalIMSI).Return(validSubscriber(), nil)
+	mockSQNMgr.EXPECT().ParseHex(validHexSQN).Return(uint64(0x20), nil)
+	mockResync.EXPECT().ExtractSQN(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(uint64(0x40), nil)
+	mockSQNVal.EXPECT().ValidateResyncSQN(uint64(0x40), uint64(0x20)).Return(nil)
+	mockSQNVal.EXPECT().ComputeResyncSQN(uint64(0x40)).Return(uint64(0x60), nil)
+	mockSQNMgr.EXPECT().FormatHex(uint64(0x60)).Return("000000000060")
+	mockRepo.EXPECT().CompareAndSetSQN(gomock.Any(), normalIMSI, validHexSQN, "000000000060").Return(true, nil)
+	mockCalc.EXPECT().GenerateVector(gomock.Any(), gomock.Any(), gomock.Any(), uint64(0x60)).Return(dummyVector(), nil)
 
-	ki, _ := milenage.HexDecode(validHexKi)
-	opc, _ := milenage.HexDecode(validHexOPc)
 	ctx := ContextWithTraceID(context.Background(), "trace-resync")
-	resyncInfo := &dto.ResyncInfo{RAND: "0102030405060708090a0b0c0d0e0f10", AUTS: "0102030405060708090a0b0c0d0e"}
-
-	if _, err := uc.processResync(ctx, testIMSI, ki, opc, resyncInfo, uint64(0x20)); err != nil {
+	if _, err := uc.GenerateVector(ctx, resyncRequest()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	logs := buf.String()
-	for _, want := range []string{`"event_id":"SQN_RESYNC"`, `"trace_id":"trace-resync"`, `"imsi":"` + logging.MaskIMSI(testIMSI, true) + `"`} {
+	for _, want := range []string{
+		`"msg":"SQN resync successful"`,
+		`"event_id":"SQN_RESYNC"`,
+		`"trace_id":"trace-resync"`,
+		`"imsi":"` + logging.MaskIMSI(normalIMSI, true) + `"`,
+		`"sqn_old":"000000000020"`,
+		`"sqn_ms":"000000000040"`,
+		`"sqn_new":"000000000060"`,
+	} {
 		if !strings.Contains(logs, want) {
 			t.Errorf("log does not contain %s: %s", want, logs)
 		}
 	}
-	if strings.Contains(logs, testIMSI) {
+	if strings.Contains(logs, normalIMSI) {
 		t.Errorf("log contains unmasked IMSI: %s", logs)
+	}
+}
+
+func TestGenerateVector_Resync_NoLogWhenCASFails(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	uc, mockRepo, _, mockSQNMgr, mockSQNVal, mockResync, mockTestVP := setupUseCase(ctrl)
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	defer slog.SetDefault(prev)
+
+	// SQNの書き換えに失敗したときは、再同期のログを出さない
+	mockTestVP.EXPECT().IsTestIMSI(normalIMSI).Return(false)
+	mockRepo.EXPECT().Get(gomock.Any(), normalIMSI).Return(validSubscriber(), nil)
+	mockSQNMgr.EXPECT().ParseHex(validHexSQN).Return(uint64(0x20), nil)
+	mockResync.EXPECT().ExtractSQN(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(uint64(0x40), nil)
+	mockSQNVal.EXPECT().ValidateResyncSQN(uint64(0x40), uint64(0x20)).Return(nil)
+	mockSQNVal.EXPECT().ComputeResyncSQN(uint64(0x40)).Return(uint64(0x60), nil)
+	mockSQNMgr.EXPECT().FormatHex(uint64(0x60)).Return("000000000060")
+	mockRepo.EXPECT().CompareAndSetSQN(gomock.Any(), normalIMSI, validHexSQN, "000000000060").Return(false, errors.New("connection refused"))
+
+	_, err := uc.GenerateVector(context.Background(), resyncRequest())
+	if !errors.Is(err, ErrValkeyConnection) {
+		t.Fatalf("expected ErrValkeyConnection, got: %v", err)
+	}
+	if strings.Contains(buf.String(), "SQN_RESYNC") {
+		t.Errorf("SQN_RESYNC must not be logged: %s", buf.String())
 	}
 }
 
@@ -766,7 +819,7 @@ func TestProcessResync_DeltaExceeded_NoUseCaseLog(t *testing.T) {
 	opc, _ := milenage.HexDecode(validHexOPc)
 	resyncInfo := &dto.ResyncInfo{RAND: "0102030405060708090a0b0c0d0e0f10", AUTS: "0102030405060708090a0b0c0d0e"}
 
-	_, err := uc.processResync(context.Background(), testIMSI, ki, opc, resyncInfo, uint64(0x20))
+	_, err := uc.processResync(ki, opc, resyncInfo, uint64(0x20), false)
 	if !errors.Is(err, ErrResyncDeltaExceeded) {
 		t.Fatalf("expected ErrResyncDeltaExceeded, got: %v", err)
 	}

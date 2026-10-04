@@ -68,25 +68,62 @@ func (s *SubscriberStore) Create(ctx context.Context, sub *model.Subscriber) err
 	}).Err()
 }
 
-// Update は既存の加入者を更新する。
-func (s *SubscriberStore) Update(ctx context.Context, sub *model.Subscriber) error {
-	key := SubscriberKey(sub.IMSI)
+// updateSubscriberScript は既存の加入者の ki / opc / amf を更新する。
+// ARGV[4] が "1" のときは sqn も更新するが、現在の sqn が ARGV[5]（編集開始時に読んだ値）と
+// 一致するときに限る（認証で Vector API が sqn を進めていた場合に巻き戻さないため）。
+// 存在チェックと更新を1回で行うので、途中で加入者が削除されても一部のフィールドだけの Hash を作らない。
+// 戻り値: 1=更新した、0=加入者が存在しない、-1=sqn が期待値と一致しない（何も更新しない）
+var updateSubscriberScript = redis.NewScript(`
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  return 0
+end
+if ARGV[4] == '1' then
+  if redis.call('HGET', KEYS[1], 'sqn') ~= ARGV[5] then
+    return -1
+  end
+  redis.call('HSET', KEYS[1], 'ki', ARGV[1], 'opc', ARGV[2], 'amf', ARGV[3], 'sqn', ARGV[6])
+else
+  redis.call('HSET', KEYS[1], 'ki', ARGV[1], 'opc', ARGV[2], 'amf', ARGV[3])
+end
+return 1
+`)
 
-	// 存在チェック
-	exists, err := s.client.Exists(ctx, key).Result()
+// ErrSQNChanged は、編集中に SQN が他の処理（認証時の Vector API の更新など）で変わっていたことを表す。
+var ErrSQNChanged = errors.New("SQN was changed while editing")
+
+// Update は既存の加入者の Ki / OPc / AMF を更新する。SQN は書き換えない。
+// SQN は認証のたびに Vector API が進めるため、編集開始時の値で上書きすると巻き戻るおそれがある。
+func (s *SubscriberStore) Update(ctx context.Context, sub *model.Subscriber) error {
+	return s.update(ctx, sub, false, "")
+}
+
+// UpdateWithSQN は既存の加入者の Ki / OPc / AMF と SQN を更新する。
+// 現在の SQN が originalSQN（編集開始時に読んだ値）と一致するときだけ更新し、
+// 変わっていたときは何も更新せずに ErrSQNChanged を返す。
+func (s *SubscriberStore) UpdateWithSQN(ctx context.Context, sub *model.Subscriber, originalSQN string) error {
+	return s.update(ctx, sub, true, originalSQN)
+}
+
+func (s *SubscriberStore) update(ctx context.Context, sub *model.Subscriber, withSQN bool, originalSQN string) error {
+	updateSQN := "0"
+	if withSQN {
+		updateSQN = "1"
+	}
+
+	n, err := updateSubscriberScript.Run(ctx, s.client, []string{SubscriberKey(sub.IMSI)},
+		sub.Ki, sub.OPc, sub.AMF, updateSQN, originalSQN, sub.SQN).Int()
 	if err != nil {
 		return err
 	}
-	if exists == 0 {
-		return ErrSubscriberNotFound
-	}
 
-	return s.client.HSet(ctx, key, map[string]any{
-		"ki":  sub.Ki,
-		"opc": sub.OPc,
-		"amf": sub.AMF,
-		"sqn": sub.SQN,
-	}).Err()
+	switch n {
+	case 0:
+		return ErrSubscriberNotFound
+	case -1:
+		return ErrSQNChanged
+	default:
+		return nil
+	}
 }
 
 // Delete は加入者を削除する。

@@ -1,4 +1,4 @@
-# D-05 Admin TUI 詳細設計書【前半】(r11)
+# D-05 Admin TUI 詳細設計書【前半】(r12)
 
 ## 1. 概要
 
@@ -230,7 +230,7 @@ HSET "policy:440101234567890" "default" "deny" "rules" '[{"nas_id":"AP-OFFICE-01
 | 種別（ボーダータイトル） | トリガー | メッセージ | 選択肢 |
 |------|---------|-------------|--------|
 | **削除確認**（`Confirm Delete`） | 一覧で削除操作（`F4` / `d`） | `Are you sure you want to delete this subscriber?`<br>（空行）<br>`440101234567890`<br>（client / policy も同形式で、対象のIP・IMSIを表示） | `[Yes] [No]` |
-| **SQN変更警告**（`SQN Modification Warning`） | 加入者の編集で SQN を変更して保存 | §4.2.2 参照 | `[Continue] [Cancel]` |
+| **SQN変更警告**（`SQN Modification Warning`） | 加入者の編集で SQN を変更して保存（大文字小文字の違いだけは変更とみなさない） | §4.2.2 参照 | `[Continue] [Cancel]` |
 | **Default allow 警告**（`Default Allow Warning`） | ポリシーの Default を `allow` にして保存 | §3.5 参照 | `[Continue] [Cancel]` |
 | **接続エラー**（`Connection Error`） | 起動時の Valkey 接続失敗 | §7.2 参照 | `[Retry] [Exit]` |
 
@@ -589,11 +589,13 @@ tview.Form を centered() ヘルパーで画面中央にダイアログ表示す
 | Ki | Yes | 空 | 表示・編集可能 |
 | OPc | Yes | 空 | 表示・編集可能 |
 | AMF | Yes | `8000` | 表示・編集可能 |
-| SQN | Yes | `000000000000` | 表示・編集可能（警告表示付き）。空欄にすると保存時にエラー |
+| SQN | Yes | `000000000000` | 表示・編集可能（警告表示付き）。空欄にすると保存時にエラー。編集時に変更しなければ `sqn` は書き換えない（下記「編集の保存処理」） |
 
 ##### SQN手動編集時の警告
 
 編集時に SQN フィールドの値を変更して `Save` を押した際（入力値の検証に通った後）に以下の警告を表示する。`Continue` で保存し、`Cancel`（または `Esc`）で保存せずに Edit Subscriber に戻る。
+
+SQN を変更したかどうかは、正規化（§5.3。大文字化）した入力値と編集開始時（Edit Subscriber を開いたとき）に読んだ SQN を**大文字小文字を区別せずに**比較して判定する（`sqnChanged`。`strings.EqualFold`）。Vector API は `sqn` を小文字 hex で書き戻す（D-02 セクション2.A）ため、認証後の加入者を開いて SQN に触れずに保存しても、大文字化による違いだけでは変更とみなさず、警告を表示しない。
 
 tview.Modal を使用。ボーダータイトル「SQN Modification Warning」（Yellow）。Edit Subscriber ダイアログの上にオーバーレイ表示。
 
@@ -613,6 +615,28 @@ tview.Modal を使用。ボーダータイトル「SQN Modification Warning」�
         │                                                          │
         └──────────────────────────────────────────────────────────┘
 ```
+
+##### 編集の保存処理
+
+SQN の扱いを除き、編集の保存では Ki / OPc / AMF を更新する（IMSI は変更不可、`created_at` は変更しない）。ストア層（`internal/store/subscriber.go`）では、1つの Lua スクリプト（`updateSubscriberScript`）で `sub:{IMSI}` の存在チェックと更新をまとめて行う（D-02 セクション2.A）。
+
+| 条件 | ストア層の処理 | 結果 |
+|------|---------------|------|
+| SQN を変更していない（大文字小文字の違いだけを含む） | `Update`: `ki` / `opc` / `amf` だけを更新し、`sqn` は書き換えない | 成功。編集画面を開いている間に認証で Vector API が進めた SQN はそのまま残る |
+| SQN を変更した（警告で `Continue`） | `UpdateWithSQN`: 現在の `sqn` が編集開始時に読んだ値と一致するときだけ、`ki` / `opc` / `amf` と `sqn`（大文字に正規化した入力値）を更新する | 一致すれば成功。一致しない（編集中に認証で SQN が進んだ）ときは何も更新せず、エラー（`ErrSQNChanged`）とする |
+| 加入者が削除されていた | （どちらも）何も更新せず、キーも作成しない | エラー（`ErrSubscriberNotFound`） |
+
+保存に失敗した場合は、ステータスバーに以下のエラーを赤字で表示し（§3.6）、Edit Subscriber のまま一覧には戻らない。監査ログ（§8）は更新に成功した場合だけ記録する。
+
+| 原因 | ステータスバーの表示 |
+|------|---------------------|
+| 編集中に認証で SQN が変わっていた（SQN を変更した場合のみ） | `Failed to update: SQN was changed by authentication while editing. Reopen the subscriber and try again` |
+| 加入者が削除されていた | `Failed to update: subscriber not found` |
+| その他（Valkey エラー等） | `Failed to update: <エラー内容>` |
+
+SQN が変わっていたエラーの場合は、Edit Subscriber を閉じて開き直し（最新の SQN が表示される）、改めて SQN を入力して保存する。
+
+**注記：** r11 までの実装では、SQN を変更していなくても `sqn` をフォームの値（編集開始時の値）で上書きしていたため、編集画面を開いている間に認証が進むと保存時に SQN が巻き戻る可能性があった。また SQN の変更判定が大文字小文字を区別していたため、Vector API が小文字で書き戻した SQN の加入者では、SQN に触れなくても警告が表示され、`Continue` すると編集開始時の値で上書きしていた。r12 でいずれも解消した。
 
 ---
 
@@ -828,6 +852,7 @@ centered(form, width=60, height=15) で Policy Details の上にオーバーレ�
 | **入力中・フォーカス離脱時** | 検証しない（入力文字種の制限もない） |
 | **保存時（Save / ルールの OK）** | 正規化（§5.3）の後、§5.1 の全項目を検証。エラーがあれば保存せず、最初の1件をステータスバーに赤字表示 |
 | **登録時（新規作成）** | 同じキー（`sub:{IMSI}` / `client:{IP}` / `policy:{IMSI}`）が既に存在する場合はエラー（`Failed to create: subscriber already exists` 等） |
+| **更新時（加入者の編集）** | 加入者が削除されていた場合、および SQN を変更して保存したときに編集中に SQN が変わっていた場合はエラー（§4.2.2「編集の保存処理」） |
 
 ### 5.3 入力値の正規化
 
@@ -1148,3 +1173,4 @@ Admin TUIからの操作は、標準出力にJSON形式で記録する。
 | r9 | 2026-02-23 | 実装画面とのレイアウト整合性修正: スクリーンショット検証に基づくASCII図全面更新。§3.1 Ctrl+C→Ctrl+Q、F1/?ヘルプキー追加。§3.2 F2-F6ファンクションキー+代替文字キー追加。§4.1 メインメニューをtview.List形式に更新（ショートカット(1)-(q)括弧表記、ボーダータイトル追加）。§4.2.1 加入者一覧を6カラム+行頭"!"表示に更新（Ki/OPcマスク表示追加）。§4.2.2 フォームタイトルCreate/Edit Subscriber、SQN警告タイトルSQN Modification Warning。§4.3.1 クライアント一覧にSecret列マスク表示追加。§4.3.2 フォームタイトルCreate/Edit RADIUS Client。§4.4.1-4.4.2 ポリシーフォームタイトルPolicy Details、NAS ID/SSIDs/VLAN/Timeoutルール構造。§5.1 バリデーションルール表のRule部分をNAS ID/Allowed SSIDs/VLAN ID/Session Timeoutに更新。§6.5-6.6 インポート/エクスポート画面に状態遷移（Import Data→Import Completed、Export Data→Export Completed）追加。§7.2 起動エラーをConnection Errorモーダルに更新 |
 | r10 | 2026-10-04 | 実装との不一致の修正: §4.4.2 ルールの NAS ID を「NAS IPアドレスまたはNAS ID」から、RADIUS `NAS-Identifier` 属性と完全一致で比較する値（`*` 単独で任意のNASに一致。NAS IPアドレスとは比較しない。D-02 §2.C）に修正。§5.1 バリデーションルールを `internal/validation` の実装に合わせて全面修正（NAS ID 1-64文字→1〜253文字の印字可能ASCII・`*` ワイルドカード、SQN・Client Name を必須に、Name を英数字・ハイフン・アンダースコア、Vendor を0〜64文字の英数字・スペース・ハイフン、Allowed SSIDs の各SSID 1〜32文字、VLAN ID 0〜4094、Session Timeout 0〜86400、エラーメッセージを実際の `{Field}: {Message}` 形式に）。§5.2 バリデーションタイミングを保存時のみ（リアルタイムの文字種制限・フォーカス離脱時の検証はない）に、§5.3 を入力値の正規化（保存時に空白除去・Hexを大文字化）に修正。§4.2.2 SQN・§4.3.2 Name を必須に、§4.4.2 Rules を任意（0件可）、Default をドロップダウン選択に修正。§1.5・§6.4 のポリシールールの例を現行構造（`nas_id` / `allowed_ssids` / `vlan_id` / `session_timeout`）に修正。§6.2 インポート動作を実装（既存IMSIは上書き、エラーが1行でもあれば全体を中断）とエクスポートの出力ファイルパス（既定値なし）に修正。Admin TUI の監査ログに件数を記録する実装修正の反映: §8 に import / export の `record_count`（0件も出力、成功時のみ記録）を追記し、出力例の `time` を秒精度に修正 |
 | r11 | 2026-10-04 | Admin TUI のキー配線漏れを修正した実装修正の反映: §3.1 に、`F1` / `?` をグローバルの InputCapture で処理し、入力欄（`tview.InputField` / `tview.TextArea`。`ui.IsTextInput`）にフォーカスがあるときは `?` を文字として入力欄へ渡す旨の注記を追加。§3.2 に、加入者・クライアント・ポリシーの一覧の `Enter` で編集画面（ポリシーは Policy Details）を開くこと（`main.go` で各一覧に `SetOnSelect` を設定）、`F6` / `/` のフィルタは各一覧と Session List で共通で、ポリシー詳細フォームの `F6` とは競合しないことの注記を追加。§3.7 フィルタの起動方法に `F6` を追加し、フィルタ入力ダイアログを `Cancel` ボタンまたは `Esc`（`tview.Form.SetCancelFunc`）で閉じられること、一覧画面の `Esc` でフィルタを解除することを明記。あわせて、キー操作・ダイアログの記述を実装（`main.go`、`internal/ui`）に合わせて修正: §2.1 / §3.1 / §4.1 メインメニューの `q` / `Esc` は確認なしで終了（終了確認ダイアログはない）。§3.3 フォームのキーに `Tab` / `Shift+Tab` と `Cancel` / `Esc`（確認なしで破棄）を追加し、保存のショートカットはないことを明記。§3.4 確認ダイアログを実装にあるもの（`Confirm Delete` の `Yes` / `No`、SQN変更警告・Default allow 警告の `Continue` / `Cancel`、`Connection Error` の `Retry` / `Exit`）に差し替え、変更破棄確認・終了確認・上書き確認はないこと、ダイアログの `Esc` は2つ目のボタンと同じ動作であることを追記。§3.5 Default allow 警告ダイアログを実際の表示（`Default Allow Warning`、`Continue` / `Cancel`）に差し替え。§3.6 ステータスバーの表示時間・例を実装（成功・エラーとも5秒）に修正。§3.7 フィルタの対象カラム（画面ごと）、`OK` 押下で適用（逐次絞り込みはしない）、件数表示（ボーダータイトルの `(Filter: ...)` とページ情報）を修正し、SCANによる追加取得の記述を削除。§3.8 ページネーションのナビゲーションを `←` / `→` から `PgUp` / `PgDn` に、UI形式をボーダータイトルの `1-50 of 125 (Page 1/3)` に、データ取得を一覧表示時の全件取得に修正。§4.2.2 SQN変更警告の表示タイミングを保存時（SQN を変更して `Save`）に修正。§4.4.2 ポリシーフォームのキーから `Ctrl+S` を削除し、`F6`（フォーム→ルールリスト）、ルールリストの `Esc` / `Tab` / `Enter`、各ボタン、ルール編集サブダイアログは `Esc` では閉じないことを記載。§6.5 に Import/Export メニューの操作と、インポート/エクスポート画面の `Cancel` / `Esc` / `Done` を追加。§7.1 初期化シーケンスを実装（VALKEY_PASSWORD 未設定でもエラーにしない、接続失敗時は Connection Error ダイアログで Retry / Exit）に修正 |
+| r12 | 2026-10-04 | Admin TUI の加入者編集による SQN の上書き（巻き戻り）を解消した実装修正の反映: §4.2.2 の「SQN手動編集時の警告」に、SQN の変更判定は正規化後の入力値と編集開始時の値を大文字小文字を区別せずに比較すること（Vector API が小文字で書き戻した SQN で誤って警告が出ていた問題の修正）を追記。「編集の保存処理」を新設し、SQN を変更していなければ `sqn` を書き換えない（`Update`）、変更した場合は編集開始時の値と一致するときだけ書き換える（`UpdateWithSQN`）、Lua スクリプトで存在チェックと更新をまとめて行い削除済みの加入者のキーを作らないこと、失敗時のステータスバーのエラー（`Failed to update: SQN was changed by authentication while editing. Reopen the subscriber and try again` 等）と開き直しての再実行、監査ログは成功時のみであることを記載。§3.4 SQN変更警告のトリガー、§4.2.2 フィールド定義の SQN、§5.2 に更新時のエラーを補足 |

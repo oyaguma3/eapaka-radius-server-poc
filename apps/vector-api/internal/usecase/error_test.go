@@ -39,6 +39,7 @@ func TestProblemErrorLogLevel(t *testing.T) {
 		{"500 error", ErrValkeyConnection, slog.LevelError},
 		{"404 error", ErrSubscriberNotFound, slog.LevelInfo},
 		{"400 error", ErrResyncMACFailed, slog.LevelWarn},
+		{"409 error", ErrSQNConflict, slog.LevelWarn},
 	}
 
 	for _, tt := range tests {
@@ -59,6 +60,7 @@ func TestPredefinedErrors(t *testing.T) {
 		ErrResyncDeltaExceeded,
 		ErrSQNOverflow,
 		ErrValkeyConnection,
+		ErrSQNConflict,
 		ErrMilenageCalculation,
 	}
 

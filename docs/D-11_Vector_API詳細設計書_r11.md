@@ -1,4 +1,4 @@
-# D-11 Vector API詳細設計書 (r9)
+# D-11 Vector API詳細設計書 (r11)
 
 ## ■セクション1: 概要
 
@@ -31,11 +31,11 @@
 | No. | ドキュメント | 参照内容 |
 |-----|-------------|---------|
 | D-01 | ミニPC版設計仕様書 (r10) | システム構成、パッケージ利用マップ |
-| D-02 | Valkeyデータ設計仕様書 (r14) | 加入者データ構造、キー設計、Go構造体、SQN更新方式（現行実装） |
-| D-03 | Vector-API/ステートマシン設計書 (r6) | API仕様、リクエスト/レスポンス定義 |
-| D-04 | ログ仕様設計書 (r24) | event_id定義、ログフォーマット |
+| D-02 | Valkeyデータ設計仕様書 (r19) | 加入者データ構造、キー設計、Go構造体、SQN更新方式（Lua による比較・置き換え） |
+| D-03 | Vector-API/ステートマシン設計書 (r8) | API仕様、リクエスト/レスポンス定義、409 Conflict |
+| D-04 | ログ仕様設計書 (r29) | event_id定義、ログフォーマット |
 | D-09 | Auth Server詳細設計書 (r10) | Auth Server連携仕様 |
-| D-06 | エラーハンドリング詳細設計書 (r12) | エラー分類、タイムアウト設定、SQN競合エラー（設計済み・未実装） |
+| D-06 | エラーハンドリング詳細設計書 (r15) | エラー分類、タイムアウト設定、SQN競合エラー（409） |
 | D-07 | Admin TUI詳細設計書【後半】 (r8) | 管理用TUIアプリケーション仕様 |
 | D-08 | インフラ設定・運用設計書 (r14) | 環境変数設定、テストベクターモード |
 | D-12 | Vector Gateway詳細設計書 (r5) | X-Trace-ID伝搬、呼び出し元仕様 |
@@ -111,7 +111,8 @@ apps/vector-api/
     │   ├── validator.go        # SQN範囲検証
     │   └── validator_test.go   # validator パッケージテスト
     ├── store/
-    │   ├── subscriber.go       # 加入者データアクセス
+    │   ├── subscriber.go       # 加入者データアクセス、SQNの比較・置き換え（Lua）
+    │   ├── subscriber_test.go  # store パッケージテスト（miniredis）
     │   └── valkey.go           # Valkeyクライアント初期化・管理
     ├── testmode/
     │   ├── testvector.go       # テストモード用固定パラメータ（Ki/OPc/AMF）
@@ -122,8 +123,10 @@ apps/vector-api/
         ├── interfaces.go       # ユースケース層インターフェース定義
         ├── mock_interfaces.go  # テスト用モックインターフェース
         ├── trace.go            # Trace IDのcontext受け渡し（ContextWithTraceID）
-        ├── vector.go           # ベクター生成・再同期ユースケース（統合）
-        └── vector_test.go      # vector パッケージテスト
+        ├── vector.go           # ベクター生成・再同期ユースケース（統合）、SQN競合時のやり直し
+        ├── vector_test.go      # vector パッケージテスト
+        ├── vector_cas_test.go  # SQN競合時のやり直し・再同期のテスト
+        └── vector_concurrency_test.go # 同一IMSIへの並行リクエストのテスト（miniredis）
 ```
 
 ### 2.2 パッケージ依存関係図
@@ -211,7 +214,8 @@ type SQNManager interface {
 
 type SubscriberRepository interface {
     Get(ctx context.Context, imsi string) (*Subscriber, error)
-    UpdateSQN(ctx context.Context, imsi string, sqn uint64) error
+    // SQNが oldSQN のときだけ newSQN に書き換え、書き換えたかどうかを返す（§13.6）
+    CompareAndSetSQN(ctx context.Context, imsi, oldSQN, newSQN string) (bool, error)
 }
 
 type TestVectorProvider interface {
@@ -302,10 +306,10 @@ ENTRYPOINT ["/usr/local/bin/vector-api"]
 
 | ファイル | 責務 | 主要関数・型 |
 |---------|------|-------------|
-| `vector.go` | ベクター生成・再同期ユースケース（統合） | `VectorUseCase`, `GenerateVector()`, `processResync()`, `IsTestMode()` |
+| `vector.go` | ベクター生成・再同期ユースケース（統合）、SQN競合時のやり直し | `VectorUseCase`, `GenerateVector()`, `generateOnce()`, `processResync()`, `logResync()`, `waitRandom()`, `IsTestMode()` |
 | `interfaces.go` | ユースケース層インターフェース定義 | `MilenageCalculator`, `ResyncProcessor`, `SQNManager`, `SQNValidator`, `SubscriberRepository`, `TestVectorProvider`, `VectorUseCaseInterface` |
 | `trace.go` | Trace IDのcontext受け渡し | `ContextWithTraceID()`（ハンドラーが呼ぶ）, `traceIDFromContext()` |
-| `error.go` | ユースケースエラー型定義 | `ProblemError`, `ErrSubscriberNotFound`, `ErrResyncMACFailed` 等（`ErrSQNConflict` はSQN競合制御が未実装のため定義なし。IMSI形式不正はハンドラーが直接400を返すため `ErrInvalidIMSI` は定義しない） |
+| `error.go` | ユースケースエラー型定義 | `ProblemError`, `ErrSubscriberNotFound`, `ErrResyncMACFailed`, `ErrSQNConflict` 等（IMSI形式不正はハンドラーが直接400を返すため `ErrInvalidIMSI` は定義しない） |
 | `mock_interfaces.go` | テスト用モックインターフェース | 各インターフェースのモック実装 |
 
 #### `internal/milenage/`
@@ -328,7 +332,7 @@ ENTRYPOINT ["/usr/local/bin/vector-api"]
 | ファイル | 責務 | 主要関数・型 |
 |---------|------|-------------|
 | `valkey.go` | Valkeyクライアント初期化・管理 | `ValkeyClient`, `NewValkeyClient()`, `Ping()` |
-| `subscriber.go` | 加入者データアクセス（アプリ独自のリトライなし） | `SubscriberStore`, `Get()`, `UpdateSQN()` |
+| `subscriber.go` | 加入者データアクセス（アプリ独自のリトライなし）、SQNの比較・置き換え（Lua） | `SubscriberStore`, `Get()`, `CompareAndSetSQN()` |
 
 #### `internal/testmode/`
 
@@ -1152,15 +1156,21 @@ func (v *Validator) ComputeResyncSQN(sqnMS uint64) (uint64, error) {
 
 **注記:** +32方式は再同期プロセスにも適用され、端末のSQN_MSのIND部分を維持する。これにより端末とネットワーク間のIND同期が保たれる。
 
-### 7.5 SQN競合制御の検討
+### 7.5 SQN競合制御
 
-以下の3方式を検討していたが、1. の **WATCH/MULTIによるCAS（Compare-And-Swap）方式** を採用する（**設計済み・未実装**。現行実装は `internal/store/subscriber.go` の `UpdateSQN` による単純な HSET で、後勝ちとなる。D-02 §2.A 参照）。
+同一IMSIへの並行リクエストで SQN が同値になる・巻き戻るのを防ぐため、SQN の書き戻しを **Lua スクリプトによる `sqn` フィールドの比較・置き換え（CAS: Compare-And-Swap）** で行う。読んだ値から変わっていないときだけ書き換え、変わっていたときは加入者の読み出しからやり直す（最大3回。超過時は 409 Conflict）。詳細はセクション13.6 を参照すること。
 
-1. **楽観的ロック**: WATCHコマンドによるCAS操作
-2. **分散ロック**: Redlock等による排他制御
-3. **INDベース完全分離**: リクエストソース毎にINDを割り当て、カウンタを完全に独立管理
+検討した方式と採否:
 
-方式1の詳細については、セクション13.6: SQN競合制御 を参照すること。現行実装では競合制御を行わないため、同一IMSIへの並行リクエストでは SQN が同値になる・飛ぶ可能性がある（PoCの制約）。
+| 方式 | 採否 | 理由 |
+|------|------|------|
+| Lua スクリプトによる `sqn` の比較・置き換え | **採用（r10）** | 1往復で原子的に比較・更新できる。比較対象が `sqn` だけなので、Admin TUI が他のフィールドを更新しても競合にならない。SQN の計算は Go 側に残せる |
+| WATCH/MULTI による楽観的ロック | 不採用（r9 まではこの方式で設計していた） | キー全体を監視するため、`sqn` 以外のフィールドの更新でも競合になる。トランザクション中はコネクションを占有する |
+| Lua スクリプトでインクリメントまで行う | 不採用 | SQN の計算（+32、48bit 上限）が Go と Lua に分かれる。再同期では結局 CAS が必要 |
+| 分散ロック（Redlock 等）／プロセス内の IMSI ごとのロック | 不採用 | 構成が複雑になる／Vector API が1台であることが前提で、Admin TUI の書き込みを防げない |
+| INDベース完全分離 | 不採用 | リクエストソースごとの IND 割り当てが必要で、PoC の運用に合わない |
+
+**守る性質:** 発行するベクターの SQN は IMSI ごとに一意で、単調に増える（同値・巻き戻りを起こさない）。SQN が飛ぶのは許容する（USIM は SEQ が増えていれば受け入れる）。
 
 ---
 
@@ -1214,26 +1224,44 @@ func (s *SubscriberStore) Get(ctx context.Context, imsi string) (*Subscriber, er
     }, nil
 }
 
-// UpdateSQN は加入者のSQNを更新する
-func (s *SubscriberStore) UpdateSQN(ctx context.Context, imsi string, sqn string) error {
+// compareAndSetSQNScript は sqn が期待値と一致するときだけ新しい値に書き換える。
+// キーまたは sqn フィールドが無い場合は書き換えず（キーを新たに作らない）、0 を返す。
+var compareAndSetSQNScript = redis.NewScript(`
+local cur = redis.call('HGET', KEYS[1], 'sqn')
+if cur == false or cur ~= ARGV[1] then
+  return 0
+end
+redis.call('HSET', KEYS[1], 'sqn', ARGV[2])
+return 1
+`)
+
+// CompareAndSetSQN は加入者のSQNが oldSQN と一致するときだけ newSQN に更新する。
+// 更新したときは true を返す。一致しない（他のリクエストが先に更新した）ときや、
+// 加入者が削除されていたときは false を返す。
+// oldSQN には Get で読んだ値をそのまま渡す（大文字小文字を含めて文字列で比較する）。
+func (s *SubscriberStore) CompareAndSetSQN(ctx context.Context, imsi, oldSQN, newSQN string) (bool, error) {
     key := "sub:" + imsi
-    
-    err := s.client.client.HSet(ctx, key, "sqn", sqn).Err()
+
+    n, err := compareAndSetSQNScript.Run(ctx, s.client.client, []string{key}, oldSQN, newSQN).Int()
     if err != nil {
-        return fmt.Errorf("failed to update SQN: %w", err)
+        return false, fmt.Errorf("failed to compare and set SQN: %w", err)
     }
-    
-    return nil
+
+    return n == 1, nil
 }
 ```
 
+> **注記（r10）:** r9 まで定義していた単純な書き戻し `UpdateSQN`（`HSET sub:{IMSI} sqn {新SQN}`。後勝ち）は、`CompareAndSetSQN` に置き換えて削除した。`redis.NewScript` の `Run` は EVALSHA で実行し、スクリプトが未ロードなら EVAL にフォールバックする（go-redis の機能）。比較の期待値は `Get` で読んだ `sqn` の生の文字列で、正規化しない（Admin TUI は大文字で保存し、Vector API は小文字で書き戻すため、正規化すると Admin TUI による書き換えを見逃すおそれがある）。
+
 ### 8.3 リトライ処理
 
-Valkeyエラー時のアプリ独自のリトライは行わない（go-redis v9 の既定の自動リトライ（`redis.Options` で `MaxRetries` を指定していないため既定の最大3回、バックオフ 8ms〜512ms）は働く）。`Get` / `UpdateSQN` がエラーを返すと、ユースケースは `ErrValkeyConnection` に原因を付けたエラー（`Database connection error: <Valkeyのエラー>`）を返し、ハンドラーが500と `VALKEY_CONN_ERR`（ERROR、`error` 属性に原因）を出力する（§9.4）。接続の張り直しはgo-redisのコネクションプールが次のコマンド実行時に行う。
+Valkeyエラー時のアプリ独自のリトライは行わない（go-redis v9 の既定の自動リトライ（`redis.Options` で `MaxRetries` を指定していないため既定の最大3回、バックオフ 8ms〜512ms）は働く）。`Get` / `CompareAndSetSQN` がエラーを返すと、ユースケースは `ErrValkeyConnection` に原因を付けたエラー（`Database connection error: <Valkeyのエラー>`）を返し、ハンドラーが500と `VALKEY_CONN_ERR`（ERROR、`error` 属性に原因）を出力する（§9.4）。接続の張り直しはgo-redisのコネクションプールが次のコマンド実行時に行う。
 
 > **注記（r9）:** r8 まで本節に記載していたリトライ付き取得 `GetWithRetry`（最大2回リトライ、間隔100ms、`isConnectionError` で接続エラーのみリトライ、リトライ時に `VALKEY_CONN_ERR`（WARN、`Valkey connection failed, retrying`）を出力）は、どこからも呼び出されていなかったため実装から削除した。
 
 ### 8.4 データアクセスフロー
+
+1回の試行の流れを示す。手順4で競合した（`sqn` が読んだ値から変わっていた）ときは、1〜10msのランダムな時間待ってから手順1からやり直す（最大3回。§13.6）。
 
 #### 通常フロー
 
@@ -1244,13 +1272,16 @@ Valkeyエラー時のアプリ独自のリトライは行わない（go-redis v9
 2. SQNインクリメント（メモリ上）
    └─ new_sqn = current_sqn + 32
 
-3. Milenage計算
+3. （再同期フローの手順のみ）
+
+4. EVALSHA（Lua）: sqn が current_sqn のときだけ HSET sub:{IMSI} sqn {new_sqn}
+   ├─ 書き換えた → 5へ
+   └─ 変わっていた（競合）→ 待ってから 1 へ（3回目なら 409）
+
+5. Milenage計算
    └─ new_sqn で RAND, AUTN, XRES, CK, IK を生成
 
-4. HSET sub:{IMSI} sqn {new_sqn}
-   └─ 新しいSQNを保存
-
-5. レスポンス返却
+6. レスポンス返却
 ```
 
 #### 再同期フロー
@@ -1262,20 +1293,23 @@ Valkeyエラー時のアプリ独自のリトライは行わない（go-redis v9
 2. AUTS処理
    └─ SQN_MS を抽出（MAC-S検証含む）
 
-3. デルタ検証
-   └─ SQN_MS と SQN_HE の差を検証
+3. デルタ検証・SQN計算
+   ├─ やり直し（2回目以降の試行）で SQN_HE >= SQN_MS
+   │    └─ 同期済みとみなし new_sqn = sqn_he + 32（デルタ検証しない）
+   └─ それ以外
+        └─ SQN_MS と SQN_HE の差を検証し、new_sqn = sqn_ms + 32
 
-4. SQN計算
-   └─ new_sqn = sqn_ms + 32
+4. EVALSHA（Lua）: sqn が sqn_he のときだけ HSET sub:{IMSI} sqn {new_sqn}
+   ├─ 書き換えた → SQN_RESYNC ログを出して 5へ
+   └─ 変わっていた（競合）→ 待ってから 1 へ（3回目なら 409）
 
 5. Milenage計算
    └─ new_sqn で RAND, AUTN, XRES, CK, IK を生成
 
-6. HSET sub:{IMSI} sqn {new_sqn}
-   └─ 新しいSQNを保存
-
-7. レスポンス返却
+6. レスポンス返却
 ```
+
+> **注記（r10）:** r9 までは Milenage 計算の後に SQN を書き戻していたが、r10 で SQN の書き換えに成功してからベクターを生成する順序に変更した。書き換えた後に計算が失敗した場合は SQN が飛ぶだけで、端末の検証には影響しない。
 
 ---
 
@@ -1293,6 +1327,7 @@ D-06で定義されたエラー分類に基づく。
 | AUTS形式不正 | 400 Bad Request | `SQN_RESYNC_FORMAT_ERR` | WARN |
 | SQNデルタ超過 | 400 Bad Request | `SQN_RESYNC_DELTA_ERR` | WARN |
 | SQNオーバーフロー | 500 Internal Server Error | `SQN_OVERFLOW_ERR` | ERROR |
+| SQN更新の競合がやり直しの上限を超過 | 409 Conflict | `SQN_CONFLICT_ERR` | WARN |
 | Valkey接続失敗 | 500 Internal Server Error | `VALKEY_CONN_ERR` | ERROR |
 | Milenage計算エラー | 500 Internal Server Error | `CALC_ERR` | ERROR |
 
@@ -1402,6 +1437,15 @@ var (
         EventID: "VALKEY_CONN_ERR",
     }
     
+    // ErrSQNConflict は、SQNの書き換えが他のリクエストと競合し、やり直しの上限を超えたことを表す。
+    ErrSQNConflict = &ProblemError{
+        Status:  409,
+        Title:   "Conflict",
+        Detail:  "SQN update conflict",
+        Message: "SQN update conflict exceeded retry limit",
+        EventID: "SQN_CONFLICT_ERR",
+    }
+    
     ErrMilenageCalculation = &ProblemError{
         Status:  500,
         Title:   "Internal Server Error",
@@ -1415,6 +1459,7 @@ var (
 > **注記（r9）:**
 > - IMSI形式不正（15桁の数字でない）はハンドラーが `validateIMSI` で検出して直接400（`CALC_ERR`、msg `invalid IMSI format`）を返すため、ユースケースのエラーとしては定義しない（r8 まで記載していた未使用の `ErrInvalidIMSI` は実装から削除した）。
 > - ユースケースは原因があるエラーを `fmt.Errorf("%w: ...", ErrXxx, ...)` でラップして返す。ハンドラーは `errors.As` で `ProblemError` を取り出し、応答は `ToProblemDetail()`（定義済みの `Detail` のみ）、ログの `error` 属性はラップ後のエラー文（`<Detail>: <原因>`）とする。例: `Database connection error: failed to get subscriber: ...`、`SQN difference exceeds allowed range: sqn_ms=xxxxxxxxxxxx sqn_he=xxxxxxxxxxxx: <原因>`。原因のないエラー（`ErrSubscriberNotFound`、`ErrResyncMACFailed`、`ErrSQNOverflow` 等）は `Detail` と同じ文になる。
+> - `ErrSQNConflict`（r10 追加）は 409・WARN（`LogLevel()` の既定）で、ハンドラーに専用の分岐はない。応答の `detail` は `SQN update conflict` で、IMSI や原因を含めない（r9 までの設計例 §13.6.4 の detail に含めていた IMSI は含めない）。ログの `error` 属性は `SQN update conflict: conflicted 3 times`、または待っている間に期限が切れた場合の `SQN update conflict: retry aborted after N attempts: context deadline exceeded` 等になる。
 
 ### 9.4 Valkey障害時の動作
 
@@ -1434,21 +1479,26 @@ D-06に基づく障害時動作:
 ```go
 // internal/usecase/vector.go
 
+// VectorUseCase はベクター生成ユースケースを実装する。
 type VectorUseCase struct {
     subscriberStore    SubscriberRepository
     calculator         MilenageCalculator
-    sqnManager         *sqn.Manager
-    sqnValidator       *sqn.Validator
+    sqnManager         SQNManager
+    sqnValidator       SQNValidator
     resyncProcessor    ResyncProcessor
     testVectorProvider TestVectorProvider // nilの場合はテストモード無効
     cfg                *config.Config
+    // waitBeforeRetry はSQNの競合後、やり直す前に待つ（テストで差し替える）
+    waitBeforeRetry func(ctx context.Context) error
 }
 
+// NewVectorUseCase は新しいVectorUseCaseを生成する。
 func NewVectorUseCase(
     subscriberStore SubscriberRepository,
     calculator MilenageCalculator,
-    sqnManager *sqn.Manager,
-    sqnValidator *sqn.Validator,
+    sqnManager SQNManager,
+    sqnValidator SQNValidator,
+    resyncProcessor ResyncProcessor,
     testVectorProvider TestVectorProvider,
     cfg *config.Config,
 ) *VectorUseCase {
@@ -1457,18 +1507,58 @@ func NewVectorUseCase(
         calculator:         calculator,
         sqnManager:         sqnManager,
         sqnValidator:       sqnValidator,
-        resyncProcessor:    milenage.NewResyncProcessor(),
+        resyncProcessor:    resyncProcessor,
         testVectorProvider: testVectorProvider,
         cfg:                cfg,
+        waitBeforeRetry:    waitRandom,
     }
 }
+
+// maxSQNAttempts はSQNの書き換えを試みる最大回数（競合したときのやり直しを含む）。
+const maxSQNAttempts = 3
+
+// errSQNChanged は、加入者を読んでからSQNを書き換えるまでの間に、
+// 他のリクエストがSQNを書き換えていたことを表す（やり直しの対象）。
+var errSQNChanged = errors.New("SQN was changed by another request")
 
 // GenerateVector はベクターを生成する。
 // テストモード（TEST_VECTOR_ENABLED=true かつ対象プレフィックスのIMSI）では、
 // Ki/OPc/AMF をテスト用の固定値に置き換える。加入者の取得・SQNの管理・エラー処理は通常モードと同じ。
+//
+// SQNは、読んだ値から変わっていないときだけ書き換える（CAS）。他のリクエストと競合したときは、
+// 加入者の読み出しからやり直す。maxSQNAttempts 回とも競合したときは ErrSQNConflict を返す。
 func (u *VectorUseCase) GenerateVector(ctx context.Context, req *dto.VectorRequest) (*dto.VectorResponse, error) {
     testMode := u.IsTestMode(req.IMSI)
-    
+
+    for attempt := 1; attempt <= maxSQNAttempts; attempt++ {
+        if attempt > 1 {
+            if err := u.waitBeforeRetry(ctx); err != nil {
+                return nil, fmt.Errorf("%w: retry aborted after %d attempts: %v", ErrSQNConflict, attempt-1, err)
+            }
+        }
+
+        resp, err := u.generateOnce(ctx, req, testMode, attempt > 1)
+        if !errors.Is(err, errSQNChanged) {
+            return resp, err
+        }
+
+        if attempt < maxSQNAttempts {
+            slog.Warn("SQN update conflict, retrying",
+                "event_id", "SQN_CONFLICT_RETRY",
+                "trace_id", traceIDFromContext(ctx),
+                "imsi", u.maskIMSI(req.IMSI),
+                "attempt", attempt,
+            )
+        }
+    }
+
+    return nil, fmt.Errorf("%w: conflicted %d times", ErrSQNConflict, maxSQNAttempts)
+}
+
+// generateOnce は加入者の取得からSQNの書き換え・ベクター生成までを1回行う。
+// 他のリクエストが先にSQNを書き換えていたときは errSQNChanged を返す。
+// retried は競合によるやり直しかどうか（再同期の判定に使う）。
+func (u *VectorUseCase) generateOnce(ctx context.Context, req *dto.VectorRequest, testMode, retried bool) (*dto.VectorResponse, error) {
     // 1. 加入者情報取得（テストモードでも登録が必要）
     sub, err := u.subscriberStore.Get(ctx, req.IMSI)
     if err != nil {
@@ -1477,7 +1567,7 @@ func (u *VectorUseCase) GenerateVector(ctx context.Context, req *dto.VectorReque
     if sub == nil {
         return nil, ErrSubscriberNotFound
     }
-    
+
     // 2. 鍵情報をバイト列に変換（テストモードは固定値）
     var ki, opc, amf []byte
     if testMode {
@@ -1497,92 +1587,144 @@ func (u *VectorUseCase) GenerateVector(ctx context.Context, req *dto.VectorReque
     if err != nil {
         return nil, fmt.Errorf("invalid SQN format: %w", err)
     }
-    
+
+    // 3. 新SQNの計算（再同期 or 通常）
     var newSQN uint64
-    
-    // 3. 再同期処理 or 通常処理
+    var resync *resyncResult
     if req.ResyncInfo != nil {
-        newSQN, err = u.processResync(ctx, req.IMSI, ki, opc, req.ResyncInfo, currentSQN)
+        resync, err = u.processResync(ki, opc, req.ResyncInfo, currentSQN, retried)
         if err != nil {
             return nil, err
         }
+        newSQN = resync.newSQN
     } else {
         newSQN, err = u.sqnManager.Increment(currentSQN)
         if err != nil {
             return nil, ErrSQNOverflow
         }
     }
-    
-    // 4. ベクター生成
+
+    // 4. SQN更新（読んだ値から変わっていないときだけ書き換える）
+    updated, err := u.subscriberStore.CompareAndSetSQN(ctx, req.IMSI, sub.SQN, u.sqnManager.FormatHex(newSQN))
+    if err != nil {
+        return nil, fmt.Errorf("%w: %v", ErrValkeyConnection, err)
+    }
+    if !updated {
+        return nil, errSQNChanged
+    }
+
+    // 5. 再同期のログ（SQNを書き換えた後に1回だけ出す）
+    if resync != nil {
+        u.logResync(ctx, req.IMSI, currentSQN, resync)
+    }
+
+    // 6. ベクター生成（SQNの書き換え後に行う。失敗してもSQNが飛ぶだけで、端末の検証には影響しない）
     vector, err := u.calculator.GenerateVector(ki, opc, amf, newSQN)
     if err != nil {
         return nil, fmt.Errorf("%w: %v", ErrMilenageCalculation, err)
     }
-    
-    // 5. SQN更新
-    newSQNHex := u.sqnManager.FormatHex(newSQN)
-    if err := u.subscriberStore.UpdateSQN(ctx, req.IMSI, newSQNHex); err != nil {
-        return nil, fmt.Errorf("%w: %v", ErrValkeyConnection, err)
-    }
-    
-    // 6. レスポンス変換
+
+    // 7. レスポンス変換
     return milenage.VectorToResponse(vector), nil
 }
 
-func (u *VectorUseCase) processResync(ctx context.Context, imsi string, ki, opc []byte, resyncInfo *dto.ResyncInfo, currentSQN uint64) (uint64, error) {
+// resyncResult は再同期で決めた新SQNを表す。
+type resyncResult struct {
+    sqnMS  uint64
+    newSQN uint64
+    // alreadySynced は、競合後のやり直しで、別のリクエストがすでにSQN_MS以上まで
+    // SQNを進めていたため、通常どおり+32した場合に true
+    alreadySynced bool
+}
+
+// processResync は再同期処理を行い、新しいSQNを決める。
+// retried は競合によるやり直しかどうか。
+func (u *VectorUseCase) processResync(ki, opc []byte, resyncInfo *dto.ResyncInfo, currentSQN uint64, retried bool) (*resyncResult, error) {
     // 1. RAND/AUTS をバイト列に変換
-    rand, err := milenage.HexDecode(resyncInfo.RAND)
+    randVal, err := milenage.HexDecode(resyncInfo.RAND)
     if err != nil {
-        return 0, fmt.Errorf("%w: invalid RAND format", ErrResyncInvalidFormat)
+        return nil, fmt.Errorf("%w: invalid RAND format", ErrResyncInvalidFormat)
     }
     auts, err := milenage.HexDecode(resyncInfo.AUTS)
     if err != nil {
-        return 0, fmt.Errorf("%w: invalid AUTS format", ErrResyncInvalidFormat)
+        return nil, fmt.Errorf("%w: invalid AUTS format", ErrResyncInvalidFormat)
     }
-    
+
     // 2. AUTS長検証
     if len(auts) != 14 {
-        return 0, ErrResyncInvalidFormat
+        return nil, ErrResyncInvalidFormat
     }
-    
+
     // 3. SQN_MS抽出
-    sqnMS, err := u.resyncProcessor.ExtractSQN(ki, opc, rand, auts)
+    sqnMS, err := u.resyncProcessor.ExtractSQN(ki, opc, randVal, auts)
     if err != nil {
         // MAC検証失敗
-        return 0, ErrResyncMACFailed
+        return nil, ErrResyncMACFailed
     }
-    
-    // 4. デルタ検証
+
+    // 4. 競合後のやり直しで、別のリクエスト（同じ再同期の再送など）がすでにSQN_MS以上まで
+    // 進めていた場合は、同期済みとみなして通常どおり+32する（端末のSQN_MSより大きいので受け入れられる）
+    if retried && currentSQN >= sqnMS {
+        newSQN, err := u.sqnManager.Increment(currentSQN)
+        if err != nil {
+            return nil, ErrSQNOverflow
+        }
+        return &resyncResult{sqnMS: sqnMS, newSQN: newSQN, alreadySynced: true}, nil
+    }
+
+    // 5. デルタ検証
     if err := u.sqnValidator.ValidateResyncSQN(sqnMS, currentSQN); err != nil {
         // ログはハンドラーが1行で出力する（SQN値はエラー文に含める）
-        return 0, fmt.Errorf("%w: sqn_ms=%012x sqn_he=%012x: %v", ErrResyncDeltaExceeded, sqnMS, currentSQN, err)
+        return nil, fmt.Errorf("%w: sqn_ms=%012x sqn_he=%012x: %v", ErrResyncDeltaExceeded, sqnMS, currentSQN, err)
     }
-    
-    // 5. 新SQN計算（SQN_MS + 32）
+
+    // 6. 新SQN計算（SQN_MS + 32）
     newSQN, err := u.sqnValidator.ComputeResyncSQN(sqnMS)
     if err != nil {
-        return 0, ErrSQNOverflow
+        return nil, ErrSQNOverflow
     }
-    
-    // 6. SQN再同期成功ログ
-    slog.Info("SQN resync successful",
-        "event_id", "SQN_RESYNC",
-        "trace_id", traceIDFromContext(ctx), // ハンドラーが ContextWithTraceID で設定
-        "imsi", u.maskIMSI(imsi),
-        "sqn_old", fmt.Sprintf("%012x", currentSQN),
-        "sqn_ms", fmt.Sprintf("%012x", sqnMS),
-        "sqn_new", fmt.Sprintf("%012x", newSQN),
-    )
-    
-    return newSQN, nil
+
+    return &resyncResult{sqnMS: sqnMS, newSQN: newSQN}, nil
 }
 
-// IsTestMode はIMSIがテストベクターモードの対象かを返す（ハンドラーの CALC_OK の test_mode 属性にも使う）
+// logResync はSQN再同期のログを出す。
+func (u *VectorUseCase) logResync(ctx context.Context, imsi string, currentSQN uint64, r *resyncResult) {
+    msg := "SQN resync successful"
+    if r.alreadySynced {
+        msg = "SQN resync already applied by another request"
+    }
+    slog.Info(msg,
+        "event_id", "SQN_RESYNC",
+        "trace_id", traceIDFromContext(ctx),
+        "imsi", u.maskIMSI(imsi),
+        "sqn_old", fmt.Sprintf("%012x", currentSQN),
+        "sqn_ms", fmt.Sprintf("%012x", r.sqnMS),
+        "sqn_new", fmt.Sprintf("%012x", r.newSQN),
+    )
+}
+
+// waitRandom は競合後のやり直しの前に、1〜10msのランダムな時間だけ待つ。
+// 同時に競合したリクエストが同じタイミングでやり直さないようにする。
+// 待っている間に ctx が終わったときは ctx のエラーを返す。
+func waitRandom(ctx context.Context) error {
+    timer := time.NewTimer(time.Millisecond + rand.N(9*time.Millisecond))
+    defer timer.Stop()
+
+    select {
+    case <-ctx.Done():
+        return ctx.Err()
+    case <-timer.C:
+        return nil
+    }
+}
+
+// IsTestMode はIMSIがテストベクターモードの対象かを返す。
 func (u *VectorUseCase) IsTestMode(imsi string) bool {
     return u.testVectorProvider != nil && u.testVectorProvider.IsTestIMSI(imsi)
 }
 
-// maskIMSI はログ出力用にIMSIをマスキングする（cfg が nil の場合はマスク有効として扱う）
+// maskIMSI はログ出力用にIMSIをマスキングする。
+// 設定が無い場合はマスキングを有効として扱う（LOG_MASK_IMSI の既定値 true に合わせる）。
 func (u *VectorUseCase) maskIMSI(imsi string) string {
     enabled := true
     if u.cfg != nil {
@@ -1609,7 +1751,9 @@ func traceIDFromContext(ctx context.Context) string {
 }
 ```
 
-> **注記（ログ、r9）:** ユースケース層が出力するログは再同期成功時の `SQN_RESYNC` だけである。`trace_id` はハンドラーが context に載せた値（`X-Trace-ID` ヘッダの値。ない場合は `no-trace-id`）、`imsi` はマスク済み。SQNデルタ超過はログを出さず、SQN値をエラー文に含めて返し、ハンドラーが `SQN_RESYNC_DELTA_ERR` を1行出力する。テストモードの成功時もユースケース層はログを出さず、ハンドラーの `CALC_OK` の `test_mode` 属性で区別する（r8 まで出力していた `test vector generated`（`test_mode` / `sqn` 属性）は削除）。
+> **注記（SQN競合制御、r10）:** `GenerateVector` は `generateOnce`（加入者の取得からSQNの書き換え・ベクター生成までの1回分）を最大 `maxSQNAttempts`（3）回試す。SQNの書き換えは `CompareAndSetSQN`（§8.2）で、`Get` で読んだ値から変わっていないときだけ行う。変わっていた（競合）ときは `errSQNChanged` を返し、`GenerateVector` は `SQN_CONFLICT_RETRY`（WARN）を出して `waitBeforeRetry`（既定は `waitRandom`。1〜10msのランダムな時間待つ。テストでは差し替える）の後にやり直す。やり直しでは加入者を読み直し、鍵情報・SQN・新SQN（再同期では MAC-S 検証も）を計算し直す。3回とも競合したとき、または待っている間に ctx が終わった（期限切れ・キャンセル）ときは `ErrSQNConflict`（409）を返す。再同期のやり直しで SQN_HE がすでに SQN_MS 以上のときは、別のリクエスト（同じ再同期の再送など）が先に同期済みとみなして通常どおり +32 する（§13.6.3）。詳細は §13.6。
+
+> **注記（ログ、r10）:** ユースケース層が出力するログは、再同期成功時の `SQN_RESYNC`（SQNの書き換えに成功した後に1回だけ。r9 までは `processResync` の中で出していた）と、競合してやり直すときの `SQN_CONFLICT_RETRY` だけである。`trace_id` はハンドラーが context に載せた値（`X-Trace-ID` ヘッダの値。ない場合は `no-trace-id`）、`imsi` はマスク済み。SQNデルタ超過はログを出さず、SQN値をエラー文に含めて返し、ハンドラーが `SQN_RESYNC_DELTA_ERR` を1行出力する。テストモードの成功時もユースケース層はログを出さず、ハンドラーの `CALC_OK` の `test_mode` 属性で区別する（r8 まで出力していた `test vector generated`（`test_mode` / `sqn` 属性）は削除）。
 
 > **注記（テストモード、r8）:** テストモードで通常モードと異なるのは、Milenage 計算に使う Ki / OPc / AMF を `GetTestCryptoParams()` の固定値（3GPP TS 35.208 Test Set 1、AMF `B9B9`）に置き換える点だけである。加入者 `sub:{IMSI}` の取得・SQN の解析と書き戻し・再同期・エラー処理は通常モードと同じで、未登録IMSIは `ErrSubscriberNotFound`（404）、Valkeyエラーと SQN 書き戻し失敗は `ErrValkeyConnection`（500）、SQN の解析失敗はエラー（500）になる。`sub:{IMSI}` の `ki` / `opc` / `amf` は参照しない（形式チェックもしない）が、`sqn` を使うため加入者の登録は必須である。r7 以前の実装にあった既定 SQN（`ff9bb4d0b607`）へのフォールバック（`TEST_SQN_FALLBACK` / `TEST_SQN_PARSE_ERR` / `TEST_SQN_PERSIST_ERR`）と `GetDefaultSQN()` は削除した（未登録IMSIに `sqn` だけを持つ `sub:{IMSI}` が作られる問題を解消）。
 
@@ -1625,14 +1769,16 @@ D-04で定義されたVector API用event_id:
 |----------|--------|------|
 | `CALC_OK` | INFO | ベクター生成成功（`test_mode` 属性でテストベクターモードかを区別。テストベクターモードも1行） |
 | `CALC_ERR` | INFO/WARN/ERROR | 計算・データエラー（リクエスト不正・IMSI形式不正=WARN、IMSI不在=INFO（テストベクターモードの対象IMSIも同じ）、Milenage計算エラー・予期しないエラー=ERROR） |
-| `SQN_RESYNC` | INFO | SQN再同期成功（ユースケース層。`trace_id`・マスク済み `imsi` あり） |
+| `SQN_RESYNC` | INFO | SQN再同期成功（ユースケース層。SQNの書き換え成功後に1回。`trace_id`・マスク済み `imsi` あり。やり直しで同期済みとみなした場合は msg `SQN resync already applied by another request`） |
 | `SQN_RESYNC_MAC_ERR` | WARN | AUTS MAC検証失敗（AUTSからのSQN抽出失敗を含む） |
 | `SQN_RESYNC_FORMAT_ERR` | WARN | AUTS形式不正（RAND/AUTSのHexデコード失敗を含む） |
 | `SQN_RESYNC_DELTA_ERR` | WARN | SQNデルタ超過（ハンドラー層の1行。SQN値は `error` 属性の文中） |
 | `SQN_OVERFLOW_ERR` | ERROR | SQNオーバーフロー |
+| `SQN_CONFLICT_RETRY` | WARN | SQN更新の競合を検出し、やり直す（ユースケース層。`attempt` に競合した試行の回数） |
+| `SQN_CONFLICT_ERR` | WARN | SQN更新の競合がやり直しの上限を超過（409返却。ハンドラー層の1行） |
 | `VALKEY_CONN_ERR` | ERROR | 加入者取得・SQN更新時のValkeyエラー（500返却。テストベクターモードの対象IMSIも同じ） |
 
-> **注記:** 各event_idの `msg`・属性はD-04 §3.4を参照。ハンドラーが定義済みエラー（`ProblemError`）から出力するログ（`CALC_ERR` の一部 / `SQN_RESYNC_*_ERR` / `SQN_OVERFLOW_ERR` / `VALKEY_CONN_ERR`）は `error` 属性に原因を含むエラー文を持つ（§9.3）。起動時のValkey接続失敗は event_id なしの `failed to connect to Valkey` で出力する。Valkey接続の復旧検知ログは出力しない。`SQN_CONFLICT_RETRY` / `SQN_CONFLICT_ERR` は §13.6 で設計済みだが**未実装**のため出力されない。テストベクターモード専用のエラー系 event_id はない（r7 まで記載していた `TEST_SQN_FALLBACK` / `TEST_SQN_PARSE_ERR` / `TEST_SQN_PERSIST_ERR` は r8 で廃止。エラーは通常モードと同じ event_id で出力する）。
+> **注記:** 各event_idの `msg`・属性はD-04 §3.4を参照。ハンドラーが定義済みエラー（`ProblemError`）から出力するログ（`CALC_ERR` の一部 / `SQN_RESYNC_*_ERR` / `SQN_OVERFLOW_ERR` / `VALKEY_CONN_ERR`）は `error` 属性に原因を含むエラー文を持つ（§9.3）。起動時のValkey接続失敗は event_id なしの `failed to connect to Valkey` で出力する。Valkey接続の復旧検知ログは出力しない。`SQN_CONFLICT_ERR` もハンドラーが `ProblemError` から出力し、`error` 属性に原因（例: `SQN update conflict: conflicted 3 times`）を持つ。テストベクターモード専用のエラー系 event_id はない（r7 まで記載していた `TEST_SQN_FALLBACK` / `TEST_SQN_PARSE_ERR` / `TEST_SQN_PERSIST_ERR` は r8 で廃止。エラーは通常モードと同じ event_id で出力する）。
 
 ### 11.2 ログ出力例
 
@@ -1702,6 +1848,39 @@ D-04で定義されたVector API用event_id:
   "imsi": "440101********0",
   "http_status": 400,
   "error": "SQN difference exceeds allowed range: sqn_ms=100000000000 sqn_he=000000000020: SQN difference exceeds delta: 17592186044384 > 268435456"
+}
+```
+
+#### SQN更新の競合時
+
+競合してやり直すたびにユースケース層が `SQN_CONFLICT_RETRY` を出す（1リクエストで最大2回）。やり直しで書き換えに成功すれば、その後は通常どおり `CALC_OK` になる。
+
+```json
+{
+  "time": "2026-01-14T10:00:01.456Z",
+  "level": "WARN",
+  "app": "vector-api",
+  "msg": "SQN update conflict, retrying",
+  "event_id": "SQN_CONFLICT_RETRY",
+  "trace_id": "550e8400-e29b-41d4-a716-446655440004",
+  "imsi": "440101********0",
+  "attempt": 1
+}
+```
+
+3回とも競合した場合は、ハンドラー層が `SQN_CONFLICT_ERR` を1行出して 409 を返す。
+
+```json
+{
+  "time": "2026-01-14T10:00:01.478Z",
+  "level": "WARN",
+  "app": "vector-api",
+  "msg": "SQN update conflict exceeded retry limit",
+  "trace_id": "550e8400-e29b-41d4-a716-446655440004",
+  "event_id": "SQN_CONFLICT_ERR",
+  "imsi": "440101********0",
+  "http_status": 409,
+  "error": "SQN update conflict: conflicted 3 times"
 }
 ```
 
@@ -1803,7 +1982,8 @@ type SQNValidator interface {
 
 type SubscriberRepository interface {
     Get(ctx context.Context, imsi string) (*Subscriber, error)
-    UpdateSQN(ctx context.Context, imsi string, sqn string) error
+    // CompareAndSetSQN はSQNが oldSQN のときだけ newSQN に書き換え、書き換えたかどうかを返す。
+    CompareAndSetSQN(ctx context.Context, imsi, oldSQN, newSQN string) (bool, error)
 }
 
 type TestVectorProvider interface {
@@ -1851,7 +2031,7 @@ type VectorUseCaseInterface interface {
 |------|------|---------|
 | 認証ベクター長 | XRES固定長（8バイト） | 可変長対応 |
 | インクリメントパターン | IND固定・SEQのみインクリメント | IMSI単位でパターン指定可能 |
-| SQN競合制御 | 未実装（単純な HSET による後勝ち。同一IMSIへの並行リクエストで SQN が同値になる・飛ぶ可能性がある） | §13.6 のCAS方式（設計済み） |
+| SQN競合制御 | Vector API の書き戻しは CAS（§13.6）。Admin TUI の加入者編集も、SQN を変えていないときは `sqn` を書かず、変えたときは編集開始時の値との比較・置き換えで書き込む（§13.6.9）。ただし Admin TUI の新規作成と CSV インポート（既存キーの上書き）は比較せずに `sqn` を書き込む | - |
 
 ### 13.4 テスト戦略
 
@@ -1861,7 +2041,8 @@ type VectorUseCaseInterface interface {
 | `usecase` | 単体テスト、モックrepository/calculator |
 | `milenage` | 3GPP TS 35.208テストベクター |
 | `sqn` | 単体テスト（インクリメント、デルタ検証） |
-| `store` | miniredisによるインメモリテスト |
+| `store` | miniredisによるインメモリテスト（`CompareAndSetSQN` の一致・不一致・キーなし） |
+| `usecase`（並行性） | miniredis と実物の store / sqn / milenage で同一IMSIに並行リクエストを送り、SQN が一意・単調増加であること（巻き戻らないこと）を確認 |
 | `E2E` | eapaka_testによる統合テスト |
 
 ### 13.5 テストモード実装（E2Eテスト対応）
@@ -2006,230 +2187,112 @@ docker compose logs vector-api | grep TEST_VECTOR
 
 ### 13.6 SQN競合制御
 
-> **実装状況: 設計済み・未実装。** 本節（§13.6.1〜§13.6.8）は設計であり、現行実装には反映されていない。現行実装は `internal/store/subscriber.go` の `UpdateSQN` による単純な HSET（`HSET sub:{IMSI} sqn {新SQN}`）で SQN を書き戻し、WATCH/MULTI による CAS・リトライ・HTTP 409 Conflict・`SQN_CONFLICT_RETRY` / `SQN_CONFLICT_ERR` ログはいずれも実装していない（後勝ち）。同一IMSIへの並行リクエストでは SQN が同値になる・飛ぶ可能性がある（PoCの制約。D-02 §2.A、D-04 §3.4.4 参照）。現行の処理は §10.1 を参照。
+> **実装状況（r10）:** 本節は実装済みである。r9 までは WATCH/MULTI による CAS として設計していた（未実装）が、r10 で Lua スクリプトによる `sqn` フィールドの比較・置き換えに方式を変えて実装した（方式の比較は §7.5）。
 
 #### 13.6.1 概要
 
-同一IMSIへの並行Access-Request（リトライ/再送含む）でSQNが巻き戻る/飛ぶリスクを回避するため、WATCH/MULTIによるCAS（Compare-And-Swap）方式を採用する（設計済み・未実装）。
+同一IMSIへの並行Access-Request（AP の再送、短時間の再認証、並行テスト等）で SQN が同値になる・巻き戻るのを防ぐため、SQN の書き戻しを CAS（Compare-And-Swap）で行う。読んだ値から変わっていないときだけ書き換え、変わっていたときは加入者の読み出しからやり直す。
+
+| 起きていた現象（r9 まで） | 流れ | 影響 |
+|------|------|------|
+| SQNが同値になる | 通常リクエスト2本が同じ X を読み、両方が X+32 を書く | 同じSQNのベクターが2つ発行され、後で使う方は端末で同期失敗になる（再同期が1往復増える） |
+| SQNが巻き戻る | 再同期が SQN_MS+32 を書いた後に、古い X を読んでいた通常リクエストが X+32 で上書きする | 次の認証で再び同期失敗になる |
 
 #### 13.6.2 方式詳細
 
 | 項目           | 内容                              |
 | -------------- | --------------------------------- |
-| 方式           | Valkey WATCH/MULTI/EXEC によるCAS |
+| 方式           | Lua スクリプト（`redis.NewScript`、EVALSHA）による `sqn` フィールドの比較・置き換え |
 | 対象キー       | `sub:{IMSI}`                      |
-| 対象フィールド | `sqn`                             |
-| リトライ上限   | 3回                               |
-| 競合検出時動作 | EXEC失敗 → リトライ               |
-| 上限超過時動作 | HTTP 409 Conflict 返却            |
+| 対象フィールド | `sqn`（比較・更新とも。他のフィールドは比較しない） |
+| 期待値         | `Get`（HGETALL）で読んだ `sqn` の生の文字列（正規化しない） |
+| 試行回数       | 最大3回（`maxSQNAttempts`。最初の1回＋やり直し2回） |
+| やり直しの前の待ち | 1〜10ms のランダムな時間（`waitRandom`。同時に競合したリクエストのやり直しをずらす） |
+| 競合検出時動作 | `SQN_CONFLICT_RETRY`（WARN）を出し、待ってから加入者の読み出しからやり直す |
+| 上限超過時動作 | HTTP 409 Conflict（`ErrSQNConflict`、`SQN_CONFLICT_ERR`（WARN）） |
+| 待ち中に ctx が終わった | やり直さずに 409（`ErrSQNConflict`） |
+| キーが無い（途中で削除） | 書き換えない（キーを作らない）。やり直しの `Get` で未登録 → 404 |
 
 #### 13.6.3 処理フロー
 
-1. WATCH sub:{IMSI}
-2. HGETALL sub:{IMSI} → Ki/OPc/AMF/SQN取得
-3. 新SQN算出（通常: +32、再同期: SQN_MS + 32）
-4. MULTI
-5. HSET sub:{IMSI} sqn {新SQN}
-6. EXEC
-    ├─ 成功 → ベクター生成・応答
-    └─ 失敗（競合検出）
-        ├─ リトライ < 上限 → 手順1へ
-        └─ リトライ >= 上限 → 409 Conflict
+```
+GenerateVector:
+  for attempt = 1..3:
+    attempt > 1 なら 1〜10ms 待つ（ctx が終わったら 409）
+    generateOnce:
+      1. HGETALL sub:{IMSI} → Ki/OPc/AMF/SQN取得（未登録は 404）
+      2. 鍵情報の変換（テストモードは Ki/OPc/AMF を固定値に）・SQNの解析
+      3. 新SQN算出
+         ├─ 通常: SQN_HE + 32
+         └─ 再同期: RAND/AUTS の変換・長さ検証 → MAC-S 検証で SQN_MS 抽出 →
+              ├─ attempt > 1 かつ SQN_HE >= SQN_MS: 同期済みとみなし SQN_HE + 32（デルタ検証しない）
+              └─ それ以外: デルタ検証（SQN_MS > SQN_HE、差が Δ 以内）→ SQN_MS + 32
+      4. EVALSHA（Lua）: sqn == 読んだ値 なら HSET sub:{IMSI} sqn {新SQN}
+         ├─ 書き換えた → 5へ
+         ├─ 変わっていた（競合）→ errSQNChanged
+         │    └─ attempt < 3 なら SQN_CONFLICT_RETRY を出して次の attempt へ
+         └─ Valkey エラー → 500（VALKEY_CONN_ERR）
+      5. 再同期なら SQN_RESYNC を出す（ここで1回だけ）
+      6. Milenage計算（失敗したら 500。SQNは飛ぶだけ）→ 応答
+  3回とも競合 → 409 Conflict（SQN_CONFLICT_ERR）
+```
 
-#### 13.6.4 エラー応答（競合上限超過時。未実装）
+**再同期のやり直しで同期済みとみなす理由:** 同じ再同期要求が2本並行して届いた場合（RADIUS の再送など）、1本目が SQN_MS+32 を書くと、2本目のやり直しでは SQN_HE（= SQN_MS+32）が SQN_MS 以上になり、デルタ検証（SQN_MS > SQN_HE）で 400 になってしまう。このとき SQN_HE はすでに端末の SQN_MS より進んでいるので、通常どおり SQN_HE+32 で生成したベクターは端末に受け入れられる（3GPP TS 33.102 の「SQN_HE が受け入れられる範囲にあればリセットしない」という考え方に合う）。1回目の試行では今までどおり検証し、SQN_MS <= SQN_HE なら 400（`SQN_RESYNC_DELTA_ERR`）とする。このとき `SQN_RESYNC` の msg は `SQN resync already applied by another request` になる。
+
+**MAC-S 検証を試行ごとに行う理由:** やり直しでは鍵情報も読み直すため、その鍵で検証し直す（Admin TUI で途中に鍵が変わった場合も正しく検証できる）。計算コストは小さい。
+
+#### 13.6.4 エラー応答（競合上限超過時）
 
 ```json
 {
   "type": "about:blank",
   "title": "Conflict",
-  "detail": "SQN update conflict after 3 retries for IMSI 44010*****890",
+  "detail": "SQN update conflict",
   "status": 409
 }
 ```
 
-#### 13.6.5 実装例（設計。未実装）
+`detail` には IMSI や原因を含めない（§9.3。r9 までの設計例では IMSI と試行回数を含めていた）。試行回数はログの `error` 属性で確認する。
 
-```go
-// internal/store/subscriber.go
+#### 13.6.5 実装（store）
 
-const maxSQNRetries = 3
+§8.2 の `CompareAndSetSQN` を参照。Lua スクリプトは次のとおり。
 
-var ErrSQNConflict = errors.New("sqn update conflict")
-
-func (s *SubscriberStore) UpdateSQNWithCAS(
-    ctx context.Context,
-    imsi string,
-    computeNewSQN func(current uint64) (uint64, error),
-) (uint64, error) {
-    key := "sub:" + imsi
-
-    for attempt := 1; attempt <= maxSQNRetries; attempt++ {
-        err := s.client.Watch(ctx, func(tx *redis.Tx) error {
-            // 1. 現在のSQN取得
-            sqnHex, err := tx.HGet(ctx, key, "sqn").Result()
-            if err != nil {
-                if err == redis.Nil {
-                    return ErrSubscriberNotFound
-                }
-                return fmt.Errorf("failed to get sqn: %w", err)
-            }
-
-            currentSQN, err := parseSQNHex(sqnHex)
-            if err != nil {
-                return fmt.Errorf("invalid sqn format: %w", err)
-            }
-
-            // 2. 新SQN算出
-            newSQN, err := computeNewSQN(currentSQN)
-            if err != nil {
-                return err
-            }
-
-            // 3. トランザクション実行
-            _, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-                pipe.HSet(ctx, key, "sqn", formatSQNHex(newSQN))
-                return nil
-            })
-            return err
-        }, key)
-
-        if err == nil {
-            return newSQN, nil
-        }
-
-        if errors.Is(err, redis.TxFailedErr) {
-            // 競合検出 → リトライ
-            slog.Warn("SQN update conflict, retrying",
-                "event_id", "SQN_CONFLICT_RETRY",
-                "imsi", maskIMSI(imsi),
-                "attempt", attempt,
-            )
-            if attempt < maxSQNRetries {
-                continue
-            }
-            // リトライ上限超過
-            slog.Warn("SQN conflict exceeded retry limit",
-                "event_id", "SQN_CONFLICT_ERR",
-                "imsi", maskIMSI(imsi),
-                "retry_count", maxSQNRetries,
-            )
-            return 0, ErrSQNConflict
-        }
-
-        // その他のエラー
-        return 0, err
-    }
-
-    return 0, ErrSQNConflict
-}
-
-func parseSQNHex(s string) (uint64, error) {
-    if len(s) != 12 {
-        return 0, fmt.Errorf("expected 12 hex chars, got %d", len(s))
-    }
-    b, err := hex.DecodeString(s)
-    if err != nil {
-        return 0, err
-    }
-    var v uint64
-    for _, c := range b {
-        v = (v << 8) | uint64(c)
-    }
-    return v, nil
-}
-
-func formatSQNHex(v uint64) string {
-    return fmt.Sprintf("%012x", v)
-}
+```lua
+local cur = redis.call('HGET', KEYS[1], 'sqn')
+if cur == false or cur ~= ARGV[1] then
+  return 0
+end
+redis.call('HSET', KEYS[1], 'sqn', ARGV[2])
+return 1
 ```
 
-#### 13.6.6 ユースケース層の変更（設計。未実装）
+Valkey は Lua スクリプトを原子的に実行するため、HGET と HSET の間に他のコマンドが割り込まない。store はリトライもログも行わず、書き換えたかどうか（bool）だけを返す。やり直し・ログ・409 の判断はユースケース層が行う（r9 までの設計例ではリトライとログを store 層の `UpdateSQNWithCAS` に置いていた）。
 
-```go
-// internal/usecase/vector.go
+#### 13.6.6 実装（ユースケース層）
 
-func (u *VectorUseCase) GenerateVector(ctx context.Context, req *dto.VectorRequest) (*dto.VectorResponse, error) {
-    // ... 省略（テストモード判定等）
-    
-    // 加入者情報取得（SQN以外）
-    sub, err := u.subscriberStore.Get(ctx, req.IMSI)
-    if err != nil {
-        return nil, fmt.Errorf("%w: %v", ErrValkeyConnection, err)
-    }
-    if sub == nil {
-        return nil, ErrSubscriberNotFound
-    }
-    
-    // 鍵情報をバイト列に変換
-    ki, opc, amf, err := u.parseKeyMaterial(sub)
-    if err != nil {
-        return nil, err
-    }
+§10.1 の `GenerateVector` / `generateOnce` / `processResync` / `logResync` / `waitRandom` を参照。
 
-    // SQN更新（CAS方式）
-    var newSQN uint64
-    var vector *milenage.Vector
-    
-    newSQN, err = u.subscriberStore.UpdateSQNWithCAS(ctx, req.IMSI, func(currentSQN uint64) (uint64, error) {
-        if req.ResyncInfo != nil {
-            return u.processResync(ki, opc, req.ResyncInfo, currentSQN)
-        }
-        return u.sqnManager.Increment(currentSQN)
-    })
-    
-    if errors.Is(err, store.ErrSQNConflict) {
-        return nil, ErrSQNConflict
-    }
-    if err != nil {
-        return nil, fmt.Errorf("%w: %v", ErrValkeyConnection, err)
-    }
-    
-    // ベクター生成
-    vector, err = u.calculator.GenerateVector(ki, opc, amf, newSQN)
-    if err != nil {
-        return nil, fmt.Errorf("%w: %v", ErrMilenageCalculation, err)
-    }
-    
-    return milenage.VectorToResponse(vector), nil
-}
-```
+#### 13.6.7 エラー定義
 
-#### 13.6.7 エラー定義追加（設計。未実装）
+§9.3 の `ErrSQNConflict`（`*ProblemError`、409、`SQN_CONFLICT_ERR`）を参照。
 
-```go
-// internal/usecase/errors.go
+#### 13.6.8 ハンドラー層・呼び出し側
 
-var (
-    // ... 既存エラー
-    ErrSQNConflict = errors.New("sqn update conflict after max retries")
-)
-```
+- ハンドラーに 409 専用の分岐はない。`ErrSQNConflict` は他の `ProblemError` と同じく `handleError` で応答とログ（`SQN_CONFLICT_ERR`、WARN、`error` 属性に原因）になる（§5.1）。
+- Vector Gateway は 4xx をそのまま中継する（D-12）。Auth Server は 409 を Circuit Breaker の失敗に数えず（D-09 §7.8.1）、`VECTOR_API_ERR`（`http_status`=409）を出して Access-Reject（EAP-Failure）を返す。端末は認証をやり直す。
+- 409 を 5xx にしない理由: 5xx は Auth Server の Circuit Breaker の失敗に数えられ、1つの IMSI の競合で全体の認証が止まりうるため。
 
-#### 13.6.8 ハンドラー層のエラーマッピング（設計。未実装）
+#### 13.6.9 Admin TUI の書き込みとの関係
 
-```go
-// internal/handler/vector.go
+Admin TUI の加入者編集（`apps/admin-tui/internal/store/subscriber.go`）は、Lua スクリプトで存在チェックと更新をまとめて行い、`sqn` を次のように扱う（D-02 §2.A、D-05 §4.2.2）。
 
-func (h *VectorHandler) HandleVector(c *gin.Context) {
-    // ... 省略
-    
-    resp, err := h.usecase.GenerateVector(c.Request.Context(), req)
-    if err != nil {
-        switch {
-        case errors.Is(err, usecase.ErrSubscriberNotFound):
-            h.writeError(c, http.StatusNotFound, "User Not Found", err.Error())
-        case errors.Is(err, usecase.ErrSQNConflict):
-            h.writeError(c, http.StatusConflict, "Conflict",
-                fmt.Sprintf("SQN update conflict after %d retries for IMSI %s",
-                    store.MaxSQNRetries, maskIMSI(req.IMSI)))
-        // ... その他のエラー処理
-        }
-        return
-    }
-    
-    c.JSON(http.StatusOK, resp)
-}
-```
+- SQN を変えていない（大文字小文字の違いだけを含む）ときは `ki` / `opc` / `amf` だけを更新し、`sqn` は書かない（`Update`）。Vector API の CAS は `sqn` だけを比較するため、競合にならない
+- SQN を変えたときは、現在の `sqn` が編集開始時に読んだ値と一致するときだけ `ki` / `opc` / `amf` と `sqn` を更新する（`UpdateWithSQN`）。編集中に Vector API が `sqn` を進めていれば Admin TUI 側が何も更新せずにエラーとし、Admin TUI の書き込みが Vector API の読み出しから書き換えまでの間に行われれば Vector API 側が競合として検出してやり直す
+
+これにより、Admin TUI の保存で SQN が巻き戻ることはない。比較せずに `sqn` を書き込むのは、Admin TUI の新規作成と CSV インポート（既存キーを上書きする）だけである。
+
+**注記（r11）:** r10 では、Admin TUI の加入者編集が SQN を変えていなくても `sqn` をフォームの値で上書きする（編集画面を開いている間に認証が進むと SQN が巻き戻る可能性がある）ことを「残っている制約」として記載していた。Admin TUI の実装修正で解消したため、本節を改めた。
 
 ## 改訂履歴
 
@@ -2244,3 +2307,5 @@ func (h *VectorHandler) HandleVector(c *gin.Context) {
 | r7 | 2026-10-04 | D-04 r19 の event_id 全面整合に合わせて修正: §11.1 event_id一覧から実装に存在しない `SQN_RESYNC_DECODE_ERR`（AUTSからのSQN抽出失敗は `SQN_RESYNC_MAC_ERR`）と `VALKEY_CONN_RESTORED` を削除し、`TEST_SQN_FALLBACK` / `TEST_SQN_PARSE_ERR` / `TEST_SQN_PERSIST_ERR` を追加、各説明を実装に合わせて修正。§11.2 ログ出力例を実装の属性に修正（`CALC_OK` / `CALC_ERR` から `method`・`path`・`latency_ms` を削除、ユースケース層の `SQN_RESYNC` / `SQN_RESYNC_DELTA_ERR` から `trace_id` を削除）。SQN競合制御（WATCH/MULTI による CAS、リトライ上限3回、HTTP 409、`SQN_CONFLICT_RETRY` / `SQN_CONFLICT_ERR`）は設計を残したまま「設計済み・未実装（現行は単純な HSET による後勝ち）」と明記（§7.5、§13.3、§13.6 冒頭・各見出し、§2.7 の `ErrSQNConflict` 記載、§1.3）。§8.3 `GetWithRetry` が未使用でリトライログが出力されない旨を注記し、§9.4 のリトライ記載を修正。§1.3 関連ドキュメントの版数を現行版に更新（D-01 r10、D-02 r12、D-03 r6、D-04 r19、D-06 r7、D-07 r8、D-08 r14、D-12 r5、E-02 r3。Auth Server詳細設計書の文書番号を D-09 に修正）。関連ドキュメント表の E-03 を実在の文書名（共通ライブラリ(pkg)設計書）に修正 |
 | r8 | 2026-10-04 | テストベクターモードでも加入者登録を必須にした実装修正の反映: §10.1 `GenerateVector` をテストモードと通常モードの共通処理に更新（テストモードで置き換えるのは Ki/OPc/AMF だけ。加入者の取得・SQN の解析と書き戻し・エラー処理は通常モードと同じで、未登録IMSIは404、Valkeyエラー・SQN書き戻し失敗は500、SQN解析失敗はエラー）し、旧 `generateTestVector` を削除、テストモードの注記を追加。§11.1 から `TEST_SQN_FALLBACK` / `TEST_SQN_PARSE_ERR` / `TEST_SQN_PERSIST_ERR` を削除し、`CALC_ERR` / `VALKEY_CONN_ERR` / `CALC_OK` の説明にテストベクターモードの扱いを追記。§13.5 の概要・判定ロジック・注意事項を実装どおりに修正（固定ベクター返却・SQN非永続・再同期スキップの記述を、固定 Ki/OPc/AMF で計算・加入者登録必須・SQN は通常どおり管理・再同期も通常どおりに訂正）し、テストベクター実装のコード例を現行の `testvector.go`（`NewTestVectorProvider(imsiPrefix)`、`GetTestCryptoParams()`）に更新。§2.5・§12.3 の `TestVectorProvider` インターフェースに `GetTestCryptoParams()` を追記し、§2.1 ディレクトリ構造のコメント・§2.3 パッケージ一覧・§2.7 ファイル別責務を更新。§1.3 関連ドキュメントの版数を更新（D-02 r14、D-04 r22） |
 | r9 | 2026-10-04 | vector-api のログ整理・未使用コード削除の実装修正の反映: §5.1 ハンドラーのコードを実装に合わせ更新（`usecase.ContextWithTraceID` で Trace ID を context に載せる、`CALC_OK` に `test_mode`、ProblemError 経路のログに `error` 属性（原因を含むエラー文。応答の detail は従来どおり）、IMSIマスクは `logging.MaskIMSI`、依存インターフェースは `usecase.VectorUseCaseInterface`）。§10.1 `processResync` に `ctx` / `imsi` 引数を追加し `SQN_RESYNC` に `trace_id`・マスク済み `imsi` を出力、SQNデルタ超過時のユースケース層のログを削除しSQN値をエラー文に含める形に、テストモードの `test vector generated` ログを削除、`IsTestMode()` / `maskIMSI()` と `internal/usecase/trace.go`（`ContextWithTraceID`）を追記。§8.3 から未使用で削除した `GetWithRetry`（リトライ・`isConnectionError`）のコードを削除しアプリ独自のリトライなし（go-redis の既定の自動リトライのみ）の説明に変更、§9.3 から削除した `ErrInvalidIMSI` を削除しエラー文の扱いを注記、§9.4 に `error` 属性を追記。§11.1・§11.2 のログ（`CALC_OK` の `test_mode`、`SQN_RESYNC` の `trace_id` / `imsi`、`SQN_RESYNC_DELTA_ERR` の1行化、`error` 属性）を更新。§2.1・§2.5・§2.7・§12.3 に `trace.go` と `VectorUseCaseInterface`（`IsTestMode` を追加）を反映。§3.1・§3.3 に `LOG_LEVEL` を `pkg/logging.ParseLevel` で変換する旨を追記。§1.3 の D-04 / D-06 / E-03 の参照版数を更新 |
+| r10 | 2026-10-04 | SQN競合制御（CAS）の実装の反映: 方式を WATCH/MULTI から Lua スクリプトによる `sqn` フィールドの比較・置き換えに変更して実装した。§7.5 を「SQN競合制御の検討」から「SQN競合制御」に改め、検討した方式の採否と理由・守る性質（SQN は IMSI ごとに一意で単調増加、飛ぶのは許容）を記載。§8.2 の `UpdateSQN`（単純な HSET、後勝ち）を `CompareAndSetSQN`（Lua、期待値は読んだ生の文字列、キーが無ければ作らない）に置き換え、§8.3 を合わせて修正。§8.4 のデータアクセスフローを1回の試行（CAS → 成功後に Milenage 計算）と競合時のやり直しに更新（r9 までは計算後に書き戻していた）。§9.1 / §9.3 に `ErrSQNConflict`（409、`SQN_CONFLICT_ERR`、WARN、detail に IMSI・原因を含めない）を追加。§10.1 のコードを実装（`GenerateVector` の最大3回の試行、`generateOnce`、`processResync` の戻り値 `resyncResult` と再同期のやり直しで SQN_HE >= SQN_MS なら同期済みとみなして +32、`logResync` で CAS 成功後に `SQN_RESYNC` を1回、`waitRandom` で 1〜10ms 待つ）に更新し、SQN競合制御の注記を追加。§11.1 / §11.2 に `SQN_CONFLICT_RETRY`（WARN、`attempt`）・`SQN_CONFLICT_ERR` と出力例を追加し、`SQN_RESYNC` の出力タイミングと msg（2種類）を明記。§13.6 を実装済みとして全面的に書き直し（方式詳細、処理フロー、再同期のやり直しの扱いと理由、409 応答、Lua スクリプト、ハンドラー・呼び出し側の扱い、409 を 5xx にしない理由、残っている制約）。§13.3 の SQN競合制御の行を Admin TUI の `sqn` 上書きの制約に、§13.4 に store・並行性のテストを追記。§2.1 のディレクトリ構造（テストファイル追加）、§2.5 / §2.7 / §12.3 のインターフェース・ファイル責務を更新。§1.3 参照版数更新（D-02 r18、D-03 r8、D-04 r28、D-06 r15） |
+| r11 | 2026-10-04 | Admin TUI の加入者編集による `sqn` の上書き（巻き戻り）を解消した実装修正の反映: §13.6.9 を「残っている制約」から「Admin TUI の書き込みとの関係」に改め、Admin TUI は SQN を変えていなければ `sqn` を書かず、変えたときは編集開始時の値と一致するときだけ書き込むこと（Vector API の CAS との関係）、比較せずに書き込むのは新規作成と CSV インポートだけであることを記載。§13.3 の SQN競合制御の行を合わせて修正し、将来対応を削除。§1.3 参照版数更新（D-02 r19、D-04 r29） |
