@@ -13,6 +13,7 @@ import (
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/acct-server/internal/server"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/acct-server/internal/session"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/acct-server/internal/store"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/logging"
 )
 
 func main() {
@@ -23,14 +24,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 2. ロガー初期化（JSON形式、INFO以上）
+	// 2. ロガー初期化（JSON形式、LOG_LEVEL 以上。既定 INFO）
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
+		Level: logging.ParseLevel(cfg.LogLevel),
 	})).With("app", "acct-server")
 	slog.SetDefault(logger)
 
 	slog.Info("acct-server起動開始",
 		"listen_addr", cfg.ListenAddr,
+		"log_level", cfg.LogLevel,
 	)
 
 	// 3. Valkeyクライアント初期化

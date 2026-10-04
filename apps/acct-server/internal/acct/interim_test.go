@@ -28,10 +28,7 @@ func TestProcessInterim(t *testing.T) {
 		OutputOctets:    2000,
 	}
 
-	err := proc.ProcessInterim(ctx, attrs, "192.168.1.1", "trace-1")
-	if err != nil {
-		t.Fatalf("ProcessInterim failed: %v", err)
-	}
+	proc.ProcessInterim(ctx, attrs, "192.168.1.1", "trace-1")
 }
 
 func TestProcessInterim_Duplicate(t *testing.T) {
@@ -48,13 +45,10 @@ func TestProcessInterim_Duplicate(t *testing.T) {
 	}
 
 	// 1回目
-	_ = proc.ProcessInterim(ctx, attrs, "192.168.1.1", "trace-1")
+	proc.ProcessInterim(ctx, attrs, "192.168.1.1", "trace-1")
 
 	// 2回目（同値→重複）
-	err := proc.ProcessInterim(ctx, attrs, "192.168.1.1", "trace-2")
-	if err != nil {
-		t.Fatalf("ProcessInterim should not return error on duplicate: %v", err)
-	}
+	proc.ProcessInterim(ctx, attrs, "192.168.1.1", "trace-2")
 }
 
 func TestProcessInterim_NoStart(t *testing.T) {
@@ -69,10 +63,7 @@ func TestProcessInterim_NoStart(t *testing.T) {
 	}
 
 	// StartなしでInterim - ACCT_SEQUENCE_ERRログが出るが正常終了
-	err := proc.ProcessInterim(ctx, attrs, "192.168.1.1", "trace-1")
-	if err != nil {
-		t.Fatalf("ProcessInterim should not return error: %v", err)
-	}
+	proc.ProcessInterim(ctx, attrs, "192.168.1.1", "trace-1")
 }
 
 func TestProcessInterim_WithSession(t *testing.T) {
@@ -93,10 +84,7 @@ func TestProcessInterim_WithSession(t *testing.T) {
 		OutputOctets:    10000,
 	}
 
-	err := proc.ProcessInterim(ctx, attrs, "192.168.1.2", "trace-1")
-	if err != nil {
-		t.Fatalf("ProcessInterim failed: %v", err)
-	}
+	proc.ProcessInterim(ctx, attrs, "192.168.1.2", "trace-1")
 
 	// セッションが更新されていることを確認
 	nasIP := mr.HGet("sess:interim-session-uuid", "nas_ip")
@@ -119,15 +107,12 @@ func TestProcessInterim_DifferentOctets(t *testing.T) {
 	}
 
 	// 1回目
-	_ = proc.ProcessInterim(ctx, attrs, "192.168.1.1", "trace-1")
+	proc.ProcessInterim(ctx, attrs, "192.168.1.1", "trace-1")
 
 	// 2回目（異なる値→非重複）
 	attrs.InputOctets = 2000
 	attrs.OutputOctets = 4000
-	err := proc.ProcessInterim(ctx, attrs, "192.168.1.1", "trace-2")
-	if err != nil {
-		t.Fatalf("ProcessInterim should not return error: %v", err)
-	}
+	proc.ProcessInterim(ctx, attrs, "192.168.1.1", "trace-2")
 }
 
 // captureLog はテスト中のslog出力をバッファに取り込む
@@ -144,13 +129,13 @@ func TestProcessInterim_SequenceAndDuplicateLogs(t *testing.T) {
 	tests := []struct {
 		name       string
 		prev       string // acct:seen の直前の値（空なら未登録）
-		wantEvent  string // 出力されるべき event_id（空なら ACCT_SEQUENCE_ERR / ACCT_DUPLICATE_START が出ないこと）
+		wantEvent  string // 出力されるべき event_id（空なら ACCT_SEQUENCE_ERR / ACCT_DUPLICATE_* が出ないこと）
 		wantReason string
 	}{
 		{"interim after start has no sequence error", "start", "", ""},
 		{"interim without start", "", "ACCT_SEQUENCE_ERR", "no_start_received"},
 		{"interim after stop", "stop", "ACCT_SEQUENCE_ERR", "interim_after_stop"},
-		{"duplicate interim", "interim:1000:2000", "ACCT_DUPLICATE_START", ""},
+		{"duplicate interim", "interim:1000:2000", "ACCT_DUPLICATE_INTERIM", ""},
 	}
 
 	for _, tt := range tests {
@@ -167,12 +152,10 @@ func TestProcessInterim_SequenceAndDuplicateLogs(t *testing.T) {
 				InputOctets:    1000,
 				OutputOctets:   2000,
 			}
-			if err := proc.ProcessInterim(context.Background(), attrs, "192.168.1.1", "trace-1"); err != nil {
-				t.Fatalf("ProcessInterim failed: %v", err)
-			}
+			proc.ProcessInterim(context.Background(), attrs, "192.168.1.1", "trace-1")
 
 			out := logs.String()
-			for _, ev := range []string{"ACCT_SEQUENCE_ERR", "ACCT_DUPLICATE_START"} {
+			for _, ev := range []string{"ACCT_SEQUENCE_ERR", "ACCT_DUPLICATE_START", "ACCT_DUPLICATE_INTERIM"} {
 				has := strings.Contains(out, `"event_id":"`+ev+`"`)
 				if has != (ev == tt.wantEvent) {
 					t.Errorf("%s logged = %v, want %v: %s", ev, has, ev == tt.wantEvent, out)
@@ -182,7 +165,7 @@ func TestProcessInterim_SequenceAndDuplicateLogs(t *testing.T) {
 				t.Errorf("reason %q not logged: %s", tt.wantReason, out)
 			}
 			// 重複以外は ACCT_INTERIM まで処理される
-			if has := strings.Contains(out, `"event_id":"ACCT_INTERIM"`); has == (tt.wantEvent == "ACCT_DUPLICATE_START") {
+			if has := strings.Contains(out, `"event_id":"ACCT_INTERIM"`); has == (tt.wantEvent == "ACCT_DUPLICATE_INTERIM") {
 				t.Errorf("ACCT_INTERIM logged = %v: %s", has, out)
 			}
 		})
@@ -201,9 +184,7 @@ func TestProcessInterim_SessionNotFound(t *testing.T) {
 		InputOctets:    1000,
 		OutputOctets:   2000,
 	}
-	if err := proc.ProcessInterim(context.Background(), attrs, "192.168.1.1", "trace-1"); err != nil {
-		t.Fatalf("ProcessInterim failed: %v", err)
-	}
+	proc.ProcessInterim(context.Background(), attrs, "192.168.1.1", "trace-1")
 
 	// 不在のセッションキーを作らない
 	if mr.Exists("sess:missing-session-uuid") {
@@ -228,9 +209,7 @@ func TestProcessInterim_ValkeyError(t *testing.T) {
 		OutputOctets:   2000,
 	}
 	// Valkey障害時もエラーを返さず、ログを出して処理を継続する
-	if err := proc.ProcessInterim(context.Background(), attrs, "192.168.1.1", "trace-1"); err != nil {
-		t.Fatalf("ProcessInterim should not return error: %v", err)
-	}
+	proc.ProcessInterim(context.Background(), attrs, "192.168.1.1", "trace-1")
 	if out := logs.String(); !strings.Contains(out, `"event_id":"VALKEY_CONN_ERR"`) {
 		t.Errorf("VALKEY_CONN_ERR not logged: %s", out)
 	}

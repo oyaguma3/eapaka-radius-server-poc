@@ -18,7 +18,8 @@ type Config struct {
 	ListenAddr   string `envconfig:"LISTEN_ADDR" default:":1813"`
 
 	// ログ設定
-	LogMaskIMSI bool `envconfig:"LOG_MASK_IMSI" default:"true"`
+	LogLevel    string `envconfig:"LOG_LEVEL" default:"INFO"`
+	LogMaskIMSI bool   `envconfig:"LOG_MASK_IMSI" default:"true"`
 }
 
 // Load は環境変数から設定を読み込む

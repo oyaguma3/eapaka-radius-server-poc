@@ -45,10 +45,7 @@ func TestProcessStart(t *testing.T) {
 		FramedIPAddress: "10.0.0.1",
 	}
 
-	err := proc.ProcessStart(ctx, attrs, "192.168.1.1", "trace-1")
-	if err != nil {
-		t.Fatalf("ProcessStart failed: %v", err)
-	}
+	proc.ProcessStart(ctx, attrs, "192.168.1.1", "trace-1")
 
 	// セッションが更新されていることを確認
 	acctID := mr.HGet("sess:550e8400-e29b-41d4-a716-446655440000", "acct_id")
@@ -67,13 +64,10 @@ func TestProcessStart_Duplicate(t *testing.T) {
 	}
 
 	// 1回目
-	_ = proc.ProcessStart(ctx, attrs, "192.168.1.1", "trace-1")
+	proc.ProcessStart(ctx, attrs, "192.168.1.1", "trace-1")
 
 	// 2回目（重複）- エラーなしで正常終了するべき
-	err := proc.ProcessStart(ctx, attrs, "192.168.1.1", "trace-2")
-	if err != nil {
-		t.Fatalf("ProcessStart should not return error on duplicate: %v", err)
-	}
+	proc.ProcessStart(ctx, attrs, "192.168.1.1", "trace-2")
 }
 
 func TestProcessStart_NoSession(t *testing.T) {
@@ -87,10 +81,7 @@ func TestProcessStart_NoSession(t *testing.T) {
 	}
 
 	// セッション不在でもエラーにならない
-	err := proc.ProcessStart(ctx, attrs, "192.168.1.1", "trace-1")
-	if err != nil {
-		t.Fatalf("ProcessStart should not return error for missing session: %v", err)
-	}
+	proc.ProcessStart(ctx, attrs, "192.168.1.1", "trace-1")
 }
 
 func TestProcessStart_AfterStop(t *testing.T) {
@@ -106,10 +97,7 @@ func TestProcessStart_AfterStop(t *testing.T) {
 	_ = proc.duplicateDetector.MarkAsStopped(ctx, "sess-restart")
 
 	// Stop後のStart（SequenceErrorが発生するが処理は継続）
-	err := proc.ProcessStart(ctx, attrs, "192.168.1.1", "trace-1")
-	if err != nil {
-		t.Fatalf("ProcessStart should not return error after stop: %v", err)
-	}
+	proc.ProcessStart(ctx, attrs, "192.168.1.1", "trace-1")
 }
 
 func TestProcessStart_WithExistingSession(t *testing.T) {
@@ -128,10 +116,7 @@ func TestProcessStart_WithExistingSession(t *testing.T) {
 		FramedIPAddress: "10.0.0.2",
 	}
 
-	err := proc.ProcessStart(ctx, attrs, "192.168.1.1", "trace-1")
-	if err != nil {
-		t.Fatalf("ProcessStart failed: %v", err)
-	}
+	proc.ProcessStart(ctx, attrs, "192.168.1.1", "trace-1")
 
 	// セッションが更新されていることを確認
 	acctID := mr.HGet("sess:existing-uuid", "acct_id")
