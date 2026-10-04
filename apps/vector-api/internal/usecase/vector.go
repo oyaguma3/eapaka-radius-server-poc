@@ -8,6 +8,7 @@ import (
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-api/internal/config"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-api/internal/dto"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-api/internal/milenage"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/logging"
 )
 
 // VectorUseCase はベクター生成ユースケースを実装する。
@@ -172,7 +173,7 @@ func (u *VectorUseCase) generateTestVector(ctx context.Context, req *dto.VectorR
 		currentSQN = u.testVectorProvider.GetDefaultSQN()
 		slog.Info("test mode: using default SQN (Valkey unavailable or subscriber not found)",
 			"event_id", "TEST_SQN_FALLBACK",
-			"imsi", req.IMSI,
+			"imsi", u.maskIMSI(req.IMSI),
 			"default_sqn", fmt.Sprintf("%012x", currentSQN),
 		)
 	} else {
@@ -213,7 +214,7 @@ func (u *VectorUseCase) generateTestVector(ctx context.Context, req *dto.VectorR
 	if err := u.subscriberStore.UpdateSQN(ctx, req.IMSI, newSQNHex); err != nil {
 		slog.Warn("test mode: failed to persist SQN to Valkey",
 			"event_id", "TEST_SQN_PERSIST_ERR",
-			"imsi", req.IMSI,
+			"imsi", u.maskIMSI(req.IMSI),
 			"error", err.Error(),
 		)
 	}
@@ -225,4 +226,14 @@ func (u *VectorUseCase) generateTestVector(ctx context.Context, req *dto.VectorR
 	)
 
 	return milenage.VectorToResponse(vector), nil
+}
+
+// maskIMSI はログ出力用にIMSIをマスキングする。
+// 設定が無い場合はマスキングを有効として扱う（LOG_MASK_IMSI の既定値 true に合わせる）。
+func (u *VectorUseCase) maskIMSI(imsi string) string {
+	enabled := true
+	if u.cfg != nil {
+		enabled = u.cfg.LogMaskIMSI
+	}
+	return logging.MaskIMSI(imsi, enabled)
 }

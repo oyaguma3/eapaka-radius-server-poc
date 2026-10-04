@@ -1,9 +1,12 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/auth-server/internal/config"
@@ -1896,5 +1899,58 @@ func TestEngine_Resync_CtxUpdateError_Reject(t *testing.T) {
 	}
 	if result.Action != eap.ActionReject {
 		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
+	}
+}
+
+// TestEngine_IdentityLog_UserNameMasked はIdentity解析失敗時のログでUser-Name内のIMSIがマスクされることを確認する
+func TestEngine_IdentityLog_UserNameMasked(t *testing.T) {
+	tests := []struct {
+		name      string
+		userName  string
+		maskIMSI  bool
+		eventID   string
+		wantInLog string
+		notInLog  string
+	}{
+		{"unsupported identity masked", "1001010123456789@realm", true, "EAP_UNSUPPORTED_TYPE", `"user_name":"1001010********9@realm"`, "001010123456789"},
+		{"invalid identity masked", "X001010123456789@realm", true, "EAP_IDENTITY_INVALID", `"user_name":"X001010********9@realm"`, "001010123456789"},
+		{"masking disabled", "1001010123456789@realm", false, "EAP_UNSUPPORTED_TYPE", `"user_name":"1001010123456789@realm"`, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			var buf bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+			defer slog.SetDefault(prev)
+
+			cfg := newTestConfig()
+			cfg.LogMaskIMSI = tt.maskIMSI
+			eng := NewEngine(mocks.NewMockVectorClient(ctrl), mocks.NewMockContextStore(ctrl), mocks.NewMockSessionStore(ctrl),
+				mocks.NewMockPolicyStore(ctrl), mocks.NewMockEvaluator(ctrl), cfg)
+
+			req := &eap.Request{
+				TraceID:    testTraceID,
+				UserName:   tt.userName,
+				EAPMessage: buildIdentityEAPMessage(1, eapaka.TypeAKA),
+			}
+			if _, err := eng.Process(context.Background(), req); err != nil {
+				t.Fatalf("予期しないエラー: %v", err)
+			}
+
+			logs := buf.String()
+			if !strings.Contains(logs, `"event_id":"`+tt.eventID+`"`) {
+				t.Fatalf("%s が出力されていない: %s", tt.eventID, logs)
+			}
+			if !strings.Contains(logs, tt.wantInLog) {
+				t.Errorf("ログに %s が含まれない: %s", tt.wantInLog, logs)
+			}
+			if tt.notInLog != "" && strings.Contains(logs, tt.notInLog) {
+				t.Errorf("ログにマスクされていないIMSIが含まれる: %s", logs)
+			}
+		})
 	}
 }

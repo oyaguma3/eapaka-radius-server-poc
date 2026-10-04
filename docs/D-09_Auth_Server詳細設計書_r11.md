@@ -1,4 +1,4 @@
-﻿# D-09 Auth Server詳細設計書 (r10)
+﻿# D-09 Auth Server詳細設計書 (r11)
 
 ## ■セクション1: 概要
 
@@ -26,9 +26,9 @@
 | D-01 | ミニPC版設計仕様書 (r10) | システム構成、パッケージ利用マップ |
 | D-02 | Valkeyデータ設計仕様書 (r10) | データ構造、キー設計、Go構造体 |
 | D-03 | Vector-API/ステートマシン設計書 (r6) | API仕様、EAP状態遷移、Vector Gateway経由接続 |
-| D-04 | ログ仕様設計書 (r19) | event_id定義、ログフォーマット、IMSIマスキング |
+| D-04 | ログ仕様設計書 (r20) | event_id定義、ログフォーマット、IMSIマスキング |
 | D-05 | Acct Server詳細設計書 (r5) | セッション管理連携、Accounting処理 |
-| D-06 | エラーハンドリング詳細設計書 (r7) | エラー分類、タイムアウト、Circuit Breaker |
+| D-06 | エラーハンドリング詳細設計書 (r8) | エラー分類、タイムアウト、Circuit Breaker |
 | D-07 | TUI管理ツール詳細設計書 (r3) | 管理用TUIアプリケーション |
 | D-08 | インフラ設定・運用設計書 (r14) | Docker Compose構成、環境変数 |
 | D-12 | Vector Gateway詳細設計書 (r5) | Gateway API仕様、ルーティング、IMSIマスキング |
@@ -116,9 +116,6 @@ apps/auth-server/
     ├── engine/
     │   ├── engine.go              # 認証エンジン（EAP処理オーケストレーション）
     │   └── engine_test.go         # engine テスト
-    ├── logging/
-    │   ├── mask.go                # IMSIマスキング
-    │   └── mask_test.go           # mask テスト
     ├── mocks/
     │   ├── eap_mock.go            # EAPモック
     │   ├── policy_mock.go         # ポリシーモック
@@ -399,11 +396,7 @@ ENTRYPOINT ["/usr/local/bin/auth-server"]
 |---------|------|-------------|
 | `engine.go` | 認証エンジン（EAP処理のオーケストレーション） | `Engine`, 各サービス層の統合制御 |
 
-#### `internal/logging/`
-
-| ファイル | 責務 | 主要関数・型 |
-|---------|------|-------------|
-| `mask.go` | IMSIマスキング | `MaskIMSI()` |
+> **注記:** IMSIマスキングは共通ライブラリ `pkg/logging`（`MaskIMSI()` / `MaskUserName()`）を使用する。auth-server 固有の `internal/logging` パッケージは pkg への統合により廃止済み（E-03 参照）。
 
 #### `internal/mocks/`
 
@@ -680,22 +673,29 @@ func main() {
 | `true`（デフォルト） | 先頭6桁 + マスク + 末尾1桁 | `440101********0` |
 | `false` | マスクなし（全桁表示） | `440101234567890` |
 
+**User-Name（EAP Identity）のマスキング:** IMSIを抽出できないIdentityを出力する `user_name` 属性は、`pkg/logging.MaskUserName` でマスクする（D-04 §4.4.2）。`"@"` より前（ローカル部）だけを対象とし、realmは残す。
+
+| ローカル部の形式 | 動作（`LOG_MASK_IMSI=true`） | 出力例 |
+|------------------|------------------------------|--------|
+| 種別1文字＋IMSI 15桁（EAP-SIMの `1` 等） | 種別文字を残し、IMSI部分に `MaskIMSI` を適用 | `1440101234567890@realm` → `1440101********0@realm` |
+| IMSI 15桁のみ | `MaskIMSI` を適用 | `440101234567890` → `440101********0` |
+| 上記以外（仮名・再認証ID・不正形式） | 先頭7文字と末尾1文字を残してマスク（8文字以下はそのまま） | `2some-pseudonym@example` → `2some-p*******m@example` |
+
 #### 3.5.3 実装
 
+マスキング関数は共通ライブラリ `pkg/logging`（E-03）の `MaskIMSI` / `MaskUserName` を使用し、認証エンジンは `LOG_MASK_IMSI` の設定値を渡すラッパーメソッドを持つ。
+
 ```go
-// internal/logging/mask.go
+// internal/engine/engine.go
 
-package logging
+// maskIMSI はログ出力用にIMSIをマスキングする
+func (e *EngineImpl) maskIMSI(imsi string) string {
+    return logging.MaskIMSI(imsi, e.cfg.LogMaskIMSI)
+}
 
-// MaskIMSI はIMSIをマスキングする
-func MaskIMSI(imsi string, enabled bool) string {
-    if !enabled {
-        return imsi
-    }
-    if len(imsi) <= 6 {
-        return imsi
-    }
-    return imsi[:6] + "********" + imsi[len(imsi)-1:]
+// maskUserName はUser-Name（EAP Identity）内のIMSIをマスキングする
+func (e *EngineImpl) maskUserName(userName string) string {
+    return logging.MaskUserName(userName, e.cfg.LogMaskIMSI)
 }
 ```
 
@@ -716,8 +716,9 @@ Auth Serverにおいて、以下のevent_idを含むログ出力時にマスキ�
 | `AUTH_POLICY_NOT_FOUND` | ポリシー未設定時 | マスキング対象 |
 | `AUTH_POLICY_DENIED` | ポリシー拒否時 | マスキング対象 |
 | `AUTH_RESYNC_LIMIT` | 再同期上限超過時 | マスキング対象 |
+| `EAP_UNSUPPORTED_TYPE` / `EAP_IDENTITY_INVALID` | 非対応のIdentity種別 / Identity解析失敗 / 永続ID要求への応答が仮名・再認証ID（初回Identity・AKA-Identity応答とも） | `imsi` なし。`user_name` を `MaskUserName` でマスキング |
 
-> **注記:** `EAP_UNSUPPORTED_TYPE` / `EAP_IDENTITY_INVALID` は IMSI を抽出できない Identity を `user_name` 属性に**マスクせず**出力する（D-04 §4.5）。セッション作成成功時の専用ログはない（`AUTH_SUCCESS` の `session_id` で確認する）。
+> **注記:** `EAP_UNSUPPORTED_TYPE` / `EAP_IDENTITY_INVALID` は IMSI を抽出できない Identity（EAP-SIMの永続ID等、IMSIを含む場合がある）を `user_name` 属性に出力するため、`MaskUserName` でマスクする（D-04 §4.4.2）。セッション作成成功時の専用ログはない（`AUTH_SUCCESS` の `session_id` で確認する）。
 
 **実装例:**
 
@@ -4426,11 +4427,9 @@ var (
 | ----------------- | ------ | -------------------------------------------- |
 | `Engine`          | struct | 認証エンジン（EAP処理オーケストレーション）   |
 
-#### 10.7.12 internal/logging
+#### 10.7.12 internal/logging（廃止）
 
-| エクスポート      | 種別 | 説明             |
-| ----------------- | ---- | ---------------- |
-| `MaskIMSI()`      | func | IMSIマスキング   |
+IMSIマスキングは `pkg/logging` の `MaskIMSI()` / `MaskUserName()` を使用する（auth-server 固有のパッケージは廃止済み）。
 
 ### 10.8 依存関係図
 
@@ -4546,3 +4545,4 @@ Auth Server内で直接参照する外部パッケージの型：
 | r8 | 2026-01-27 | ヘルスチェック整合性修正: セクション2.6.1 Dockerfileに`procps`パッケージ追加、セクション2.6.3必須パッケージに`procps`追記（pgrep用） |
 | r9 | 2026-02-18 | ディレクトリ構造全面更新、ポリシー評価ロジック更新、関連ドキュメント版数更新 |
 | r10 | 2026-10-04 | 既存記載の実装との不一致を修正: Vector Gateway 404時のevent_idを `AUTH_IMSI_NOT_FOUND` → `VECTOR_IMSI_NOT_FOUND` に修正（§3.5.4、§7.8.3）、§7.8.3の呼び出し元でのevent_id表を実装（engine.go `logVectorError`）に合わせて更新（`VECTOR_CONN_ERR` / `VECTOR_CB_OPEN` / `VECTOR_UNKNOWN_ERR` 追加、HTTPクライアント層との2行出力を注記）、§7.8.1に403/409を追加、§7.10のCBログ属性を実装に合わせて修正（`CB_CLOSE` の `recovery_time_ms` 削除、`failure_count` は常に0）、§7.4.2のエラー応答例（404）のdetailを実装の文言に修正、関連ドキュメント版数更新（D-01 r10、D-03 r6、D-04 r19、D-06 r7、D-08 r14、D-12 r5、E-02 r3）。D-04 r19 の event_id 全面整合に合わせて修正（§3.5.4 マスキング適用表・実装例の `AUTH_OK` を `AUTH_SUCCESS`（属性 `trace_id`, `imsi`, `session_id`）に修正し実装にない `SESSION_CREATED` を削除、imsi を出力する event_id を追加、§4.6 の `AUTH_OK` を `AUTH_SUCCESS` に修正、§5.2 Secret解決ログに `RADIUS_IP_EXTRACT_ERR` / `RADIUS_SECRET_ERR` を追加、§5.10 の `RADIUS_AUTH_ERR` / `RADIUS_UNKNOWN_CODE` を `PKT_MA_INVALID` / `PKT_UNKNOWN_CODE` に修正し `PKT_RECV` の属性を `code` に修正、`PKT_NO_EAP` / `PKT_DROP` / `PKT_SEND_ERR` / `EAP_ENGINE_ERR` / `RADIUS_STATUS_OK` / `RADIUS_STATUS_AUTH_FAIL` を追加、§6.5.3 の `EAP_INVALID_STATE` を `EAP_STATE_ERR` / `EAP_UNEXPECTED_IDENTITY` に修正、§6.10 の `EAP_PSEUDONYM_FALLBACK` を削除（専用ログなし）、§8.7〜§8.10 の `POLICY_PARSE_ERR` を `AUTH_POLICY_NOT_FOUND` に統合し `AUTH_POLICY_NOT_FOUND` / `AUTH_POLICY_DENIED` を WARN・実装の属性に修正、§9.5.3 の `EAP_CONTEXT_NOT_FOUND` / `ACCT_SESSION_EXPIRED` を `EAP_CTX_NOT_FOUND` / `ACCT_SESSION_NOT_FOUND` に修正、§9.8.2/§9.9 の `EAP_CONTEXT_NOT_FOUND` / `EAP_CONTEXT_INVALID` / 実行時 `VALKEY_CONN_ERR` / `SESSION_CREATED` / `VALKEY_CONN_RESTORED` を実装の event_id に修正、起動時 `VALKEY_CONN_ERR` の msg を実装に合わせ、`slog.With` による trace_id 付与の記述を D-04 §4.1 に合わせて修正） |
+| r11 | 2026-10-04 | ログのIMSIマスク漏れ修正の反映: §3.5.2にUser-Name（EAP Identity）のマスク規則（pkg/logging.MaskUserName）を追記、§3.5.3の実装を pkg/logging の MaskIMSI / MaskUserName を使う認証エンジンのラッパーメソッド（maskIMSI / maskUserName）に更新、§3.5.4適用箇所にEAP_UNSUPPORTED_TYPE / EAP_IDENTITY_INVALIDの `user_name` を追加し「マスクせず出力」の注記を修正。関連ドキュメント参照版数更新（D-04 r19→r20、D-06 r7→r8）。あわせて、廃止済みの internal/logging（mask.go）のパッケージ構成記載を削除し、pkg/logging を使う旨に修正 |

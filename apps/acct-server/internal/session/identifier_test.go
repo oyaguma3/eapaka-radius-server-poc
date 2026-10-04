@@ -66,6 +66,22 @@ func TestResolveIMSI_UserNameNotIMSI(t *testing.T) {
 	}
 }
 
+func TestResolveIMSI_UserNameNotExtractable_Masked(t *testing.T) {
+	ctx := context.Background()
+
+	// EAP-SIM形式（先頭"1"）はIMSI抽出対象外だが、IMSIを含むためマスクして返す
+	_, resolver := setupIdentifierResolver(t, true)
+	if got := resolver.ResolveIMSI(ctx, "", "1001010123456789@example.com", ""); got != "1001010********9@example.com" {
+		t.Errorf("ResolveIMSI(mask=true) = %q, want %q", got, "1001010********9@example.com")
+	}
+
+	// マスク無効時はそのまま返す
+	_, resolver = setupIdentifierResolver(t, false)
+	if got := resolver.ResolveIMSI(ctx, "", "1001010123456789@example.com", ""); got != "1001010123456789@example.com" {
+		t.Errorf("ResolveIMSI(mask=false) = %q, want %q", got, "1001010123456789@example.com")
+	}
+}
+
 func TestResolveIMSI_FromClassUUID(t *testing.T) {
 	_, resolver := setupIdentifierResolver(t, true)
 	ctx := context.Background()

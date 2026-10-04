@@ -1,4 +1,4 @@
-# D-10 Acct Server詳細設計書 (r7)
+# D-10 Acct Server詳細設計書 (r8)
 
 ## ■セクション1: 概要
 
@@ -26,13 +26,13 @@
 | D-01 | ミニPC版設計仕様書 (r10) | システム構成、パッケージ利用マップ |
 | D-02 | Valkeyデータ設計仕様書 (r12) | データ構造、キー設計、Go構造体 |
 | D-03 | Vector-APIインターフェース定義書およびEAP-AKAステートマシン設計書 (r6) | 認証フロー |
-| D-04 | ログ仕様設計書 (r19) | event_id定義、ログフォーマット、IMSIマスキング |
-| D-06 | エラーハンドリング詳細設計書 (r7) | エラー分類、タイムアウト、リトライ戦略 |
+| D-04 | ログ仕様設計書 (r20) | event_id定義、ログフォーマット、IMSIマスキング |
+| D-06 | エラーハンドリング詳細設計書 (r8) | エラー分類、タイムアウト、リトライ戦略 |
 | D-11 | Vector API詳細設計書 (r7) | AKA認証ベクター生成 |
 | D-08 | インフラ設定・運用設計書 (r14) | Docker Compose設定、環境変数 |
-| D-09 | Auth Server詳細設計書 (r10) | セッション作成処理（Class属性設定） |
+| D-09 | Auth Server詳細設計書 (r11) | セッション作成処理（Class属性設定） |
 | E-02 | コーディング規約（簡易版） (r3) | コーディング規約 |
-| E-03 | 共通ライブラリ(pkg)設計書 (r3) | 共通ライブラリ（pkg） |
+| E-03 | 共通ライブラリ(pkg)設計書 (r4) | 共通ライブラリ（pkg） |
 
 ### 1.4 PoC対象外機能
 
@@ -90,9 +90,6 @@ apps/acct-server/
     │   ├── config.go                 # 環境変数読み込み、設定構造体
     │   ├── config_test.go            # config.goのテスト
     │   └── constants.go              # 定数定義
-    ├── logging/
-    │   ├── mask.go                    # IMSIマスキング処理
-    │   └── mask_test.go              # mask.goのテスト
     ├── mocks/
     │   ├── acct_mock.go              # acctパッケージモック
     │   ├── session_mock.go           # sessionパッケージモック
@@ -1384,67 +1381,81 @@ func (m *Manager) RemoveUserIndex(ctx context.Context, imsi, uuid string) error 
 |--------|------|--------|
 | 1 | セッション（`sess:{UUID}`）からIMSI取得成功 | マスク済みIMSI |
 | 2 | User-NameからIMSI抽出成功 | マスク済みIMSI |
-| 3 | IMSI抽出失敗、User-Name取得成功 | User-Nameの値（そのまま） |
+| 3 | IMSI抽出失敗、User-Name取得成功 | マスク済みUser-Name（`logging.MaskUserName`。§6.3） |
 | 4 | User-Name取得失敗、Class取得成功 | ClassのUUID |
 | 5 | Class取得失敗 | `"unknown"` |
 
 ### 6.2 IMSI抽出ロジック
+
+`ResolveIMSI` は `Start` / `Interim` / `Stop` の各プロセッサから `attrs.UserName`・`attrs.ClassUUID` を渡して呼び出す（`internal/session/interfaces.go` の `IdentifierResolver` インターフェース）。
 
 ```go
 // internal/session/identifier.go
 package session
 
 import (
+    "context"
     "regexp"
     "strings"
+
+    "github.com/oyaguma3/eapaka-radius-server-poc/pkg/logging"
 )
 
 var imsiPattern = regexp.MustCompile(`^[0-9]{15}$`)
 
-// IdentifierResolver はログ出力用の識別子を解決する
-type IdentifierResolver struct {
-    sessionManager *Manager
+// identifierResolver はIdentifierResolverインターフェースの実装。
+type identifierResolver struct {
+    sessionManager SessionManager
     maskEnabled    bool
 }
 
-// ResolveIMSI はログ出力用のIMSI/識別子を取得する
-func (r *IdentifierResolver) ResolveIMSI(ctx context.Context, sessionUUID string, attrs *AccountingAttributes) string {
+// NewIdentifierResolver は新しいIdentifierResolverを生成する。
+func NewIdentifierResolver(sm SessionManager, maskEnabled bool) IdentifierResolver {
+    return &identifierResolver{
+        sessionManager: sm,
+        maskEnabled:    maskEnabled,
+    }
+}
+
+// ResolveIMSI はログ出力用のIMSI/識別子を取得する。
+// 優先順位: セッション→User-Name→Class UUID→"unknown"
+func (r *identifierResolver) ResolveIMSI(ctx context.Context, sessionUUID, userName, classUUID string) string {
     // 1. セッションからIMSI取得
     if sessionUUID != "" {
-        session, err := r.sessionManager.Get(ctx, sessionUUID)
-        if err == nil && session != nil && session.IMSI != "" {
-            return r.mask(session.IMSI)
+        sess, err := r.sessionManager.Get(ctx, sessionUUID)
+        if err == nil && sess != nil && sess.IMSI != "" {
+            return logging.MaskIMSI(sess.IMSI, r.maskEnabled)
         }
     }
-    
+
     // 2. User-NameからIMSI抽出
-    if attrs.UserName != "" {
-        imsi := extractIMSIFromIdentity(attrs.UserName)
+    if userName != "" {
+        imsi := extractIMSIFromIdentity(userName)
         if imsi != "" {
-            return r.mask(imsi)
+            return logging.MaskIMSI(imsi, r.maskEnabled)
         }
-        // 3. IMSI抽出失敗、User-Nameをそのまま返却
-        return attrs.UserName
+        // 3. IMSI抽出失敗、User-Nameを（IMSIを含みうるため）マスクして返却
+        return logging.MaskUserName(userName, r.maskEnabled)
     }
-    
+
     // 4. Class UUID
-    if attrs.ClassUUID != "" {
-        return attrs.ClassUUID
+    if classUUID != "" {
+        return classUUID
     }
-    
+
     // 5. 取得失敗
     return "unknown"
 }
 
-// extractIMSIFromIdentity はEAP Identity形式からIMSIを抽出する
+// extractIMSIFromIdentity はEAP Identity形式からIMSIを抽出する。
 // 形式: "0<IMSI>@<realm>" または "6<IMSI>@<realm>"
 func extractIMSIFromIdentity(identity string) string {
-    // @ でrealm部分を除去
+    // @でrealm部分を除去
     atIndex := strings.Index(identity, "@")
     if atIndex > 0 {
         identity = identity[:atIndex]
     }
-    
+
     // 先頭文字が0または6の場合、IMSI部分を抽出
     if len(identity) >= 16 {
         prefix := identity[0]
@@ -1455,41 +1466,26 @@ func extractIMSIFromIdentity(identity string) string {
             }
         }
     }
-    
+
     // 直接15桁の数字列の場合
     if imsiPattern.MatchString(identity) {
         return identity
     }
-    
-    return ""
-}
 
-func (r *IdentifierResolver) mask(imsi string) string {
-    if !r.maskEnabled {
-        return imsi
-    }
-    return MaskIMSI(imsi)
+    return ""
 }
 ```
 
 ### 6.3 IMSIマスキング処理
 
-D-04で定義されたマスキング仕様を実装する。
+D-04で定義されたマスキング仕様（D-04 §4.4.2）を、共通ライブラリ `pkg/logging`（E-03）の関数で実装する。`maskEnabled` には `LOG_MASK_IMSI` の設定値を渡す。
 
-```go
-// internal/logging/mask.go
-package logging
+| 関数 | 用途 | 出力例（`LOG_MASK_IMSI=true`） |
+|------|------|------------------------------|
+| `logging.MaskIMSI(imsi, enabled)` | セッション・User-Nameから取得したIMSI（優先度1・2） | `440101234567890` → `440101********0` |
+| `logging.MaskUserName(userName, enabled)` | IMSIを抽出できないUser-Name（優先度3）。`"@"` より前だけをマスクし、realmは残す | `1440101234567890@realm` → `1440101********0@realm`、`2some-pseudonym@example` → `2some-p*******m@example` |
 
-// MaskIMSI はIMSIをマスクする
-// 入力: 440101234567890
-// 出力: 440101********0
-func MaskIMSI(imsi string) string {
-    if len(imsi) <= 6 {
-        return imsi
-    }
-    return imsi[:6] + "********" + imsi[len(imsi)-1:]
-}
-```
+> **注記:** 優先度3のUser-Nameは、EAP-SIM（先頭 `1`）等の永続IDではIMSIを含むため、`MaskUserName` でマスクして出力する。種別1文字＋IMSI 15桁の形式は種別文字を残してIMSI部分を `MaskIMSI` と同様にマスクし、それ以外（仮名・不正形式）は先頭7文字と末尾1文字を残してマスクする（8文字以下はそのまま）。`LOG_MASK_IMSI=false` の場合はそのまま出力する。
 
 ---
 
@@ -1990,3 +1986,4 @@ func main() {
 | r5 | 2026-02-18 | ディレクトリ構造全面更新、関連ドキュメント版数更新 |
 | r6 | 2026-03-05 | Accounting-On/Off対応: §1.2スコープ追加、§1.4対象外から削除、§1.5/§1.6更新、§2.1/§2.3更新、§4.1処理フロー拡張、§4.4属性抽出更新（NAS-Identifier追加・Acct-Session-Id On/Off省略許容・実装コード整合）、§5.6/§5.7新設（ProcessOn/ProcessOff）、§7.1.2/§8.1/§8.2更新、§9.2インターフェース更新、§10.1ハンドラー更新、§11から削除 |
 | r7 | 2026-10-04 | D-04 r19 の event_id 全面整合に合わせて修正: §8.1 event_id一覧から実装に存在しない `VALKEY_CONN_RESTORED` / `ACCT_SESSION_EXPIRED` を削除し、`SYS_ERR` / `PKT_SEND_ERR` / `RADIUS_SECRET_ERR` を追加、各説明を実装の出力条件に修正。§7.1.1〜§7.1.3 のエラー表を修正（起動時 `VALKEY_CONN_ERR`、書き込み系 `DB_WRITE_ERR`、`RADIUS_SECRET_ERR`、`RADIUS_PARSE_ERR` は属性抽出失敗でありパケットデコード失敗はログなし、未知のRADIUS Code、`PKT_SEND_ERR` を追加。セッションTTL超過は `ACCT_SESSION_NOT_FOUND` と区別しない旨を明記）。§10.2 Valkey接続復旧検知を「実装しない」に改め実装例を削除。§4.2 Shared Secret解決、§5.3〜§5.5 Start/Interim/Stop処理のコード例を実装（`trace_id` 付与、`RADIUS_SECRET_ERR`、重複チェック時の `VALKEY_CONN_ERR`、Stop後Startの `ACCT_SEQUENCE_ERR`、停止マーク失敗の `DB_WRITE_ERR`）に合わせて更新。§4.7 Status-Server処理のログ（msg・`trace_id`、`packet_code` 削除）を実装に合わせて修正。§8.2 ログ出力例に `trace_id` を追加し、StartなしInterimの msg を `interim without start` に修正。§1.3 関連ドキュメントの版数を現行版に更新（D-01 r10、D-02 r12、D-03 r6（文書名も現行名に修正）、D-04 r19、D-06 r7、D-08 r14、D-09 r10、E-02 r3）。関連ドキュメント表の文書名を実在の文書に修正（存在しない D-05「Valkeyキー・TTL設計書」を削除、D-07「AKA Vector Server」→ D-11 Vector API詳細設計書、E-03 → 共通ライブラリ(pkg)設計書） |
+| r8 | 2026-10-04 | ログのIMSIマスク漏れ修正の反映: §6.1 IMSI取得優先順位の優先度3（IMSI抽出失敗時のUser-Name）を「そのまま」からマスク済み（pkg/logging.MaskUserName）に修正、§6.2のResolveIMSIのコードを実装（`internal/session/identifier.go`。引数 userName / classUUID、pkg/logging の MaskIMSI / MaskUserName を使用）に合わせ更新、§6.3を pkg/logging の MaskIMSI / MaskUserName による実装に更新。関連ドキュメント参照版数更新（D-04 r19→r20、D-06 r7→r8、D-09 r10→r11、E-03 r3→r4）。あわせて、廃止済みの internal/logging（mask.go）をディレクトリ構成から削除（IMSIマスキングは pkg/logging を使用） |
