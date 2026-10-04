@@ -1,4 +1,4 @@
-# D-01 ミニPC版 EAP-AKA RADIUS PoC環境 設計仕様書 (r13)
+# D-01 ミニPC版 EAP-AKA RADIUS PoC環境 設計仕様書 (r14)
 
 ## 1. システム概要
 
@@ -67,7 +67,7 @@
 | **2. Acct Server**     | `apps/acct-server`     | **[RADIUS課金]** 利用実績の記録         | 1. **設定読込:** `envconfig` でロード。SecretはAuth Server同様の優先順位。 2. **受信:** UDP 1813で受信。 3. **検証:** Shared SecretによるMessage-Authenticator検証。 4. **ログ:** 課金ログの構造化出力。 5. **更新:** Valkeyセッション状態更新。 |
 | **3. Vector Gateway**  | `apps/vector-gateway`  | **[ルーティング]** ベクター取得先振分け | 1. **設定読込:** `envconfig` でロード。 2. **API提供:** REST API (`POST /api/v1/vector`)。Auth Serverとの互換性維持。`GET /health` エンドポイントでヘルスチェック応答を提供。 3. **ルーティング:** PLMNベースでバックエンド選択。接続方式ID `00`: 内部Vector API（PLMN未一致・passthroughモードの既定先）、`01`: 外部の aka-only-server（`VECTOR_GATEWAY_AKAONLY_URL` 設定時のみ。mTLSまたは平文HTTP、GenerateAv形式との変換を行う）、`02`〜`99`: 将来実装（501）。 4. **Trace ID:** Header `X-Trace-ID` を読み取り、内部APIへ伝搬（aka-only-serverへはベストエフォート）。 5. **ログ:** `slog` で構造化出力。 |
 | **4. Vector API**      | `apps/vector-api`      | **[暗号計算サービス]** AKAベクター生成  | 1. **設定読込:** `envconfig` でロード。`TEST_VECTOR_ENABLED` 環境変数（デフォルト: false）を有効にすると、テストベクターモードが有効化され、特定IMSIプレフィックス（`TEST_VECTOR_IMSI_PREFIX`、デフォルト: "00101"）に対しては Ki/OPc/AMF をテスト用固定値（3GPP TS 35.208 Test Set 1）に置き換えてベクターを計算する（加入者の登録・SQN管理は通常どおり必要）。 2. **API提供:** REST API (`POST /api/v1/vector`)。`GET /health` エンドポイントでヘルスチェック応答を提供。 3. **Trace ID:** Header `X-Trace-ID` を読み取りログコンテキストに設定。 4. **DB取得:** ValkeyからSIM鍵情報取得。 5. **計算:** `milenage` 実行。 6. **更新:** SQNインクリメントとValkey更新。 |
-| **5. Admin TUI**       | `apps/admin-tui`       | **[管理コンソール]** データ操作UI       | 1. **設定読込:** `os.Getenv("VALKEY_PASSWORD")` でDB PASS取得。 2. **UI表示:** `tview` + `tcell` 利用。 3. **DB操作:** 加入者CRUD、RADIUSクライアント管理、ポリシー管理、CSV I/O。 4. **監視:** Valkey接続確認およびセッション閲覧。 5. **監査ログ:** 操作履歴の記録。 |
+| **5. Admin TUI**       | `apps/admin-tui`       | **[管理コンソール]** データ操作UI       | 1. **設定読込:** `os.Getenv("VALKEY_PASSWORD")` でDB PASS取得。 2. **UI表示:** `tview` + `tcell` 利用。 3. **DB操作:** 加入者CRUD、RADIUSクライアント管理、ポリシー管理、CSV I/O。 4. **監視:** Valkey接続確認およびセッション閲覧。 5. **監査ログ:** 操作履歴を標準出力にJSONで1行ずつ記録（`event_id`=`AUDIT_LOG`。Valkeyには保存しない）。 |
 
 > **データモデル注記:**
 > - **RadiusClient** (`client:{IP}`): `ip`, `secret`, `name`, `vendor` の4フィールド構成（`enabled` フィールドは廃止済み、`vendor` フィールドを追加）。
@@ -99,12 +99,15 @@
 
 | **キープレフィックス** | **用途**                  | **使用コンポーネント**           |
 | ---------------------- | ------------------------- | -------------------------------- |
-| `sub:{IMSI}`           | 加入者情報（SIM鍵等）    | Auth Server, Vector API, Admin TUI |
+| `sub:{IMSI}`           | 加入者情報（SIM鍵・SQN）  | Vector API（参照・SQN更新）, Admin TUI |
 | `client:{IP}`          | RADIUSクライアント情報    | Auth Server, Acct Server, Admin TUI |
-| `policy:{IMSI}`        | アクセスポリシー          | Auth Server, Admin TUI           |
-| `eap:{UUID}`           | EAPセッション状態         | Auth Server                      |
-| `acct:{ID}`            | 課金セッション            | Acct Server                      |
-| `audit:log`            | 監査ログ（リスト型）      | Admin TUI                        |
+| `policy:{IMSI}`        | 認可ポリシー              | Auth Server, Admin TUI           |
+| `eap:{UUID}`           | EAP認証コンテキスト（認証中。TTL 60秒） | Auth Server                      |
+| `sess:{UUID}`          | アクティブセッション（認証後。TTL 24時間） | Auth Server（作成）, Acct Server（更新・削除）, Admin TUI（参照） |
+| `idx:user:{IMSI}`      | IMSIからセッションを引くインデックス（Set） | Auth Server（追加）, Acct Server（削除）, Admin TUI（参照・掃除） |
+| `acct:seen:{Acct-Session-Id}` | Accounting重複検出キャッシュ（TTL 24時間） | Acct Server                      |
+
+> **注記:** Admin TUI の監査ログは Valkey に保存しない。Admin TUI プロセスの標準出力に JSON で1行ずつ出力する（`event_id`=`AUDIT_LOG`。D-04 §3.5、D-07 §10）。Admin TUI の `stats:global` 定数は現行実装では使用していない（統計情報はメモリ上でのみキャッシュする。D-02 §1）。
 
 ### 3.4 Valkey接続管理
 
@@ -542,3 +545,4 @@ VECTOR_GATEWAY_PLMN_MAP=""
 | r11 | 2026-10-04 | テストベクターモードでも加入者登録を必須にした Vector API の実装修正の反映: 3.1 Vector API の設定読込の説明を「固定テストベクターを返却」から「Ki/OPc/AMF をテスト用固定値に置き換えて計算（加入者の登録・SQN管理は通常どおり必要）」に修正 |
 | r12 | 2026-10-04 | auth-server の LOG_LEVEL 対応に伴う compose 修正の反映: §7 docker-compose.yml の auth-server / vector-gateway / vector-api の environment に `LOG_LEVEL: ${LOG_LEVEL:-INFO}` を追加（実ファイルと一致）し、対象サービス（acct-server は INFO 固定のため渡さない）の注記を追加 |
 | r13 | 2026-10-04 | acct-server の LOG_LEVEL 対応に伴う compose 修正の反映: §7 docker-compose.yml の acct-server の environment に `LOG_LEVEL: ${LOG_LEVEL:-INFO}` を追加（実ファイルと一致）し、ログレベルの注記を4サーバー（auth-server / acct-server / vector-gateway / vector-api）とも `.env` の値を渡す形に修正（「acct-server は INFO 固定のため渡さない」を削除） |
+| r14 | 2026-10-04 | §3.3 Valkeyキースキーマ概要を実装（D-02 r17）に合わせて修正: 実装に存在しない `audit:log`（監査ログ）と `acct:{ID}`（課金セッション）を削除し、`sess:{UUID}`（アクティブセッション）・`idx:user:{IMSI}`（ユーザー検索インデックス）・`acct:seen:{Acct-Session-Id}`（Accounting重複検出キャッシュ）を追加。`sub:{IMSI}` の使用コンポーネントから Auth Server を削除（参照するのは Vector API と Admin TUI）、`eap:{UUID}` の用途を EAP認証コンテキストに修正。監査ログは Valkey に保存せず Admin TUI の標準出力に JSON で出力する旨の注記を追加し、§3.1 Admin TUI の監査ログの説明も同様に修正 |

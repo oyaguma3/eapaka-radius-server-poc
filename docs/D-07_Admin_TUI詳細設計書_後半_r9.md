@@ -1,4 +1,4 @@
-# D-07 Admin TUI 詳細設計書【後半】(r8)
+# D-07 Admin TUI 詳細設計書【後半】(r9)
 
 ## 1. 概要
 
@@ -26,9 +26,9 @@
 
 | ドキュメント | 参照内容 |
 |-------------|---------|
-| D-05_Admin_TUI詳細設計書_前半_r9 | 共通仕様、キーバインド規約、ページネーション仕様、ページライフサイクル管理、tview Table Selectable状態管理、非同期データ取得パターン |
-| D-02_Valkeyデータ設計仕様書 (r12) | `sess:{UUID}`, `idx:user:{IMSI}` のデータ構造 |
-| D-06_エラーハンドリング詳細設計書 (r7) | TUIエラー表示仕様 |
+| D-05_Admin_TUI詳細設計書_前半_r10 | 共通仕様、キーバインド規約、ページネーション仕様、ページライフサイクル管理、tview Table Selectable状態管理、非同期データ取得パターン |
+| D-02_Valkeyデータ設計仕様書 (r17) | `sess:{UUID}`, `idx:user:{IMSI}` のデータ構造 |
+| D-06_エラーハンドリング詳細設計書 (r13) | TUIエラー表示仕様 |
 
 ### 1.4 PoC対象外機能
 
@@ -659,8 +659,9 @@ Session Search 画面で `/` キーを押下すると、IMSI検索ダイアロ�
 ```go
 go func() {
     // goroutine内でネットワークI/Oを実行（イベントループ外）
-    auditLogger.LogSearch(audit.TargetSession, imsi, 0)
     sessions, err := sessionStore.GetByIMSI(ctx, imsi)
+    // 検索の実行後に監査ログを出力（結果件数、または失敗理由を記録。§10）
+    auditLogger.LogSearch(audit.TargetSession, imsi, len(sessions), err)
     // UI更新のみQueueUpdateDrawで行う
     app.QueueUpdateDraw(func() {
         if err != nil {
@@ -1168,9 +1169,21 @@ func FormatErrorPlaceholder(width int) string {
 
 | 操作 | event_id | operation | 備考 |
 |------|----------|-----------|------|
-| Session Detail検索 | `AUDIT_LOG` | `search` | IMSIによるセッション検索 |
+| Session Detail検索 | `AUDIT_LOG` | `search` | IMSIによるセッション検索。検索の実行後に出力し、検索したIMSIを `target_imsi`、結果件数を `result_count` に記録する（検索に失敗した場合も記録する） |
 
 **注記：** 参照系操作（Statistics表示、Session List表示）は監査ログ対象外とする。
+
+**記録内容（`search`）：**
+
+| フィールド | 内容 |
+|-----------|------|
+| `target_type` | `session` |
+| `target_key` | `""`（空文字） |
+| `target_imsi` | 検索ダイアログに入力したIMSI（入力値をそのまま全桁で記録） |
+| `result_count` | 検索結果のセッション数（数値。0件も `0` として出力）。検索に失敗した場合は出力しない |
+| `details` | 検索に失敗した場合のみ `search failed: <理由>`（`GetByIMSI` のエラー）。成功時は出力しない |
+
+監査ログは `audit.Logger.LogSearch(targetType, query, resultCount, searchErr)` で出力する。`targetType` が `session` 以外の場合（現状は呼び出し元なし）は、検索語を `details` に記録し `target_imsi` は出力しない（検索に失敗した場合は `{検索語}; search failed: <理由>`）。
 
 ### 10.1.1 IMSI記録方針
 
@@ -1178,8 +1191,7 @@ Admin TUIの監査ログでは、**IMSIを常に生値（マスキングなし�
 
 | 項目 | 方針 |
 |------|------|
-| `target_imsi` フィールド | IMSI全桁を記録（加入者・ポリシーの作成/更新/削除時） |
-| `details` フィールド | Session Detail検索（`search`）では検索したIMSIを全桁で記録（`target_imsi` は出力しない） |
+| `target_imsi` フィールド | IMSI全桁を記録（加入者・ポリシーの作成/更新/削除時、Session Detail検索（`search`）で検索したIMSI） |
 | 環境変数 | `LOG_MASK_IMSI` は参照しない |
 
 **設計意図:**
@@ -1198,11 +1210,30 @@ Admin TUIの監査ログでは、**IMSIを常に生値（マスキングなし�
   "operation": "search",
   "target_type": "session",
   "target_key": "",
+  "target_imsi": "440101234567890",
   "admin_user": "admin",
-  "details": "440101234567890"
+  "result_count": 2
 }
 ```
-> **注記:** 検索したIMSIは `details` に `440101********0` ではなく `440101234567890` と全桁が記録される。`time` は RFC3339（秒精度・UTC）。検索結果件数は記録しない（D-04 §3.5）。
+
+検索に失敗した場合（例: Valkey接続エラー）:
+
+```json
+{
+  "time": "2025-12-25T14:31:00Z",
+  "level": "INFO",
+  "app": "admin-tui",
+  "event_id": "AUDIT_LOG",
+  "msg": "session searched",
+  "operation": "search",
+  "target_type": "session",
+  "target_key": "",
+  "target_imsi": "440101234567890",
+  "admin_user": "admin",
+  "details": "search failed: dial tcp 127.0.0.1:6379: connect: connection refused"
+}
+```
+> **注記:** 検索したIMSIは `target_imsi` に `440101********0` ではなく `440101234567890` と全桁が記録される。`time` は RFC3339（秒精度・UTC）。`result_count` は検索に成功した場合のみ出力する（0件も `0` として出力）。各操作で出力するフィールドは D-04 §3.5 を参照。
 
 ---
 
@@ -1230,3 +1261,4 @@ Admin TUIの監査ログでは、**IMSIを常に生値（マスキングなし�
 | r6 | 2026-02-22 | Session Detail 不具合修正の反映: 検索ダイアログ仕様追加（セクション6.2拡充 — InputField幅20、Cancel時のSession List戻り動作）、データ取得方式を再構成（セクション6.9を6.9.1-6.9.3に再構成 — 非同期検索パターン、SCANフォールバック追加）、関連ドキュメント版数更新 D-05 r7→r8 |
 | r7 | 2026-02-23 | 実装スクリーンショットとの整合性修正: §3.1 モニタリングメニューのボーダータイトル・ショートカット括弧表記追加、§4.2-4.3 Statistics Dashboard レイアウト差替（4カウント項目構成）、§5.3-5.5 Session List レイアウト差替（6カラム構成・Start Time短縮形式・Duration/Traffic追加・Filter Sessionsダイアログ新設）、§6 Session Detail→Session Search改名・レイアウト差替（Sessionsボーダータイトル・UUID/Duration/In-Out形式変更）、§7.3 ヘルプダイアログ全面差替（22項目・F2-F6ファンクションキー+alt文字キー）、関連ドキュメント版数更新 D-05 r8→r9 |
 | r8 | 2026-10-04 | D-04 r19 の event_id 全面整合に合わせて修正: §6.10.1 クリーンアップ処理のコード例を実装（`SessionStore.GetByIMSI`。インデックス空時のSCANフォールバック、UUIDごとのSREM）に合わせて修正し、実装に存在しない event_id `IDX_USER_CLEANUP` / `IDX_USER_CLEANUP_ERR` を削除。§6.10.2 を「event_id定義」から「ログ出力」に改め、成功時はログなし・失敗時は `log.Printf` の非構造化テキスト（標準エラー出力）のみである旨と出力例を記載。§10.1.1/§10.2 の監査ログ（`AUDIT_LOG`）の検索時の記録内容を実装に合わせて修正（検索IMSIは `details` に記録、`target_imsi`・`result_count` なし、msg `session searched`、`time` は秒精度）。§1.3 関連ドキュメントの版数を現行版に更新（D-02 r12、D-06 r7） |
+| r9 | 2026-10-04 | Admin TUI の監査ログに検索IMSIと件数を正しく記録する実装修正の反映: §10.1 に Session Detail 検索（`search`）の記録内容の表を追加（検索したIMSIを `details` ではなく `target_imsi` に全桁で記録、検索の実行後に出力し結果件数を `result_count` に記録、検索に失敗した場合は `result_count` を出さず `details` に `search failed: <理由>`。session 以外の検索は検索語を `details` に記録）。§10.1.1 の `details` の行（検索IMSIを `details` に記録、`target_imsi` は出力しない）を削除し `target_imsi` の行に検索IMSIを追記。§10.2 の出力例を `target_imsi` / `result_count` に修正し、検索失敗時の例を追加。§6.9.1 非同期検索パターンのコード例を、検索の実行後に `LogSearch(audit.TargetSession, imsi, len(sessions), err)` を呼ぶ形に修正。§1.3 関連ドキュメントの版数を現行版に更新（D-05 r10、D-02 r17、D-06 r13） |
