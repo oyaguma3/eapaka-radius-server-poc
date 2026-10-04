@@ -1,4 +1,4 @@
-# D-05 Admin TUI 詳細設計書【前半】(r9)
+# D-05 Admin TUI 詳細設計書【前半】(r10)
 
 ## 1. 概要
 
@@ -100,10 +100,10 @@ HSET "client:192.168.1.100" "secret" "mysecretkey" "name" "AP-Floor1" "vendor" "
 
 **Valkeyコマンド例：**
 ```
-HSET "policy:440101234567890" "default" "deny" "rules" '[{"ssid":"CORP-WIFI","action":"allow","time_min":"09:00","time_max":"18:00"},{"ssid":"*","action":"deny","time_min":"","time_max":""}]'
+HSET "policy:440101234567890" "default" "deny" "rules" '[{"nas_id":"AP-OFFICE-01","allowed_ssids":["CORP-WIFI"],"vlan_id":"100","session_timeout":3600},{"nas_id":"*","allowed_ssids":["GUEST-WIFI"]}]'
 ```
 
-**注記：** Auth Serverは `HGETALL` コマンドでポリシーを読み取る。
+**注記：** Auth Serverは `HGETALL` コマンドでポリシーを読み取る。`rules` の各ルールは `nas_id` / `allowed_ssids` / `vlan_id`（JSON文字列）/ `session_timeout`（秒。0・省略は未設定）を持つ（D-02 §2.C）。
 
 ### 1.6 ドキュメント成果物
 
@@ -575,7 +575,7 @@ tview.Form を centered() ヘルパーで画面中央にダイアログ表示す
 | Ki | Yes | 空 | 表示・編集可能 |
 | OPc | Yes | 空 | 表示・編集可能 |
 | AMF | Yes | `8000` | 表示・編集可能 |
-| SQN | No | `000000000000` | 表示・編集可能（警告表示付き） |
+| SQN | Yes | `000000000000` | 表示・編集可能（警告表示付き）。空欄にすると保存時にエラー |
 
 ##### SQN手動編集時の警告
 
@@ -661,7 +661,7 @@ tview.Form を centered() ヘルパーで画面中央にダイアログ表示す
 |-----------|------|-------|-------------|
 | IP Address | Yes | 空 | 編集時は変更不可（読取専用表示） |
 | Secret | Yes | 空 | 表示・編集可能 |
-| Name | No | 空 | 表示・編集可能 |
+| Name | Yes | 空 | 表示・編集可能 |
 | Vendor | No | 空 | 表示・編集可能 |
 
 ---
@@ -754,8 +754,8 @@ centered(form, width=60, height=15) で Policy Details の上にオーバーレ�
 | フィールド | 必須 | 初期値 | 編集時の挙動 |
 |-----------|------|-------|-------------|
 | IMSI | Yes | 空 | 編集時は変更不可 |
-| Default | Yes | `deny` | ラジオボタン選択 |
-| Rules | Yes | 空配列 | サブリストで管理 |
+| Default | Yes | `deny` | ドロップダウン選択（`deny` / `allow`） |
+| Rules | No | 空配列 | サブリストで管理（0件でも保存できる。ルールが0件の場合は Default のみで判定される） |
 
 **注記：** Defaultを "allow" に設定して保存する場合、警告ダイアログを表示（セクション3.5参照）。
 
@@ -763,12 +763,12 @@ centered(form, width=60, height=15) で Policy Details の上にオーバーレ�
 
 | フィールド | 必須 | 初期値 | 幅 | 型 |
 |-----------|------|-------|-----|-----|
-| NAS ID | Yes | 空 | 40 | String（NAS IPアドレスまたはNAS ID） |
-| Allowed SSIDs | Yes | 空 | 40 | String（カンマ区切り、例: `SSID1,SSID2`） |
-| VLAN ID | No | 空 | 10 | String |
-| Session Timeout | No | `0` | 10 | String（秒数） |
+| NAS ID | Yes | 空 | 40 | String（RADIUS NAS-Identifier 属性と比較する値。`*` 単独で任意のNASに一致） |
+| Allowed SSIDs | Yes | 空 | 40 | String（カンマ区切り、例: `SSID1,SSID2`。前後の空白は除去し、空要素は無視） |
+| VLAN ID | No | 空 | 10 | String（数字） |
+| Session Timeout | No | `0` | 10 | String（秒数。数値として解釈できない入力は `0`（未設定）として扱う） |
 
-**注記：** D-02 Valkeyデータ設計仕様書のPolicyRule構造に準拠する。NAS IDにはNAS IPアドレスまたは識別名を指定する。
+**注記：** D-02 Valkeyデータ設計仕様書のPolicyRule構造（`nas_id` / `allowed_ssids` / `vlan_id` / `session_timeout`）に準拠する。NAS ID には、AP（NAS）が Access-Request に載せる RADIUS `NAS-Identifier` 属性の値を指定する。Auth Server は `nas_id` を NAS-Identifier と完全一致（大文字小文字を区別）で比較し、NAS IPアドレス（NAS-IP-Address や送信元IP）とは比較しない。`*` 単独は任意のNAS（NAS-Identifier が無いリクエストを含む）に一致するワイルドカードで、部分一致（`AP-*` など）は行わない（D-02 §2.C）。
 
 ---
 
@@ -776,36 +776,43 @@ centered(form, width=60, height=15) で Policy Details の上にオーバーレ�
 
 ### 5.1 バリデーションルール一覧
 
-| 対象 | フィールド | ルール | エラーメッセージ |
+バリデーションは `internal/validation` パッケージで行う（画面の保存時と CSV インポートで共通）。エラーメッセージは `{Field}: {Message}` 形式で、画面ではステータスバーに `Validation error: ` を前置して最初の1件のみ表示する。
+
+| 対象 | フィールド | ルール | エラーメッセージ（`{Field}: {Message}`） |
 |------|-----------|--------|-----------------|
-| Subscriber | IMSI | 15桁の数字 `/^[0-9]{15}$/` | `IMSI must be 15 digits` |
-| Subscriber | Ki | 32桁のHex `/^[0-9A-Fa-f]{32}$/` | `Ki must be 32 hex characters` |
-| Subscriber | OPc | 32桁のHex `/^[0-9A-Fa-f]{32}$/` | `OPc must be 32 hex characters` |
-| Subscriber | AMF | 4桁のHex `/^[0-9A-Fa-f]{4}$/` | `AMF must be 4 hex characters` |
-| Subscriber | SQN | 12桁のHex `/^[0-9A-Fa-f]{12}$/` | `SQN must be 12 hex characters` |
-| Client | IP Address | 有効なIPv4 | `Enter a valid IPv4 address` |
-| Client | Secret | 1-128文字（ASCII印字可能文字） | `Secret must be 1-128 characters` |
-| Client | Name | 0-64文字 | `Name must be 64 characters or less` |
-| Client | Vendor | 0-32文字（英数字とハイフン） | `Vendor must be alphanumeric or hyphen` |
-| Policy | IMSI | （Subscriberと同じ） | （同上） |
-| Policy | Default | `allow` または `deny` | - |
-| Rule | NAS ID | 1-64文字 | `NAS ID is required` |
-| Rule | Allowed SSIDs | 1文字以上（カンマ区切り） | `Allowed SSIDs is required` |
-| Rule | VLAN ID | 空 または 数値文字列 | `VLAN ID must be numeric` |
-| Rule | Session Timeout | 空 または 0以上の整数 | `Session Timeout must be a non-negative integer` |
+| Subscriber | IMSI | 必須。15桁の数字 `^[0-9]{15}$` | `IMSI: required` / `IMSI: must be 15 digits` |
+| Subscriber | Ki | 必須。32桁のHex `^[0-9A-Fa-f]{32}$` | `Ki: required` / `Ki: must be 32 hex characters` |
+| Subscriber | OPc | 必須。32桁のHex `^[0-9A-Fa-f]{32}$` | `OPc: required` / `OPc: must be 32 hex characters` |
+| Subscriber | AMF | 必須。4桁のHex `^[0-9A-Fa-f]{4}$` | `AMF: required` / `AMF: must be 4 hex characters` |
+| Subscriber | SQN | 必須。12桁のHex `^[0-9A-Fa-f]{12}$` | `SQN: required` / `SQN: must be 12 hex characters` |
+| Client | IP Address | 必須。有効なIPv4（各オクテット0〜255） | `IP: required` / `IP: must be a valid IPv4 address` |
+| Client | Secret | 必須。1〜128文字のASCII印字可能文字（空白を除く `^[\x21-\x7E]{1,128}$`） | `Secret: required` / `Secret: must be at most 128 characters` / `Secret: must contain only printable ASCII characters (no spaces)` |
+| Client | Name | 必須。1〜64文字の英数字・ハイフン・アンダースコア `^[a-zA-Z0-9_-]{1,64}$` | `Name: required` / `Name: must be at most 64 characters` / `Name: must contain only alphanumeric characters, hyphens, and underscores` |
+| Client | Vendor | 任意。0〜64文字の英数字・スペース・ハイフン `^[a-zA-Z0-9 -]{0,64}$` | `Vendor: must be at most 64 characters` / `Vendor: must contain only alphanumeric characters, spaces, and hyphens` |
+| Policy | IMSI | （Subscriberと同じ） | `IMSI: IMSI: required` / `IMSI: IMSI: must be 15 digits` |
+| Policy | Default | 必須。`allow` または `deny` | `Default: required` / `Default: must be 'allow' or 'deny'` |
+| Rule | NAS ID | 必須。1〜253文字の印字可能ASCII（空白を除く `^[\x21-\x7E*]{1,253}$`）。`*` 単独は任意のNASに一致するワイルドカード | `NasID: required` / `NasID: must be at most 253 characters` / `NasID: must contain only printable ASCII characters and wildcards` |
+| Rule | Allowed SSIDs | 1件以上必須（カンマ区切り）。各SSIDは1〜32文字（バイト数） | `AllowedSSIDs: at least one SSID required` / `AllowedSSIDs[{i}]: SSID: required`（CSVで空文字列のSSIDを指定した場合） / `AllowedSSIDs[{i}]: SSID: must be at most 32 characters` |
+| Rule | VLAN ID | 任意。空 または 0〜4094 の整数 | `VlanID: must be a valid number` / `VlanID: must be non-negative` / `VlanID: must be at most 4094` |
+| Rule | Session Timeout | 任意。0〜86400（秒。0は未設定） | `SessionTimeout: must be non-negative` / `SessionTimeout: must be at most 86400 seconds` |
+
+**注記：**
+- ルール編集サブダイアログの OK 押下時はルール単体を検証する（メッセージは上表のとおり）。ポリシーの保存時はポリシー全体を検証し、ルールのエラーは `Rules[{i}].NasID: required` のように `Rules[{i}].` を前置する（`{i}` は0始まり）。
+- Policy の IMSI のエラーは、加入者用の検証結果を `IMSI` フィールドで包むため `IMSI: IMSI: must be 15 digits` のように表示される。
+- 画面の Session Timeout 入力欄は数値として解釈できない値を `0` として扱うため、`SessionTimeout: must be non-negative` は負の数を入力した場合のみ表示される。
 
 ### 5.2 バリデーションタイミング
 
 | タイミング | 動作 |
 |-----------|------|
-| **リアルタイム** | 入力文字種の制限（Hexフィールドは0-9,A-F,a-fのみ受付） |
-| **フォーカス離脱時** | 桁数・形式チェック、エラー時はフィールド下に赤字表示 |
-| **保存時** | 全フィールドの再検証、必須チェック、重複チェック |
+| **入力中・フォーカス離脱時** | 検証しない（入力文字種の制限もない） |
+| **保存時（Save / ルールの OK）** | 正規化（§5.3）の後、§5.1 の全項目を検証。エラーがあれば保存せず、最初の1件をステータスバーに赤字表示 |
+| **登録時（新規作成）** | 同じキー（`sub:{IMSI}` / `client:{IP}` / `policy:{IMSI}`）が既に存在する場合はエラー（`Failed to create: subscriber already exists` 等） |
 
-### 5.3 Hexフィールドの入力補助
+### 5.3 入力値の正規化
 
-- 小文字入力は自動的に大文字に変換して表示
-- 保存時は大文字に正規化してValkey保存
+- 保存時に各フィールドの前後の空白を除去する（ポリシーの IMSI・NAS ID・各SSIDを含む）
+- Hexフィールド（Ki / OPc / AMF / SQN）は保存時に大文字に正規化してValkeyに保存する（入力中の表示は変換しない）
 
 ---
 
@@ -830,13 +837,13 @@ imsi,ki,opc,amf,sqn
 | 条件 | 動作 |
 |------|------|
 | 新規IMSI | 新規登録 |
-| 既存IMSI | スキップ（ログ出力）※オプションで上書きモード選択可 |
-| バリデーションエラー | 該当行スキップ、エラーログ出力 |
+| 既存IMSI | 上書き（スキップ・上書きの選択オプションはない） |
+| バリデーションエラー（§5.1。ヘッダー・列数の不正を含む） | 1行でもエラーがあればインポート全体を中断し、エラー一覧（`line {N}: {Field}: {Message}`）を結果エリアに表示する（1件も投入しない。§6.7） |
 
 #### エクスポート動作
 
 - 全加入者を出力
-- ファイル名デフォルト: `subscribers_YYYYMMDD_HHMMSS.csv`
+- 出力ファイルパスは画面で指定する（既定値なし。空欄の場合は `Output file path is required`）
 
 ### 6.3 RADIUSクライアントCSV仕様
 
@@ -850,10 +857,10 @@ ip,secret,name,vendor
 
 ```csv
 imsi,default,rules_json
-440101234567890,deny,"[{""ssid"":""CORP-WIFI"",""action"":""allow"",""time_min"":""09:00"",""time_max"":""18:00""},{""ssid"":""*"",""action"":""deny"",""time_min"":"""",""time_max"":""""}]"
+440101234567890,deny,"[{""nas_id"":""AP-OFFICE-01"",""allowed_ssids"":[""CORP-WIFI""],""vlan_id"":""100"",""session_timeout"":3600},{""nas_id"":""*"",""allowed_ssids"":[""GUEST-WIFI""]}]"
 ```
 
-**注記：** `rules_json` フィールドはJSON文字列をダブルクォートでエスケープしてCSV格納する。
+**注記：** `rules_json` フィールドはJSON文字列をダブルクォートでエスケープしてCSV格納する。空文字列または `[]` はルールなし。各ルールは §5.1 の Rule の規則で検証する（エラーは `line {N}, rule[{i}]: NasID: required` の形式）。
 
 ### 6.5 インポート画面 [I1]
 
@@ -1043,7 +1050,7 @@ Admin TUIからの操作は、標準出力にJSON形式で記録する。
 
 ```json
 {
-  "time": "2025-06-20T14:30:00.000Z",
+  "time": "2025-06-20T14:30:00Z",
   "level": "INFO",
   "app": "admin-tui",
   "event_id": "AUDIT_LOG",
@@ -1067,7 +1074,11 @@ Admin TUIからの操作は、標準出力にJSON形式で記録する。
 | CSVインポート | `AUDIT_LOG` | `import` |
 | CSVエクスポート | `AUDIT_LOG` | `export` |
 
-**注記：** `admin_user` は現時点では固定値 `"admin"` とする。将来的にユーザー認証機能を追加する場合に拡張。
+**注記：**
+- `admin_user` は現時点では固定値 `"admin"` とする。将来的にユーザー認証機能を追加する場合に拡張。
+- `time` は RFC3339（秒精度・UTC）。
+- CSVインポート/エクスポートでは `target_key` にCSVファイルパスを、`record_count`（数値）にインポート/エクスポートしたレコード件数を記録する（0件も `0` として出力）。インポート/エクスポートは成功した場合のみ記録する。`record_count` はそれ以外の操作では出力しない。
+- モニタリング画面の Session Detail 検索（`search`）は D-07 §10 を参照。各操作で出力するフィールドの一覧は D-04 §3.5 を参照。
 
 ---
 
@@ -1111,3 +1122,4 @@ Admin TUIからの操作は、標準出力にJSON形式で記録する。
 | r7 | 2026-02-21 | 実機検証不具合修正の反映: セクション3.2にF5キー（リフレッシュ）追加、セクション3.9新設（ページライフサイクル管理 — tcell差分レンダリング対策のSync()、InputCapture内QueueUpdateDrawのgoroutineラップ、Import/Export完了時のページクリーンアップ、form.Clear後のInputCapture再登録）、ポリシーフォームのフォーカス切替をTabからF6に変更。旧3.9は3.10に再ナンバリング |
 | r8 | 2026-02-22 | Session Detail フリーズ不具合修正の知見反映: セクション3.10新設（tview Table の Selectable 状態管理 — 全セル NotSelectable 時の無限ループ問題と SetSelectable 切替による対策）、セクション3.11新設（非同期データ取得パターン — QueueUpdateDraw 内でのネットワーク I/O 回避）。旧3.10は3.12に再ナンバリング |
 | r9 | 2026-02-23 | 実装画面とのレイアウト整合性修正: スクリーンショット検証に基づくASCII図全面更新。§3.1 Ctrl+C→Ctrl+Q、F1/?ヘルプキー追加。§3.2 F2-F6ファンクションキー+代替文字キー追加。§4.1 メインメニューをtview.List形式に更新（ショートカット(1)-(q)括弧表記、ボーダータイトル追加）。§4.2.1 加入者一覧を6カラム+行頭"!"表示に更新（Ki/OPcマスク表示追加）。§4.2.2 フォームタイトルCreate/Edit Subscriber、SQN警告タイトルSQN Modification Warning。§4.3.1 クライアント一覧にSecret列マスク表示追加。§4.3.2 フォームタイトルCreate/Edit RADIUS Client。§4.4.1-4.4.2 ポリシーフォームタイトルPolicy Details、NAS ID/SSIDs/VLAN/Timeoutルール構造。§5.1 バリデーションルール表のRule部分をNAS ID/Allowed SSIDs/VLAN ID/Session Timeoutに更新。§6.5-6.6 インポート/エクスポート画面に状態遷移（Import Data→Import Completed、Export Data→Export Completed）追加。§7.2 起動エラーをConnection Errorモーダルに更新 |
+| r10 | 2026-10-04 | 実装との不一致の修正: §4.4.2 ルールの NAS ID を「NAS IPアドレスまたはNAS ID」から、RADIUS `NAS-Identifier` 属性と完全一致で比較する値（`*` 単独で任意のNASに一致。NAS IPアドレスとは比較しない。D-02 §2.C）に修正。§5.1 バリデーションルールを `internal/validation` の実装に合わせて全面修正（NAS ID 1-64文字→1〜253文字の印字可能ASCII・`*` ワイルドカード、SQN・Client Name を必須に、Name を英数字・ハイフン・アンダースコア、Vendor を0〜64文字の英数字・スペース・ハイフン、Allowed SSIDs の各SSID 1〜32文字、VLAN ID 0〜4094、Session Timeout 0〜86400、エラーメッセージを実際の `{Field}: {Message}` 形式に）。§5.2 バリデーションタイミングを保存時のみ（リアルタイムの文字種制限・フォーカス離脱時の検証はない）に、§5.3 を入力値の正規化（保存時に空白除去・Hexを大文字化）に修正。§4.2.2 SQN・§4.3.2 Name を必須に、§4.4.2 Rules を任意（0件可）、Default をドロップダウン選択に修正。§1.5・§6.4 のポリシールールの例を現行構造（`nas_id` / `allowed_ssids` / `vlan_id` / `session_timeout`）に修正。§6.2 インポート動作を実装（既存IMSIは上書き、エラーが1行でもあれば全体を中断）とエクスポートの出力ファイルパス（既定値なし）に修正。Admin TUI の監査ログに件数を記録する実装修正の反映: §8 に import / export の `record_count`（0件も出力、成功時のみ記録）を追記し、出力例の `time` を秒精度に修正 |

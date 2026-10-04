@@ -83,8 +83,8 @@ func (s *SessionDetailScreen) ShowSearchDialog() {
 			s.app.RemovePage("search-dialog")
 			go func() {
 				ctx := context.Background()
-				s.auditLogger.LogSearch(audit.TargetSession, value, 0)
 				sessions, err := s.sessionStore.GetByIMSI(ctx, value)
+				s.auditLogger.LogSearch(audit.TargetSession, value, len(sessions), err)
 				s.app.QueueUpdateDraw(func() {
 					if err != nil {
 						s.app.GetStatusBar().ShowError("Search failed: " + err.Error())
@@ -115,10 +115,10 @@ func (s *SessionDetailScreen) ShowSearchDialog() {
 func (s *SessionDetailScreen) Search(ctx context.Context, imsi string) error {
 	s.imsi = imsi
 
-	// 監査ログに検索を記録
-	s.auditLogger.LogSearch(audit.TargetSession, imsi, 0)
-
 	sessions, err := s.sessionStore.GetByIMSI(ctx, imsi)
+
+	// 監査ログに検索を記録（結果件数または失敗理由を含む）
+	s.auditLogger.LogSearch(audit.TargetSession, imsi, len(sessions), err)
 	if err != nil {
 		s.textView.SetText(fmt.Sprintf("[red]Error: %s[-]", err.Error()))
 		return err

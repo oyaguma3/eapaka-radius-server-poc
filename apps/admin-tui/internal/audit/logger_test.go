@@ -3,6 +3,7 @@ package audit
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -117,6 +118,9 @@ func TestLogger_LogImport(t *testing.T) {
 	if !strings.Contains(output, `"target_key":"subscribers.csv"`) {
 		t.Error("expected target_key to be filename")
 	}
+	if !strings.Contains(output, `"record_count":100`) {
+		t.Errorf("expected record_count to be 100: %s", output)
+	}
 }
 
 func TestLogger_LogExport(t *testing.T) {
@@ -129,20 +133,82 @@ func TestLogger_LogExport(t *testing.T) {
 	if !strings.Contains(output, `"operation":"export"`) {
 		t.Error("expected operation to be export")
 	}
+	if !strings.Contains(output, `"record_count":50`) {
+		t.Errorf("expected record_count to be 50: %s", output)
+	}
 }
 
-func TestLogger_LogSearch(t *testing.T) {
+func TestLogger_LogExport_ZeroRecords(t *testing.T) {
 	var buf bytes.Buffer
 	logger := NewLoggerWithWriter(&buf, "admin")
 
-	logger.LogSearch(TargetSession, "imsi=440*", 10)
+	// 0件のエクスポートも件数を記録する
+	logger.LogExport(TargetPolicy, 0, "policies.csv")
 
-	output := buf.String()
-	if !strings.Contains(output, `"operation":"search"`) {
-		t.Error("expected operation to be search")
+	if output := buf.String(); !strings.Contains(output, `"record_count":0`) {
+		t.Errorf("expected record_count to be 0: %s", output)
 	}
-	if !strings.Contains(output, `"details":"imsi=440*"`) {
-		t.Error("expected details to contain query")
+}
+
+func TestLogger_LogSearch(t *testing.T) {
+	tests := []struct {
+		name       string
+		targetType TargetType
+		query      string
+		count      int
+		err        error
+		want       []string
+		notWant    []string
+	}{
+		{
+			name: "session search records imsi and result count", targetType: TargetSession,
+			query: "440101234567890", count: 2,
+			want:    []string{`"operation":"search"`, `"target_imsi":"440101234567890"`, `"result_count":2`},
+			notWant: []string{`"details"`},
+		},
+		{
+			name: "session search with no result", targetType: TargetSession,
+			query: "440101234567890", count: 0,
+			want: []string{`"result_count":0`},
+		},
+		{
+			name: "search failure records reason without count", targetType: TargetSession,
+			query: "440101234567890", err: errors.New("connection refused"),
+			want:    []string{`"target_imsi":"440101234567890"`, `"details":"search failed: connection refused"`},
+			notWant: []string{`"result_count"`},
+		},
+		{
+			name: "non-session search records query in details", targetType: TargetSubscriber,
+			query: "imsi=440*", count: 10,
+			want:    []string{`"details":"imsi=440*"`, `"result_count":10`},
+			notWant: []string{`"target_imsi"`},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			NewLoggerWithWriter(&buf, "admin").LogSearch(tt.targetType, tt.query, tt.count, tt.err)
+			output := buf.String()
+			for _, w := range tt.want {
+				if !strings.Contains(output, w) {
+					t.Errorf("expected %s in %s", w, output)
+				}
+			}
+			for _, nw := range tt.notWant {
+				if strings.Contains(output, nw) {
+					t.Errorf("unexpected %s in %s", nw, output)
+				}
+			}
+		})
+	}
+}
+
+func TestLogger_LogCreate_NoCounts(t *testing.T) {
+	var buf bytes.Buffer
+	NewLoggerWithWriter(&buf, "admin").LogCreate(TargetSubscriber, "sub:440101234567890", "440101234567890")
+	// 件数フィールドは import / export / search 以外では出力しない
+	if output := buf.String(); strings.Contains(output, "record_count") || strings.Contains(output, "result_count") {
+		t.Errorf("unexpected count fields: %s", output)
 	}
 }
 
