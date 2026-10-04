@@ -1,4 +1,4 @@
-# D-10 Acct Server詳細設計書 (r8)
+# D-10 Acct Server詳細設計書 (r9)
 
 ## ■セクション1: 概要
 
@@ -24,9 +24,9 @@
 | No. | ドキュメント | 参照内容 |
 |-----|-------------|---------|
 | D-01 | ミニPC版設計仕様書 (r10) | システム構成、パッケージ利用マップ |
-| D-02 | Valkeyデータ設計仕様書 (r12) | データ構造、キー設計、Go構造体 |
+| D-02 | Valkeyデータ設計仕様書 (r13) | データ構造、キー設計、Go構造体 |
 | D-03 | Vector-APIインターフェース定義書およびEAP-AKAステートマシン設計書 (r6) | 認証フロー |
-| D-04 | ログ仕様設計書 (r20) | event_id定義、ログフォーマット、IMSIマスキング |
+| D-04 | ログ仕様設計書 (r21) | event_id定義、ログフォーマット、IMSIマスキング |
 | D-06 | エラーハンドリング詳細設計書 (r8) | エラー分類、タイムアウト、リトライ戦略 |
 | D-11 | Vector API詳細設計書 (r7) | AKA認証ベクター生成 |
 | D-08 | インフラ設定・運用設計書 (r14) | Docker Compose設定、環境変数 |
@@ -929,12 +929,20 @@ func (p *Processor) ProcessStart(ctx context.Context, attrs *radius.AccountingAt
 
 ### 5.4 Acct-Interim処理
 
+Interim受信時は、まず `CheckInterim`（§5.8）で重複と順序異常を1回の判定で求める。
+
+- 重複（直前と同一の `interim:{input}:{output}`）: WARN `ACCT_DUPLICATE_START`（msg `duplicate accounting interim`）を出力して処理を終了する。
+- 順序異常（Start未受信: `no_start_received`、Stop受信後: `interim_after_stop`）: WARN `ACCT_SEQUENCE_ERR`（msg `interim sequence error`、`reason` 付き）を出力し、課金データの欠損を避けるため処理を継続する。
+- 判定時のValkeyエラー（Get / Set 失敗）: ERROR `VALKEY_CONN_ERR` を出力して処理を継続する（Get 失敗時は重複・順序異常を判定できないため、正常として扱う）。
+
+セッション更新は、Class属性のセッションUUIDに対応する `sess:{UUID}` が存在する場合だけ行う。`UpdateOnInterim` は `HSET` で書き込むため、不在のまま呼び出すと IMSI を持たない `sess:{UUID}` が新規作成されてしまう。このため、Start（§5.3）と同様に `Exists` で存在を確認し、不在なら更新せず WARN `ACCT_SESSION_NOT_FOUND`（`class_uuid` 付き）を出力する。存在確認の失敗は ERROR `VALKEY_CONN_ERR` とする。Class属性のないInterimは、セッション更新もこれらのログも行わない（Startと異なり、Class属性なしの `ACCT_SESSION_NOT_FOUND` は出力しない）。いずれの場合も最後に INFO `ACCT_INTERIM` を出力する。
+
 ```go
 // internal/acct/interim.go（実装）
 // ProcessInterim はAcct-Interim処理を行う。
 func (p *Processor) ProcessInterim(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error {
-    // 1. 重複検出
-    isDuplicate, err := p.duplicateDetector.CheckInterimDuplicate(ctx, attrs.AcctSessionID, attrs.InputOctets, attrs.OutputOctets)
+    // 1. 重複・順序異常の判定
+    check, err := p.duplicateDetector.CheckInterim(ctx, attrs.AcctSessionID, attrs.InputOctets, attrs.OutputOctets)
     if err != nil {
         slog.Error("duplicate check failed",
             "event_id", "VALKEY_CONN_ERR",
@@ -942,7 +950,7 @@ func (p *Processor) ProcessInterim(ctx context.Context, attrs *radius.Accounting
             "error", err.Error(),
         )
     }
-    if isDuplicate {
+    if check.Duplicate {
         slog.Warn("duplicate accounting interim",
             "event_id", "ACCT_DUPLICATE_START",
             "trace_id", traceID,
@@ -951,46 +959,53 @@ func (p *Processor) ProcessInterim(ctx context.Context, attrs *radius.Accounting
         )
         return nil
     }
-
-    // 2. Startなしチェック
-    seenStart, err := p.duplicateDetector.HasSeenStart(ctx, attrs.AcctSessionID)
-    if err != nil {
-        slog.Error("valkey error",
-            "event_id", "VALKEY_CONN_ERR",
-            "trace_id", traceID,
-            "error", err.Error(),
-        )
-    } else if !seenStart {
-        slog.Warn("interim without start",
+    if check.SequenceReason != "" {
+        // 順序異常でも課金データの欠損を避けるため処理を継続する
+        slog.Warn("interim sequence error",
             "event_id", "ACCT_SEQUENCE_ERR",
             "trace_id", traceID,
             "src_ip", srcIP,
             "acct_session_id", attrs.AcctSessionID,
-            "reason", "no_start_received",
+            "reason", check.SequenceReason,
         )
-        // Start相当の処理としてマーク
-        _ = p.duplicateDetector.MarkAsStart(ctx, attrs.AcctSessionID)
     }
 
-    // 3. セッション更新
+    // 2. セッション更新（存在するセッションのみ。不在のキーを作らない）
     sessionUUID := attrs.ClassUUID
     if sessionUUID != "" {
-        err = p.sessionManager.UpdateOnInterim(ctx, sessionUUID, &session.SessionInterimData{
-            NasIP:        srcIP,
-            ClientIP:     attrs.FramedIPAddress,
-            InputOctets:  int64(attrs.InputOctets),
-            OutputOctets: int64(attrs.OutputOctets),
-        })
-        if err != nil {
-            slog.Error("session update failed",
-                "event_id", "DB_WRITE_ERR",
+        exists, err := p.sessionManager.Exists(ctx, sessionUUID)
+        switch {
+        case err != nil:
+            slog.Error("valkey error",
+                "event_id", "VALKEY_CONN_ERR",
                 "trace_id", traceID,
                 "error", err.Error(),
             )
+        case !exists:
+            slog.Warn("session not found",
+                "event_id", "ACCT_SESSION_NOT_FOUND",
+                "trace_id", traceID,
+                "src_ip", srcIP,
+                "class_uuid", sessionUUID,
+            )
+        default:
+            err = p.sessionManager.UpdateOnInterim(ctx, sessionUUID, &session.SessionInterimData{
+                NasIP:        srcIP,
+                ClientIP:     attrs.FramedIPAddress,
+                InputOctets:  int64(attrs.InputOctets),
+                OutputOctets: int64(attrs.OutputOctets),
+            })
+            if err != nil {
+                slog.Error("session update failed",
+                    "event_id", "DB_WRITE_ERR",
+                    "trace_id", traceID,
+                    "error", err.Error(),
+                )
+            }
         }
     }
 
-    // 4. ログ出力
+    // 3. ログ出力
     imsi := p.identifierResolver.ResolveIMSI(ctx, sessionUUID, attrs.UserName, attrs.ClassUUID)
     slog.Info("accounting interim",
         "event_id", "ACCT_INTERIM",
@@ -1129,134 +1144,129 @@ func (p *Processor) ProcessOff(_ context.Context, attrs *radius.AccountingAttrib
 
 ### 5.8 重複・順序異常検出
 
-Acct-Session-Idをキーとして、重複および順序異常を検出する。
+Acct-Session-Idをキー（`acct:seen:{Acct-Session-Id}`、TTL 86400秒）として、重複および順序異常を検出する。値は直前に受信したパケットの種別（`start` / `interim:{input}:{output}` / `stop`）を表す。値の読み書きは `store.DuplicateStore`（`Get`: 未登録なら空文字列を返す、`Set`: TTL付きで上書き）を介して行う。
+
+| 受信 | 直前の値 | 判定 | 記録する値 | ログ | 以降の処理 |
+|------|---------|------|-----------|------|-----------|
+| Start | 未登録 | 正常 | `start` | - | 継続 |
+| Start | `start` / `interim:*` | 重複 | 変更しない | WARN `ACCT_DUPLICATE_START` | 終了 |
+| Start | `stop` | 順序異常（`start_after_stop`） | `start` | WARN `ACCT_SEQUENCE_ERR` | 継続（新規セッションとして扱う） |
+| Interim | 未登録 | 順序異常（`no_start_received`） | `interim:{input}:{output}` | WARN `ACCT_SEQUENCE_ERR` | 継続 |
+| Interim | `start` | 正常 | `interim:{input}:{output}` | - | 継続 |
+| Interim | 同一の `interim:{input}:{output}` | 重複 | 変更しない | WARN `ACCT_DUPLICATE_START` | 終了 |
+| Interim | 別値の `interim:*` | 正常 | `interim:{input}:{output}` | - | 継続 |
+| Interim | `stop` | 順序異常（`interim_after_stop`） | `interim:{input}:{output}` | WARN `ACCT_SEQUENCE_ERR` | 継続 |
+| Stop | `stop` | 重複 | 変更しない | なし | 終了 |
+| Stop | 上記以外（未登録を含む） | 正常 | `stop` | - | 継続 |
+
+Interimの判定（`CheckInterim`）は、1回の `Get` で直前の値を取得して重複・順序異常を判定してから、重複でなければ受信値を `Set` する。判定の前に自身の書き込みで状態が変わることはない。Startなし（未登録）・Stop後のInterimは順序異常として報告するが、課金データの欠損を避けるため受信値を記録して処理を継続する。
+
+> **注記:** 修正前（本書 r8 時点）の実装は、Interimの重複判定（`CheckInterimDuplicate`）が先に `interim:{input}:{output}` を書き込んでから Start受信有無（`HasSeenStart`）を確認していたため、StartなしのInterimでも `ACCT_SEQUENCE_ERR` が出力されなかった。修正で `CheckInterim` に一本化し、`CheckInterimDuplicate` / `HasSeenStart` / `MarkAsStart` は削除した。Stop後のInterim（`interim_after_stop`）の検出も同じ修正で追加した。
 
 ```go
-// internal/acct/duplicate.go
+// internal/acct/duplicate.go（実装）
 package acct
 
 import (
     "context"
     "fmt"
-    "time"
-    
-    "github.com/redis/go-redis/v9"
+    "strings"
+
+    "github.com/oyaguma3/eapaka-radius-server-poc/apps/acct-server/internal/store"
 )
 
-type StatusType int
-
-const (
-    StatusStart StatusType = iota
-    StatusInterim
-    StatusStop
-)
-
-const (
-    seenKeyPrefix = "acct:seen:"
-    seenTTL       = 24 * time.Hour
-)
-
-type DuplicateDetector struct {
-    rdb *redis.Client
+// duplicateDetector はDuplicateDetectorインターフェースの実装。
+type duplicateDetector struct {
+    dupStore store.DuplicateStore
 }
 
-// seenキー: acct:seen:{Acct-Session-Id}
-// 値: "start", "interim:{input}:{output}", "stop"
-
-func (d *DuplicateDetector) seenKey(acctSessionID string) string {
-    return seenKeyPrefix + acctSessionID
+// NewDuplicateDetector は新しいDuplicateDetectorを生成する。
+func NewDuplicateDetector(ds store.DuplicateStore) DuplicateDetector {
+    return &duplicateDetector{dupStore: ds}
 }
 
-// CheckAndMark はStartの重複をチェックし、未登録ならマークする
-func (d *DuplicateDetector) CheckAndMark(ctx context.Context, acctSessionID string, status StatusType) (bool, error) {
-    key := d.seenKey(acctSessionID)
-    
-    // 既存値を取得
-    val, err := d.rdb.Get(ctx, key).Result()
-    if err == redis.Nil {
+// CheckAndMarkStart はStartの重複をチェックし、未登録ならマークする。
+func (d *duplicateDetector) CheckAndMarkStart(ctx context.Context, acctSessionID string) (bool, error) {
+    val, err := d.dupStore.Get(ctx, acctSessionID)
+    if err != nil {
+        return false, err
+    }
+
+    if val == "" {
         // 新規：マークして継続
-        if status == StatusStart {
-            d.rdb.Set(ctx, key, "start", seenTTL)
+        if err := d.dupStore.Set(ctx, acctSessionID, "start"); err != nil {
+            return false, err
         }
         return false, nil
     }
-    if err != nil {
-        return false, err
-    }
-    
-    // Stop後のStart検出
-    if status == StatusStart && val == "stop" {
-        // 順序異常（Stop→Start）：新規セッションとして扱う
-        d.rdb.Set(ctx, key, "start", seenTTL)
+
+    // Stop後のStart検出（順序異常だが新規セッションとして扱う）
+    if val == "stop" {
+        if err := d.dupStore.Set(ctx, acctSessionID, "start"); err != nil {
+            return false, err
+        }
         return false, &SequenceError{Reason: "start_after_stop"}
     }
-    
+
     // Start重複
-    if status == StatusStart && (val == "start" || hasPrefix(val, "interim:")) {
+    if val == "start" || strings.HasPrefix(val, "interim:") {
         return true, nil
     }
-    
+
     return false, nil
 }
 
-// HasSeenStart はStartを受信済みかチェック
-func (d *DuplicateDetector) HasSeenStart(ctx context.Context, acctSessionID string) (bool, error) {
-    key := d.seenKey(acctSessionID)
-    val, err := d.rdb.Get(ctx, key).Result()
-    if err == redis.Nil {
-        return false, nil
-    }
-    if err != nil {
-        return false, err
-    }
-    return val == "start" || hasPrefix(val, "interim:"), nil
-}
+// 順序異常の理由
+const (
+    seqReasonNoStart          = "no_start_received"
+    seqReasonInterimAfterStop = "interim_after_stop"
+)
 
-// MarkAsStart はStartとしてマーク（StartなしInterim受信時に使用）
-func (d *DuplicateDetector) MarkAsStart(ctx context.Context, acctSessionID string) error {
-    key := d.seenKey(acctSessionID)
-    return d.rdb.Set(ctx, key, "start", seenTTL).Err()
-}
-
-// CheckInterimDuplicate はInterimの重複をチェック
-// 同一のinput/output値の場合は重複とみなす
-func (d *DuplicateDetector) CheckInterimDuplicate(ctx context.Context, acctSessionID string, input, output uint32) (bool, error) {
-    key := d.seenKey(acctSessionID)
+// CheckInterim はInterimの重複と順序異常を判定する。
+// 1回のGetで直前の状態を取得してから判定するため、判定前に自身の書き込みで状態が変わることはない。
+// 同一のinput/output値が直前に記録されていれば重複とし、記録を変更しない。
+// 重複でなければ（順序異常の場合も含め）受信値を記録する。
+func (d *duplicateDetector) CheckInterim(ctx context.Context, acctSessionID string, input, output uint32) (InterimCheckResult, error) {
+    var result InterimCheckResult
     currentVal := fmt.Sprintf("interim:%d:%d", input, output)
-    
-    val, err := d.rdb.Get(ctx, key).Result()
-    if err != nil && err != redis.Nil {
-        return false, err
+
+    val, err := d.dupStore.Get(ctx, acctSessionID)
+    if err != nil {
+        return result, err
     }
-    
-    if val == currentVal {
-        return true, nil
+
+    switch val {
+    case currentVal:
+        result.Duplicate = true
+        return result, nil
+    case "":
+        result.SequenceReason = seqReasonNoStart
+    case "stop":
+        result.SequenceReason = seqReasonInterimAfterStop
     }
-    
-    // 値を更新
-    d.rdb.Set(ctx, key, currentVal, seenTTL)
-    return false, nil
+
+    if err := d.dupStore.Set(ctx, acctSessionID, currentVal); err != nil {
+        return result, err
+    }
+    return result, nil
 }
 
-// CheckStopDuplicate はStopの重複をチェック
-func (d *DuplicateDetector) CheckStopDuplicate(ctx context.Context, acctSessionID string) (bool, error) {
-    key := d.seenKey(acctSessionID)
-    val, err := d.rdb.Get(ctx, key).Result()
-    if err == redis.Nil {
-        return false, nil
-    }
+// CheckStopDuplicate はStopの重複をチェックする。
+func (d *duplicateDetector) CheckStopDuplicate(ctx context.Context, acctSessionID string) (bool, error) {
+    val, err := d.dupStore.Get(ctx, acctSessionID)
     if err != nil {
         return false, err
     }
     return val == "stop", nil
 }
 
-// MarkAsStopped はStopとしてマーク
-func (d *DuplicateDetector) MarkAsStopped(ctx context.Context, acctSessionID string) error {
-    key := d.seenKey(acctSessionID)
-    return d.rdb.Set(ctx, key, "stop", seenTTL).Err()
+// MarkAsStopped はStopとしてマークする。
+func (d *duplicateDetector) MarkAsStopped(ctx context.Context, acctSessionID string) error {
+    return d.dupStore.Set(ctx, acctSessionID, "stop")
 }
 
+// internal/acct/errors.go（抜粋）
+// SequenceError は順序異常エラー
 type SequenceError struct {
     Reason string
 }
@@ -1338,6 +1348,7 @@ func (m *Manager) UpdateOnStart(ctx context.Context, uuid string, data *SessionS
 }
 
 // UpdateOnInterim はInterim受信時のセッション更新
+// HSET は不在のキーを新規作成するため、呼び出し側（ProcessInterim）で Exists により存在を確認してから呼び出す
 func (m *Manager) UpdateOnInterim(ctx context.Context, uuid string, data *SessionInterimData) error {
     key := m.sessionKey(uuid)
     pipe := m.rdb.Pipeline()
@@ -1523,11 +1534,12 @@ D-06で定義されたエラーハンドリングに基づく。
 
 | エラー種別 | 検出条件 | 対処 | RADIUS応答 | ログ |
 |-----------|---------|------|-----------|------|
-| セッション不在 | Start時にClass属性なし・不正、または sess:{UUID}不在（TTL超過による削除済みを含む。区別しない） | セッション更新せず処理継続 | Accounting-Response | WARN: `ACCT_SESSION_NOT_FOUND` |
+| セッション不在 | Start時にClass属性なし・不正、またはStart / Interim時に sess:{UUID}不在（TTL超過による削除済みを含む。区別しない）。Class属性なしのInterimは対象外（セッション更新・ログなし） | セッション更新せず処理継続（不在の sess:{UUID} は作成しない） | Accounting-Response | WARN: `ACCT_SESSION_NOT_FOUND` |
 | Start重複 | 同一Acct-Session-Idで再Start | 既存維持 | Accounting-Response | WARN: `ACCT_DUPLICATE_START` |
-| Interim重複 | 同一Acct-Session-Idで同一値Interim | 既存維持 | Accounting-Response | WARN: `ACCT_DUPLICATE_START` |
-| StartなしでInterim | Acct-Session-Id未登録でInterim | 新規作成 | Accounting-Response | WARN: `ACCT_SEQUENCE_ERR` |
-| Stop後にStart | 同一Acct-Session-Idで再Start | 新規作成 | Accounting-Response | WARN: `ACCT_SEQUENCE_ERR` |
+| Interim重複 | 同一Acct-Session-Idで直前と同一値のInterim | 既存維持（処理終了） | Accounting-Response | WARN: `ACCT_DUPLICATE_START` |
+| StartなしでInterim | Acct-Session-Id未登録（acct:seen なし）でInterim | 受信値を記録して処理継続（reason=`no_start_received`） | Accounting-Response | WARN: `ACCT_SEQUENCE_ERR` |
+| Stop後のInterim | 同一Acct-Session-IdでStop受信後にInterim | 受信値を記録して処理継続（reason=`interim_after_stop`） | Accounting-Response | WARN: `ACCT_SEQUENCE_ERR` |
+| Stop後にStart | 同一Acct-Session-Idで再Start | 新規セッションとして処理継続（reason=`start_after_stop`） | Accounting-Response | WARN: `ACCT_SEQUENCE_ERR` |
 | Stop重複 | 同一Acct-Session-Idで再Stop | 処理継続 | Accounting-Response | なし |
 
 ### 7.2 リトライ戦略
@@ -1601,7 +1613,7 @@ D-04で定義されたevent_idを使用する。
 | event_id | レベル | 説明 |
 |----------|--------|------|
 | `PKT_RECV` | INFO | Status-Server応答送信（Accounting-Request受信時は出力しない） |
-| `VALKEY_CONN_ERR` | ERROR | 起動時のValkey接続失敗、実行時の読み取り系Valkeyエラー（重複チェック・セッション存在確認・Start受信有無確認） |
+| `VALKEY_CONN_ERR` | ERROR | 起動時のValkey接続失敗、実行時の読み取り系Valkeyエラー（重複・順序判定（Interim受信値の記録失敗を含む）・セッション存在確認） |
 | `DB_WRITE_ERR` | ERROR | Valkey書き込み失敗（セッション更新・停止マーク・セッション削除・インデックス削除） |
 | `SYS_ERR` | ERROR | Accounting処理がエラーを返した（現行は常にnilのため通常出力されない） |
 | `PKT_SEND_ERR` | ERROR | Accounting-Response / Status-Server応答の送信失敗 |
@@ -1610,9 +1622,9 @@ D-04で定義されたevent_idを使用する。
 | `RADIUS_SECRET_ERR` | WARN | Shared Secret解決時のValkey検索エラー |
 | `RADIUS_NO_SECRET` | WARN | Shared Secret不明 |
 | `RADIUS_UNKNOWN_CODE` | WARN | 未知のRADIUS Code / 未知のAcct-Status-Type |
-| `ACCT_SESSION_NOT_FOUND` | WARN | Start時のClass属性なし・セッション不在（TTL超過を含む） |
-| `ACCT_DUPLICATE_START` | WARN | 重複Start/Interim |
-| `ACCT_SEQUENCE_ERR` | WARN | 順序異常 |
+| `ACCT_SESSION_NOT_FOUND` | WARN | Start時のClass属性なし、Start / Interim時のセッション不在（TTL超過を含む） |
+| `ACCT_DUPLICATE_START` | WARN | 重複Start / 直前と同一値のInterim |
+| `ACCT_SEQUENCE_ERR` | WARN | 順序異常（Stop後のStart: `start_after_stop`、StartなしのInterim: `no_start_received`、Stop後のInterim: `interim_after_stop`） |
 | `ACCT_START` | INFO | Accounting-Start受信 |
 | `ACCT_INTERIM` | INFO | Accounting-Interim受信 |
 | `ACCT_STOP` | INFO | Accounting-Stop受信 |
@@ -1674,7 +1686,7 @@ D-04で定義されたevent_idを使用する。
   "level": "WARN",
   "app": "acct-server",
   "event_id": "ACCT_SEQUENCE_ERR",
-  "msg": "interim without start",
+  "msg": "interim sequence error",
   "trace_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
   "src_ip": "192.168.1.100",
   "acct_session_id": "sess-xyz789",
@@ -1769,6 +1781,28 @@ type AccountingProcessor interface {
     ProcessStop(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error
     ProcessOn(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error
     ProcessOff(ctx context.Context, attrs *radius.AccountingAttributes, srcIP, traceID string) error
+}
+
+// DuplicateDetector は重複・順序異常検出のインターフェース（§5.8）
+type DuplicateDetector interface {
+    // CheckAndMarkStart はStartの重複をチェックし、未登録ならマークする
+    CheckAndMarkStart(ctx context.Context, acctSessionID string) (isDuplicate bool, err error)
+    // CheckInterim はInterimの重複と順序異常を判定し、重複でなければ受信値を記録する
+    CheckInterim(ctx context.Context, acctSessionID string, input, output uint32) (InterimCheckResult, error)
+    // CheckStopDuplicate はStopの重複をチェックする
+    CheckStopDuplicate(ctx context.Context, acctSessionID string) (isDuplicate bool, err error)
+    // MarkAsStopped はStopとしてマークする
+    MarkAsStopped(ctx context.Context, acctSessionID string) error
+}
+
+// InterimCheckResult はInterim受信時の重複・順序判定の結果
+type InterimCheckResult struct {
+    // Duplicate は直前に受信したInterimと同一値（重複）かどうか
+    Duplicate bool
+    // SequenceReason は順序異常の理由（正常なら空）
+    //   - "no_start_received": Start（およびInterim）を受信していない
+    //   - "interim_after_stop": Stop受信後のInterim
+    SequenceReason string
 }
 
 // internal/session/interfaces.go
@@ -1987,3 +2021,4 @@ func main() {
 | r6 | 2026-03-05 | Accounting-On/Off対応: §1.2スコープ追加、§1.4対象外から削除、§1.5/§1.6更新、§2.1/§2.3更新、§4.1処理フロー拡張、§4.4属性抽出更新（NAS-Identifier追加・Acct-Session-Id On/Off省略許容・実装コード整合）、§5.6/§5.7新設（ProcessOn/ProcessOff）、§7.1.2/§8.1/§8.2更新、§9.2インターフェース更新、§10.1ハンドラー更新、§11から削除 |
 | r7 | 2026-10-04 | D-04 r19 の event_id 全面整合に合わせて修正: §8.1 event_id一覧から実装に存在しない `VALKEY_CONN_RESTORED` / `ACCT_SESSION_EXPIRED` を削除し、`SYS_ERR` / `PKT_SEND_ERR` / `RADIUS_SECRET_ERR` を追加、各説明を実装の出力条件に修正。§7.1.1〜§7.1.3 のエラー表を修正（起動時 `VALKEY_CONN_ERR`、書き込み系 `DB_WRITE_ERR`、`RADIUS_SECRET_ERR`、`RADIUS_PARSE_ERR` は属性抽出失敗でありパケットデコード失敗はログなし、未知のRADIUS Code、`PKT_SEND_ERR` を追加。セッションTTL超過は `ACCT_SESSION_NOT_FOUND` と区別しない旨を明記）。§10.2 Valkey接続復旧検知を「実装しない」に改め実装例を削除。§4.2 Shared Secret解決、§5.3〜§5.5 Start/Interim/Stop処理のコード例を実装（`trace_id` 付与、`RADIUS_SECRET_ERR`、重複チェック時の `VALKEY_CONN_ERR`、Stop後Startの `ACCT_SEQUENCE_ERR`、停止マーク失敗の `DB_WRITE_ERR`）に合わせて更新。§4.7 Status-Server処理のログ（msg・`trace_id`、`packet_code` 削除）を実装に合わせて修正。§8.2 ログ出力例に `trace_id` を追加し、StartなしInterimの msg を `interim without start` に修正。§1.3 関連ドキュメントの版数を現行版に更新（D-01 r10、D-02 r12、D-03 r6（文書名も現行名に修正）、D-04 r19、D-06 r7、D-08 r14、D-09 r10、E-02 r3）。関連ドキュメント表の文書名を実在の文書に修正（存在しない D-05「Valkeyキー・TTL設計書」を削除、D-07「AKA Vector Server」→ D-11 Vector API詳細設計書、E-03 → 共通ライブラリ(pkg)設計書） |
 | r8 | 2026-10-04 | ログのIMSIマスク漏れ修正の反映: §6.1 IMSI取得優先順位の優先度3（IMSI抽出失敗時のUser-Name）を「そのまま」からマスク済み（pkg/logging.MaskUserName）に修正、§6.2のResolveIMSIのコードを実装（`internal/session/identifier.go`。引数 userName / classUUID、pkg/logging の MaskIMSI / MaskUserName を使用）に合わせ更新、§6.3を pkg/logging の MaskIMSI / MaskUserName による実装に更新。関連ドキュメント参照版数更新（D-04 r19→r20、D-06 r7→r8、D-09 r10→r11、E-03 r3→r4）。あわせて、廃止済みの internal/logging（mask.go）をディレクトリ構成から削除（IMSIマスキングは pkg/logging を使用） |
+| r9 | 2026-10-04 | Interimのシーケンス判定修正の反映: §5.4 Acct-Interim処理を実装（`CheckInterim` による重複・順序異常の一括判定、順序異常の msg `interim sequence error`、`sess:{UUID}` の存在確認と不在時の `ACCT_SESSION_NOT_FOUND`）に合わせて説明とコードを更新。§5.8 重複・順序異常検出を実装（`internal/acct/duplicate.go`）のコードに差し替え、`acct:seen` の値による判定表を追加（Stop後のInterim `interim_after_stop` を新設。削除した `CheckInterimDuplicate` / `HasSeenStart` / `MarkAsStart` の記載を削除し、旧実装でStartなしのInterimを検出できなかった旨を注記）。§5.7 `UpdateOnInterim` に存在確認後に呼び出す旨を注記。§7.1.3 データエラー表（セッション不在にInterimを追加、StartなしでInterimの対処を「受信値を記録して処理継続」に修正、Stop後のInterimを新設）、§8.1 event_id一覧（`VALKEY_CONN_ERR`、`ACCT_SESSION_NOT_FOUND`、`ACCT_DUPLICATE_START`、`ACCT_SEQUENCE_ERR` の説明）、§8.2 ログ出力例（StartなしInterimの msg）、§9.2 インターフェース定義（`DuplicateDetector`、`InterimCheckResult` を追加）を更新。関連ドキュメント参照版数更新（D-02 r12→r13、D-04 r20→r21） |

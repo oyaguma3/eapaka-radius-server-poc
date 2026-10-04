@@ -1,4 +1,4 @@
-﻿# D-09 Auth Server詳細設計書 (r11)
+﻿# D-09 Auth Server詳細設計書 (r12)
 
 ## ■セクション1: 概要
 
@@ -3378,7 +3378,7 @@ func (s *sessionStore) RefreshTTL(ctx context.Context, sessionID string) error {
 **セッション（TTL=24時間）：**
 
 - 自動削除される
-- Acct Start受信時にセッション不在 → `ACCT_SESSION_NOT_FOUND`ログ（WARN。不在とTTL超過は区別できない）、Accounting-Response返却。Interim/Stop時は不在のログを出力しない（D-02 §2.E、D-04 §3.2.3準拠）
+- Acct Start受信時にセッション不在 → `ACCT_SESSION_NOT_FOUND`ログ（WARN。不在とTTL超過は区別できない）、Accounting-Response返却。Interim時も不在なら `ACCT_SESSION_NOT_FOUND` を出力し、不在のセッションキーは作らない。Stop時は不在のログを出力しない（D-02 §3.E、D-04 §3.2準拠）
 
 ### 9.6 Valkey操作ユーティリティ
 
@@ -4546,3 +4546,4 @@ Auth Server内で直接参照する外部パッケージの型：
 | r9 | 2026-02-18 | ディレクトリ構造全面更新、ポリシー評価ロジック更新、関連ドキュメント版数更新 |
 | r10 | 2026-10-04 | 既存記載の実装との不一致を修正: Vector Gateway 404時のevent_idを `AUTH_IMSI_NOT_FOUND` → `VECTOR_IMSI_NOT_FOUND` に修正（§3.5.4、§7.8.3）、§7.8.3の呼び出し元でのevent_id表を実装（engine.go `logVectorError`）に合わせて更新（`VECTOR_CONN_ERR` / `VECTOR_CB_OPEN` / `VECTOR_UNKNOWN_ERR` 追加、HTTPクライアント層との2行出力を注記）、§7.8.1に403/409を追加、§7.10のCBログ属性を実装に合わせて修正（`CB_CLOSE` の `recovery_time_ms` 削除、`failure_count` は常に0）、§7.4.2のエラー応答例（404）のdetailを実装の文言に修正、関連ドキュメント版数更新（D-01 r10、D-03 r6、D-04 r19、D-06 r7、D-08 r14、D-12 r5、E-02 r3）。D-04 r19 の event_id 全面整合に合わせて修正（§3.5.4 マスキング適用表・実装例の `AUTH_OK` を `AUTH_SUCCESS`（属性 `trace_id`, `imsi`, `session_id`）に修正し実装にない `SESSION_CREATED` を削除、imsi を出力する event_id を追加、§4.6 の `AUTH_OK` を `AUTH_SUCCESS` に修正、§5.2 Secret解決ログに `RADIUS_IP_EXTRACT_ERR` / `RADIUS_SECRET_ERR` を追加、§5.10 の `RADIUS_AUTH_ERR` / `RADIUS_UNKNOWN_CODE` を `PKT_MA_INVALID` / `PKT_UNKNOWN_CODE` に修正し `PKT_RECV` の属性を `code` に修正、`PKT_NO_EAP` / `PKT_DROP` / `PKT_SEND_ERR` / `EAP_ENGINE_ERR` / `RADIUS_STATUS_OK` / `RADIUS_STATUS_AUTH_FAIL` を追加、§6.5.3 の `EAP_INVALID_STATE` を `EAP_STATE_ERR` / `EAP_UNEXPECTED_IDENTITY` に修正、§6.10 の `EAP_PSEUDONYM_FALLBACK` を削除（専用ログなし）、§8.7〜§8.10 の `POLICY_PARSE_ERR` を `AUTH_POLICY_NOT_FOUND` に統合し `AUTH_POLICY_NOT_FOUND` / `AUTH_POLICY_DENIED` を WARN・実装の属性に修正、§9.5.3 の `EAP_CONTEXT_NOT_FOUND` / `ACCT_SESSION_EXPIRED` を `EAP_CTX_NOT_FOUND` / `ACCT_SESSION_NOT_FOUND` に修正、§9.8.2/§9.9 の `EAP_CONTEXT_NOT_FOUND` / `EAP_CONTEXT_INVALID` / 実行時 `VALKEY_CONN_ERR` / `SESSION_CREATED` / `VALKEY_CONN_RESTORED` を実装の event_id に修正、起動時 `VALKEY_CONN_ERR` の msg を実装に合わせ、`slog.With` による trace_id 付与の記述を D-04 §4.1 に合わせて修正） |
 | r11 | 2026-10-04 | ログのIMSIマスク漏れ修正の反映: §3.5.2にUser-Name（EAP Identity）のマスク規則（pkg/logging.MaskUserName）を追記、§3.5.3の実装を pkg/logging の MaskIMSI / MaskUserName を使う認証エンジンのラッパーメソッド（maskIMSI / maskUserName）に更新、§3.5.4適用箇所にEAP_UNSUPPORTED_TYPE / EAP_IDENTITY_INVALIDの `user_name` を追加し「マスクせず出力」の注記を修正。関連ドキュメント参照版数更新（D-04 r19→r20、D-06 r7→r8）。あわせて、廃止済みの internal/logging（mask.go）のパッケージ構成記載を削除し、pkg/logging を使う旨に修正 |
+| r12 | 2026-10-04 | §9.5 のセッションTTL超過時の Acct Server の挙動を、Interim 時も `ACCT_SESSION_NOT_FOUND` を出力し不在のキーを作らない実装に合わせて修正 |

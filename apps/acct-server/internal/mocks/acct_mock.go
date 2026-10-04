@@ -13,6 +13,7 @@ import (
 	context "context"
 	reflect "reflect"
 
+	acct "github.com/oyaguma3/eapaka-radius-server-poc/apps/acct-server/internal/acct"
 	radius "github.com/oyaguma3/eapaka-radius-server-poc/apps/acct-server/internal/radius"
 	gomock "go.uber.org/mock/gomock"
 )
@@ -150,19 +151,19 @@ func (mr *MockDuplicateDetectorMockRecorder) CheckAndMarkStart(ctx, acctSessionI
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckAndMarkStart", reflect.TypeOf((*MockDuplicateDetector)(nil).CheckAndMarkStart), ctx, acctSessionID)
 }
 
-// CheckInterimDuplicate mocks base method.
-func (m *MockDuplicateDetector) CheckInterimDuplicate(ctx context.Context, acctSessionID string, input, output uint32) (bool, error) {
+// CheckInterim mocks base method.
+func (m *MockDuplicateDetector) CheckInterim(ctx context.Context, acctSessionID string, input, output uint32) (acct.InterimCheckResult, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CheckInterimDuplicate", ctx, acctSessionID, input, output)
-	ret0, _ := ret[0].(bool)
+	ret := m.ctrl.Call(m, "CheckInterim", ctx, acctSessionID, input, output)
+	ret0, _ := ret[0].(acct.InterimCheckResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// CheckInterimDuplicate indicates an expected call of CheckInterimDuplicate.
-func (mr *MockDuplicateDetectorMockRecorder) CheckInterimDuplicate(ctx, acctSessionID, input, output any) *gomock.Call {
+// CheckInterim indicates an expected call of CheckInterim.
+func (mr *MockDuplicateDetectorMockRecorder) CheckInterim(ctx, acctSessionID, input, output any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckInterimDuplicate", reflect.TypeOf((*MockDuplicateDetector)(nil).CheckInterimDuplicate), ctx, acctSessionID, input, output)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckInterim", reflect.TypeOf((*MockDuplicateDetector)(nil).CheckInterim), ctx, acctSessionID, input, output)
 }
 
 // CheckStopDuplicate mocks base method.
@@ -178,35 +179,6 @@ func (m *MockDuplicateDetector) CheckStopDuplicate(ctx context.Context, acctSess
 func (mr *MockDuplicateDetectorMockRecorder) CheckStopDuplicate(ctx, acctSessionID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckStopDuplicate", reflect.TypeOf((*MockDuplicateDetector)(nil).CheckStopDuplicate), ctx, acctSessionID)
-}
-
-// HasSeenStart mocks base method.
-func (m *MockDuplicateDetector) HasSeenStart(ctx context.Context, acctSessionID string) (bool, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "HasSeenStart", ctx, acctSessionID)
-	ret0, _ := ret[0].(bool)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// HasSeenStart indicates an expected call of HasSeenStart.
-func (mr *MockDuplicateDetectorMockRecorder) HasSeenStart(ctx, acctSessionID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HasSeenStart", reflect.TypeOf((*MockDuplicateDetector)(nil).HasSeenStart), ctx, acctSessionID)
-}
-
-// MarkAsStart mocks base method.
-func (m *MockDuplicateDetector) MarkAsStart(ctx context.Context, acctSessionID string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "MarkAsStart", ctx, acctSessionID)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// MarkAsStart indicates an expected call of MarkAsStart.
-func (mr *MockDuplicateDetectorMockRecorder) MarkAsStart(ctx, acctSessionID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkAsStart", reflect.TypeOf((*MockDuplicateDetector)(nil).MarkAsStart), ctx, acctSessionID)
 }
 
 // MarkAsStopped mocks base method.
