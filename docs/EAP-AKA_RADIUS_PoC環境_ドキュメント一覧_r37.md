@@ -1,4 +1,4 @@
-# EAP-AKA RADIUS PoC環境 ドキュメント一覧 (r36)
+# EAP-AKA RADIUS PoC環境 ドキュメント一覧 (r37)
 
 **作成日:** 2025-12-30
 **最終更新:** 2026-10-04
@@ -13,15 +13,15 @@
 | No. | ドキュメント名 | 版数 | 最終更新 | 内容 |
 |-----|---------------|------|---------|------|
 | D-01 | ミニPC版 EAP-AKA RADIUS PoC環境 設計仕様書 | r10 | 2026-10-04 | システム概要、アーキテクチャ、ノード構成、パッケージマップ、Vector Gateway追加、Valkeyバージョン9.0統一、Fluent Bit統一、環境変数名統一、実装コードとの不整合20件修正（データモデル注記・Valkeyキースキーマ・パッケージマップ・docker-compose.yml完全同期・healthcheck・テストベクターモード）、外部aka-only-server（接続方式01）を構成図・環境変数に追加 |
-| D-02 | Valkeyデータ設計仕様書 | r12 | 2026-10-04 | データ構造、キー設計、TTL、Go構造体、CK/IK非保存方針、UUID仕様明記、Acct重複検出キャッシュ、stageフィールド値明記、SQN競合制御（WATCH/MULTI CAS）、idx:userクリーンアップ方針、PolicyRule構造を実装コードに整合（NasID/AllowedSSIDs/VlanID/SessionTimeout）、実装との突き合わせによる修正（nas_idは完全一致、SQN競合制御は設計のみで現行未実装、セッション/インデックス/重複検出/EAPコンテキストの実態） |
+| D-02 | Valkeyデータ設計仕様書 | r13 | 2026-10-04 | データ構造、キー設計、TTL、Go構造体、CK/IK非保存方針、UUID仕様明記、Acct重複検出キャッシュ、stageフィールド値明記、SQN競合制御（WATCH/MULTI CAS）、idx:userクリーンアップ方針、PolicyRule構造を実装コードに整合（NasID/AllowedSSIDs/VlanID/SessionTimeout）、実装との突き合わせによる修正（nas_idは完全一致、SQN競合制御は設計のみで現行未実装、セッション/インデックス/重複検出/EAPコンテキストの実態）、Interimのセッション不在時に作成しない・重複検出のInterim判定（no_start_received / interim_after_stop）を実装に整合 |
 | D-03 | Vector-APIインターフェース定義書およびEAP-AKAステートマシン設計書 | r6 | 2026-10-04 | API仕様、8状態定義、Policy評価Post-Authのみ、接続先をVector Gatewayに変更、接続方式01経由時の403応答 |
-| D-04 | ログ仕様設計書 | r20 | 2026-10-04 | ログフォーマット、event_id定義、Vector Gateway対応、EAP_INVALID_STATE追加、IMSIマスキング（4コンポーネント対応、Admin TUI除外明記）、Acct Server PKT_RECV追加、SQN_CONFLICT_ERR追加、lnavフォーマット全面改訂（bunyan競合回避・timestamp-format削除・file-pattern・sample追加）、ACCT_ON/ACCT_OFF追加、ヘルスチェックログ分離記述追加、BACKEND_EXTERNAL_CALL/BACKEND_EXTERNAL_ERR実装済み化・causeフィールド追加、IMSIマスク漏れ修正の反映（user_name等のマスク、User-Nameマスク規則追加）・lnavフォーマットのvalue整理（code/subtype/eap_type/acct_status_type/session_time追加、retry_count/downtime_ms削除） |
+| D-04 | ログ仕様設計書 | r21 | 2026-10-04 | ログフォーマット、event_id定義、Vector Gateway対応、EAP_INVALID_STATE追加、IMSIマスキング（4コンポーネント対応、Admin TUI除外明記）、Acct Server PKT_RECV追加、SQN_CONFLICT_ERR追加、lnavフォーマット全面改訂（bunyan競合回避・timestamp-format削除・file-pattern・sample追加）、ACCT_ON/ACCT_OFF追加、ヘルスチェックログ分離記述追加、BACKEND_EXTERNAL_CALL/BACKEND_EXTERNAL_ERR実装済み化・causeフィールド追加、IMSIマスク漏れ修正の反映（user_name等のマスク、User-Nameマスク規則追加）・lnavフォーマットのvalue整理（code/subtype/eap_type/acct_status_type/session_time追加、retry_count/downtime_ms削除）、ACCT_SEQUENCE_ERRのInterim側msg変更・interim_after_stop追加、ACCT_SESSION_NOT_FOUNDをStart/Interimに拡大 |
 | D-05 | Admin TUI詳細設計書【前半】 | r9 | 2026-02-23 | 画面設計、バリデーション、インポート/エクスポート、IMSI表示方針（常に生値）、全マスタデータHash形式統一、実装スクリーンショットとのASCIIレイアウト整合性修正（12画面） |
-| D-06 | エラーハンドリング詳細設計書 | r8 | 2026-10-04 | 異常系処理、タイムアウト、リトライ、Circuit Breaker、Vector Gateway追加、SQN競合エラー（409）追加、Vector Gateway経由フロー明記、接続方式01（aka-only-server）のエラー変換、EAP Identity系ログのuser_nameマスク反映 |
+| D-06 | エラーハンドリング詳細設計書 | r9 | 2026-10-04 | 異常系処理、タイムアウト、リトライ、Circuit Breaker、Vector Gateway追加、SQN競合エラー（409）追加、Vector Gateway経由フロー明記、接続方式01（aka-only-server）のエラー変換、EAP Identity系ログのuser_nameマスク反映、Interimのセッション不在・順序異常の扱いを実装に整合 |
 | D-07 | Admin TUI詳細設計書【後半】 | r8 | 2026-10-04 | モニタリング画面、ヘルプダイアログ、IMSI記録方針（監査ログに生値）、idx:userクリーンアップ処理、実装スクリーンショットとのASCIIレイアウト整合性修正（5画面）、event_idを実装に整合 |
 | D-08 | インフラ設定・運用設計書 | r14 | 2026-10-04 | Docker Compose設定、Valkey設定、Fluent Bit設定（fluent/fluent-bit:4.2、YAML形式、rewrite_tagによるヘルスチェックログ分離、キャッチオール廃止による重複出力解消）、UFW設定、運用手順、IMSIマスキング環境変数（4コンポーネント限定）、Valkeyバージョン9.0、ヘルスチェック方針（curl -fsS）、テストベクターモード環境変数、B-02スコープ修正（B-01境界整合）、aka-only-server接続（compose環境変数・証明書マウント・共有ネットワークaka-av用オーバーレイ） |
-| D-09 | Auth Server詳細設計書 | r11 | 2026-10-04 | パッケージ構成、RADIUS受信処理、EAP制御フロー、Vector Gateway連携、セッション管理、IMSIマスキング、UUID仕様明記、互換性エイリアス削除、ベースイメージ方針、Vector関連event_id（VECTOR_IMSI_NOT_FOUND等）を実装に整合、user_nameのマスキング（MaskUserName）追加 |
-| D-10 | Acct Server詳細設計書 | r8 | 2026-10-04 | パッケージ構成、Accounting処理フロー、セッション更新ロジック、重複検出、IMSIマスキング、Status-Server対応、ベースイメージ方針、Accounting-On/Off対応（ProcessOn/ProcessOff、NAS-Identifier処理）、event_idを実装に整合、IMSI抽出不可時のUser-Nameをマスクして出力 |
+| D-09 | Auth Server詳細設計書 | r12 | 2026-10-04 | パッケージ構成、RADIUS受信処理、EAP制御フロー、Vector Gateway連携、セッション管理、IMSIマスキング、UUID仕様明記、互換性エイリアス削除、ベースイメージ方針、Vector関連event_id（VECTOR_IMSI_NOT_FOUND等）を実装に整合、user_nameのマスキング（MaskUserName）追加、Acct ServerのInterim時のセッション不在の扱いを修正 |
+| D-10 | Acct Server詳細設計書 | r9 | 2026-10-04 | パッケージ構成、Accounting処理フロー、セッション更新ロジック、重複検出、IMSIマスキング、Status-Server対応、ベースイメージ方針、Accounting-On/Off対応（ProcessOn/ProcessOff、NAS-Identifier処理）、event_idを実装に整合、IMSI抽出不可時のUser-Nameをマスクして出力、Interimのシーケンス判定（CheckInterim、interim_after_stop）とセッション存在確認 |
 | D-11 | Vector API詳細設計書 | r7 | 2026-10-04 | パッケージ構成、HTTPサーバー設定、Milenage計算、SQN管理、SQN競合制御（WATCH/MULTI CAS）、エラーハンドリング、ベースイメージ方針、テストベクターモード本番無効化注記、event_idを実装に整合、SQN競合制御（CAS）は設計済み・現行未実装と明記 |
 | D-12 | Vector Gateway詳細設計書 | r5 | 2026-10-04 | 外部API連携設計、PLMNルーティング、接続方式管理、トレーサビリティ、IMSIマスキング、ベースイメージ方針（debian:bookworm-slim）、接続方式01（aka-only-server、mTLS/平文HTTP、GenerateAv変換）実装 |
 
@@ -64,7 +64,7 @@
 | No. | ドキュメント名 | 版数 | 最終更新 | 内容 |
 |-----|---------------|------|---------|------|
 | T-01 | テスト戦略書 | r3 | 2026-10-04 | テストレベル定義、テスト範囲、テスト環境、モック戦略、テストデータ戦略、品質ゲート、テストベクターモード運用注記、.env例の環境変数名（RADIUS_SECRET）を実装に整合 |
-| T-02 | 単体テスト仕様書 | r3 | 2026-10-04 | コンポーネント別テストケース（全1,216件）、モック戦略、テストデータ設計、Vector Gateway接続方式01のテストケース追加、IMSIマスク漏れ修正のテストケース追加 |
+| T-02 | 単体テスト仕様書 | r4 | 2026-10-04 | コンポーネント別テストケース（全1,224件）、モック戦略、テストデータ設計、Vector Gateway接続方式01のテストケース追加、IMSIマスク漏れ修正のテストケース追加、acct-server Interimシーケンス判定修正のテストケース反映 |
 | T-03 | 結合テスト仕様書 | r8 | 2026-10-04 | コンポーネント間連携テスト、シナリオテスト、テストベクターモード検証、Valkeyデータ整合性検証、Secret体系明確化、SQN再同期手順改訂、IMSI 003専用config追加、障害系PASS条件修正、identityオーバーライドIMSIのSQNリセット運用補足、Dockerイメージ再ビルド注意事項追加、eapaka_testパス参照をsupplement配下に一般化、INT-ACCT-ON-017/INT-ACCT-OFF-018追加、aka-only-server結合シナリオ追加、INT-GW-PLMN-010の未実装IDを02に変更 |
 | T-04 | E2Eテスト仕様書 | r5 | 2026-10-04 | 実機テスト（SIM/AP）3件、擬似E2E（eapaka_test）5件、実機異常系3件の計11シナリオ、SQN管理注意事項追加、Valkey再起動後データ残存確認追加、eapaka_testパス参照をsupplement配下に一般化、aka-only-server接続E2Eシナリオと実施結果（2026-10-04）追加 |
 
@@ -99,14 +99,14 @@
 |-----|---------------|---------|---------------|------|
 | O-01 | 操作ガイド（user-guide.md） | **完了 (r2)** | D-05, D-07の完成後 | 加入者登録、ポリシー設定、セッション監視の操作手順。ASCIIレイアウト付き。PLMNによる加入者登録先（Admin TUI / aka-only-server）の区別。 |
 | O-02 | ポリシー設定ガイド（policy-config-guide.md） | **完了 (r1)** | D-02の認可ポリシー設計確定後 | NAS-ID/SSID設定例、VLAN割り当て例、トラブルシューティング |
-| O-03 | 障害対応手順書 | **完了 (r2)** | D-06, D-08の完成後 | 障害検知方法、切り分け手順、復旧手順、エスカレーションフロー、aka-only-server接続（接続方式01）の切り分け |
+| O-03 | 障害対応手順書 | **完了 (r3)** | D-06, D-08の完成後 | 障害検知方法、切り分け手順、復旧手順、エスカレーションフロー、aka-only-server接続（接続方式01）の切り分け、Acct Serverの順序異常（reason別）・Interimのセッション不在の切り分け |
 
 ### 5.2 保守ドキュメント類
 
 | No. | ドキュメント名 | 作成時期 | 必須前提・方針 | 概要 |
 |-----|---------------|---------|---------------|------|
 | O-04 | バックアップ・リストア手順書 | **完了 (r1)** | D-08でバックアップ方針定義後 | Valkeyデータのバックアップ/リストア（自動・手動）、リストア手順（6ステップ）、設定ファイルのバックアップと復元、トラブルシューティング、運用チェックリスト |
-| O-05 | ログ解析ガイド | **完了 (r8)** | D-04の完成後 | lnavの使い方、頻出クエリ集、障害調査パターン。event_idを実装に整合、lnavクエリを実動作に整合（aka_radius_logテーブル）、user_nameマスク反映・SQLカラム（code/subtype/eap_type/acct_status_type/session_time）追加 |
+| O-05 | ログ解析ガイド | **完了 (r9)** | D-04の完成後 | lnavの使い方、頻出クエリ集、障害調査パターン。event_idを実装に整合、lnavクエリを実動作に整合（aka_radius_logテーブル）、user_nameマスク反映・SQLカラム（code/subtype/eap_type/acct_status_type/session_time）追加、ACCT_SEQUENCE_ERR（interim_after_stop）・ACCT_SESSION_NOT_FOUND（Interim）の反映 |
 
 ---
 
@@ -128,15 +128,15 @@
 [設計ドキュメント] ─────────────────────────────────────────────────────┐
     │                                                                   │
     ├─ D-01: ミニPC版設計仕様書 (r10) ✓                                  │
-    ├─ D-02: Valkeyデータ設計仕様書 (r12) ✓                              │
+    ├─ D-02: Valkeyデータ設計仕様書 (r13) ✓                              │
     ├─ D-03: Vector-API/ステートマシン設計書 (r6) ✓                     │
-    ├─ D-04: ログ仕様設計書 (r20) ✓                                     │
+    ├─ D-04: ログ仕様設計書 (r21) ✓                                     │
     ├─ D-05: Admin TUI詳細設計書【前半】(r9) ✓                          │
-    ├─ D-06: エラーハンドリング詳細設計書 (r8) ✓                        │
+    ├─ D-06: エラーハンドリング詳細設計書 (r9) ✓                        │
     ├─ D-07: Admin TUI詳細設計書【後半】(r8) ✓                          │
     ├─ D-08: インフラ設定・運用設計書 (r14) ✓                            │
-    ├─ D-09: Auth Server詳細設計書 (r11) ✓                               │
-    ├─ D-10: Acct Server詳細設計書 (r8) ✓                               │
+    ├─ D-09: Auth Server詳細設計書 (r12) ✓                               │
+    ├─ D-10: Acct Server詳細設計書 (r9) ✓                               │
     ├─ D-11: Vector API詳細設計書 (r7) ✓                                │
     └─ D-12: Vector Gateway詳細設計書 (r5) ✓                            │
                     │                                                   │
@@ -151,7 +151,7 @@
 [テストドキュメント] ───────────────────────────────────────────────────┤
     │                                                                   │
     ├─ T-01: テスト戦略書 (r3) ✓                                        │
-    ├─ T-02: 単体テスト仕様書 (r3) ✓                                     │
+    ├─ T-02: 単体テスト仕様書 (r4) ✓                                     │
     ├─ T-03: 結合テスト仕様書 (r8) ✓                                    │
     └─ T-04: E2Eテスト仕様書 (r5) ✓                                    │
                     │                                                   │
@@ -166,9 +166,9 @@
     │
     ├─ O-01: 操作ガイド (r2) ✓
     ├─ O-02: ポリシー設定ガイド (r1)✓
-    ├─ O-03: 障害対応手順書 (r2) ✓
+    ├─ O-03: 障害対応手順書 (r3) ✓
     ├─ O-04: バックアップ・リストア手順書 (r1) ✓
-    └─ O-05: ログ解析ガイド (r8)✓
+    └─ O-05: ログ解析ガイド (r9)✓
 ```
 
 ---
@@ -182,9 +182,9 @@
 | 1 | D-07 | Admin TUI詳細設計書【後半】 | **完了 (r1)** |
 | 2 | D-12 | Vector Gateway詳細設計書 | **完了 (r5)** |
 | 3 | D-08 | インフラ設定・運用設計書 | **完了 (r14)** |
-| 4 | D-09 | Auth Server詳細設計書 | **完了 (r11)** |
+| 4 | D-09 | Auth Server詳細設計書 | **完了 (r12)** |
 | 5 | D-11 | Vector API詳細設計書 | **完了 (r2)** |
-| 6 | D-10 | Acct Server詳細設計書 | **完了 (r8)** |
+| 6 | D-10 | Acct Server詳細設計書 | **完了 (r9)** |
 
 ### フェーズ2: 開発準備
 
@@ -199,7 +199,7 @@
 
 | 順序 | ドキュメントID | ドキュメント名 | ステータス |
 |-----|---------------|---------------|-----------|
-| 11 | T-02 | 単体テスト仕様書 | **完了 (r3)** |
+| 11 | T-02 | 単体テスト仕様書 | **完了 (r4)** |
 | 12 | T-03 | 結合テスト仕様書 | **完了 (r8)** |
 | 13 | T-04 | E2Eテスト仕様書 | **完了 (r5)** |
 
@@ -216,9 +216,9 @@
 |-----|---------------|---------------|-----------|
 | 16 | O-01 | 操作ガイド | **完了 (r2)** |
 | 17 | O-02 | ポリシー設定ガイド | **完了 (r1)** |
-| 18 | O-03 | 障害対応手順書 | **完了 (r2)** |
+| 18 | O-03 | 障害対応手順書 | **完了 (r3)** |
 | 19 | O-04 | バックアップ・リストア手順書 | **完了 (r1)** |
-| 20 | O-05 | ログ解析ガイド | **完了 (r8)** |
+| 20 | O-05 | ログ解析ガイド | **完了 (r9)** |
 
 ---
 
@@ -278,3 +278,4 @@
 | r34 | 2026-03-05 | Accounting-On/Off対応＋ヘルスチェックログ分離のドキュメント反映: D-04(r17→r18)、D-10(r5→r6)、T-03(r6→r7)、O-05(r5→r6)。 |
 | r35 | 2026-10-04 | Vector Gatewayに接続方式01（aka-only-server）を追加したことに伴う版数更新: D-01(r9→r10)、D-03(r5→r6)、D-04(r18→r19)、D-06(r6→r7)、D-08(r13→r14)、D-12(r4→r5)、T-02(r1→r2)、T-03(r7→r8)、T-04(r4→r5)、B-02(r9→r10)、O-01(r1→r2)、O-03(r1→r2)、S-01(r1→r2)。README.md も更新（アーキテクチャ表・環境変数表）。 あわせて既存記載の実装との不一致を修正: Vector Gateway/Auth Server の event_id（GW_ROUTE/GW_OK/GW_ERR、VECTOR_IMSI_NOT_FOUND 等）、エラー応答の detail 文言、docker-compose.yml 掲載内容（vector-api に TEST_VECTOR_* を渡すよう compose も修正）、T-02 の件数（削除済み logging テストの除去、全1,196件）、lnav クエリ（aka_radius_log テーブル等）。追加の版数更新: D-09(r9→r10)、E-02(r2→r3)、O-05(r6→r7)、T-01(r2→r3)。 さらに、D-04 の event_id を実装と全件突き合わせて整合し、参照文書（D-03/D-06/D-07/D-08/D-09/D-10/D-11/E-01/E-02/O-03/O-05/T-03）に反映。D-02 を実装に整合（nas_id は完全一致、SQN 競合制御は設計のみで現行未実装）。T-03/S-01 をテストベクターモードの実動作に整合（2026-10-04 実機確認）。追加の版数更新: D-02(r11→r12)、D-07(r7→r8)、D-10(r6→r7)、D-11(r6→r7)、E-01(r3→r4)。 |
 | r36 | 2026-10-04 | ログのIMSIマスク漏れ修正（Auth ServerのEAP_UNSUPPORTED_TYPE/EAP_IDENTITY_INVALIDのuser_name、Vector APIのTEST_SQN_FALLBACK/TEST_SQN_PERSIST_ERRのimsi、Acct ServerのIMSI抽出不可時のUser-Name。pkg/logging.MaskUserName追加）＋lnavフォーマット修正（value整理・sample差し替え）に伴う版数更新: D-04(r19→r20)、B-02(r10→r11)、O-05(r7→r8)、D-06(r7→r8)、D-09(r10→r11)、D-10(r7→r8)、E-03(r3→r4)、T-02(r2→r3、全1,196件→1,216件)。 |
+| r37 | 2026-10-04 | acct-serverのInterimシーケンス判定修正（StartなしのInterimで ACCT_SEQUENCE_ERR（no_start_received）を出力、Stop後のInterimを interim_after_stop として検出、Interimでセッション不在時は sess:{UUID} を作らず ACCT_SESSION_NOT_FOUND を出力）に伴う版数更新: D-10(r8→r9)、D-04(r20→r21)、D-02(r12→r13)、O-03(r2→r3)、O-05(r8→r9)、T-02(r3→r4、全1,216件→1,224件)。README.md も更新（ドキュメント一覧へのリンク、テスト件数）。 あわせて D-06(r8→r9)、D-09(r11→r12) を更新（Interim時のセッション不在・順序異常の記述を実装に整合）。 |

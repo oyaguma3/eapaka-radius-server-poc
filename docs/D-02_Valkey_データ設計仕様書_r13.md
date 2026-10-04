@@ -1,4 +1,4 @@
-# D-02 Valkey データ設計仕様書 (r12)
+# D-02 Valkey データ設計仕様書 (r13)
 
 ## 1. 全体方針
 
@@ -227,7 +227,7 @@ RADIUS属性 Class にこのUUIDが格納される。
 
 - **Key:** `sess:{UUID}`
 - **Type:** `Hash`
-- **TTL:** **24時間**（Auth Accept時に設定し、Acct Start/Interim受信時に EXPIRE で24時間にリセット）
+- **TTL:** **24時間**（Auth Accept時に設定し、Acct Start/Interim受信時に EXPIRE で24時間にリセット。Start/Interimとも `sess:{UUID}` が存在する場合のみ）
 - **UUIDフォーマット:** RFC 4122準拠、ハイフン含む36文字（例: `550e8400-e29b-41d4-a716-446655440000`）
 - **生成:** Auth Serverが `github.com/google/uuid` の `uuid.New().String()` で生成し、Class属性に格納
 - **検証:** Acct Serverが `uuid.Parse()` でClass属性を検証。UUIDとして不正な場合はClass属性なしとして扱う
@@ -251,10 +251,10 @@ RADIUS属性 Class にこのUUIDが格納される。
 
 > **Acct Server のセッション処理と不在時の動作:**
 > - **Start:** Class属性が無い・不正、または `sess:{UUID}` が存在しない場合は `ACCT_SESSION_NOT_FOUND`（WARN）を出力し、セッションは更新しない（新規作成もしない）
-> - **Interim:** 存在確認を行わずに HSET + EXPIRE する。このため `sess:{UUID}` がTTL切れ等で存在しない場合は、`imsi` を持たない Hash（`nas_ip` / `input_octets` / `output_octets` / `client_ip`）が新たに作られ24時間保持される。不在のログは出力しない
+> - **Interim:** Class属性がある場合、`sess:{UUID}` の存在を確認（EXISTS）し、存在すれば HSET + EXPIRE する。存在しない場合（TTL切れ等）は `ACCT_SESSION_NOT_FOUND`（WARN、`class_uuid` 付き）を出力し、セッションは更新しない（新規作成もしない。`imsi` を持たない Hash は作られない）。存在確認でValkeyエラーが発生した場合は `VALKEY_CONN_ERR` を出力し、セッションは更新しない。Class属性が無い場合はセッションを更新せず、ログも出力しない
 > - **Stop:** `sess:{UUID}` を取得して `imsi` を得たうえで DEL し、`imsi` が得られた場合のみ `idx:user:{IMSI}` から SREM する。不在のログは出力しない
 > - いずれの場合も Accounting-Response は返却する（クライアント再送防止）
-> - TTL超過による削除と未作成は区別しない（Start 時はいずれも `ACCT_SESSION_NOT_FOUND` を出力する。TTL超過専用の event_id はない）
+> - TTL超過による削除と未作成は区別しない（Start / Interim 時はいずれも `ACCT_SESSION_NOT_FOUND` を出力する。TTL超過専用の event_id はない）
 
 ### F. ユーザー検索インデックス (Index)
 
@@ -293,20 +293,21 @@ Acct Serverが重複パケットおよび順序異常を検出するためのキ
 >   - 値なし → `start` をセットして処理継続
 >   - 値が `stop` → `start` に上書きし `ACCT_SEQUENCE_ERR`（reason: `start_after_stop`）を出力して処理継続（セッションは存在すれば更新。新規作成はしない）
 >   - 値が `start` または `interim:*` → `ACCT_DUPLICATE_START` を出力し、以降の処理（セッション更新・`ACCT_START` ログ）をスキップ
-> - **Interim:**
->   - 値が今回と同一の `interim:{input}:{output}` → `ACCT_DUPLICATE_START` を出力し、以降の処理をスキップ
->   - それ以外 → `interim:{input}:{output}` をセットして処理継続
->   - 続けて「Start受信済みか」（値が `start` または `interim:*`）を判定し、未受信なら `ACCT_SEQUENCE_ERR`（reason: `no_start_received`）を出力して `start` をセットする実装だが、直前に `interim:*` をセット済みのため、**Valkey正常時は常に受信済みと判定され、このログは出力されない**（実装上の制約）
+> - **Interim:**（1回の GET で直前の値を取得して判定してから SET する。判定前に自身の書き込みで値が変わることはない）
+>   - 値が今回と同一の `interim:{input}:{output}` → `ACCT_DUPLICATE_START`（msg: `duplicate accounting interim`）を出力し、値は変更せず、以降の処理をスキップ
+>   - 値なし → `ACCT_SEQUENCE_ERR`（reason: `no_start_received`）を出力し、`interim:{input}:{output}` をセットして処理継続（課金データの欠損を避けるため）
+>   - 値が `stop` → `ACCT_SEQUENCE_ERR`（reason: `interim_after_stop`）を出力し、`interim:{input}:{output}` をセットして処理継続
+>   - 値が `start` または別値の `interim:*` → 正常。`interim:{input}:{output}` をセットして処理継続
 > - **Stop:**
 >   - 値が `stop` → ログを出力せず、以降の処理（セッション削除・`ACCT_STOP` ログ）をスキップ
 >   - それ以外（値なしを含む） → `stop` をセットして処理継続
-> - 重複判定でValkeyエラーが発生した場合は `VALKEY_CONN_ERR` を出力して処理を継続する
+> - 重複判定でValkeyエラー（GET / SET の失敗）が発生した場合は `VALKEY_CONN_ERR` を出力して処理を継続する（GET 失敗時は重複・順序異常の判定を行わない）
 > - いずれの場合も Accounting-Response は返却する
 >
 > **設計意図:**
 > - Acct-Session-IdはNASが生成する識別子であり、セッションUUID（Auth Server生成）とは独立
 > - NASの再起動やネットワーク障害による再送パケットを適切に処理するため、24時間キャッシュを保持
-> - 詳細は D-10「Acct Server詳細設計書」セクション5.6を参照
+> - 詳細は D-10「Acct Server詳細設計書」セクション5.8を参照
 
 ------
 
@@ -365,8 +366,8 @@ Acct Serverが重複パケットおよび順序異常を検出するためのキ
    - Class属性なし・不正、または `sess:{UUID}` 不在 → `ACCT_SESSION_NOT_FOUND`（WARN）、セッション更新なしで処理継続。
    - 存在すれば start_time, nas_ip, acct_id, client_ip を保存 (HSET)、TTL延長 (EXPIRE 24h)。
 3. **Acct-Interim 受信時:**
-   - `acct:seen:{Acct-Session-Id}` で重複判定。
-   - Class属性があれば nas_ip, input_octets, output_octets, client_ip を保存 (HSET)、TTL延長 (EXPIRE 24h)。存在確認は行わない。
+   - `acct:seen:{Acct-Session-Id}` で重複・順序異常を判定（セクション3.G）。
+   - Class属性があれば `sess:{UUID}` の存在を確認し、存在すれば nas_ip, input_octets, output_octets, client_ip を保存 (HSET)、TTL延長 (EXPIRE 24h)。不在なら `ACCT_SESSION_NOT_FOUND`（WARN）、セッション更新・作成なしで処理継続。
 4. **Acct-Stop 受信時:**
    - `acct:seen:{Acct-Session-Id}` を `stop` に更新。
    - `sess:{UUID}` から imsi を取得したうえで削除 (DEL)。
@@ -566,3 +567,4 @@ type Subscriber struct {
 | r10 | 2026-02-18 | 実装との整合: PolicyDoc→Policy型名変更、PolicyRuleフィールド更新（SSID/Action/TimeMin/TimeMax）、rulesのJSONサンプル更新、stage値を小文字に変更しmodel.Stage型として定義されている旨を明記、Go構造体定義例からredisタグ除去（ストア層変換方式の補足追記）、全コンストラクタシグネチャ追記 |
 | r11 | 2026-02-27 | PolicyRule構造を実装コードに合わせて修正: フィールドをNasID/AllowedSSIDs/VlanID/SessionTimeoutに変更、JSONサンプルをNAS-ID/SSIDマッチング＋VLAN・セッションパラメータ形式に更新、Go構造体定義例も同期 |
 | r12 | 2026-10-04 | 実装コードとの突き合わせによる修正: (1) 2.C 認可ポリシー: `nas_id` はワイルドカード不可の完全一致（大文字小文字区別）に訂正し、JSON例の `nas_id` "*" を削除。`allowed_ssids` の `"*"`・大文字小文字無視、評価順序（配列順で最初の一致）、SSID抽出、`default` の欠落・不正値（deny扱い）、ポリシー不在・JSON不正時のReject、`vlan_id`（JSON文字列、Tunnel属性3種）・`session_timeout`（>0で付与）、default allow時は属性なし、を明記 (2) 2.A: SQN更新は CAS ではなく単純な HSET（+32、再同期は SQN_MS+32、12桁小文字hex）であることに訂正し、テストベクターモード時のSQN扱い（`sqn` のみの Hash 作成を含む）を追記。`created_at` の形式を明記 (3) 2.B: name/vendor はサーバー未使用、Valkeyエラー時もフォールバックすることを明記 (4) 3.D: stage は大文字の `EAPState` 値で保存されることに訂正（実際に書かれる値を明記）、格納形式・TTLリセット・削除タイミング・書き込みの流れを追記 (5) 3.E: 各フィールドの書き込みタイミングを Auth Accept 時の作成を含めて訂正、実装に無い `ACCT_SESSION_EXPIRED` を削除し Start/Interim/Stop の不在時動作を実装どおりに記載 (6) 3.F: SADD は Auth Server の Accept 時であることを明記、Admin TUI の SCAN フォールバックを追記 (7) 3.G: 重複検出ロジックを実装どおりに訂正（Interim の `no_start_received` が実質出力されない点、Stop重複時は以降の処理をスキップ） (8) 4: 各サーバーのフローを実装に合わせて修正（Acct Server は idx:user に SADD しない、Accounting-On/Off を追記） (9) 1: 接続・認証・永続化設定を compose に合わせて修正、Type列追加、`stats:global` 未使用を注記 (10) 5: `pkg/model` の利用状況を明記し、Valkey と直接対応する各アプリの redis タグ付き構造体を追記。D-04 r19 の event_id 全面整合に合わせて修正（2.E の不在時動作の注記から実装に存在しない event_id 名 `ACCT_SESSION_EXPIRED` を削除し、TTL超過・未作成とも `ACCT_SESSION_NOT_FOUND` である旨に修正） |
+| r13 | 2026-10-04 | acct-server の Interim シーケンス判定修正の反映: 3.E Acct Server のセッション処理で、Interim も `sess:{UUID}` の存在を確認し、不在時は `ACCT_SESSION_NOT_FOUND` を出力してセッションを作成しない（`imsi` を持たない Hash が作られる問題を解消）ことに修正、TTLの記述を補足。3.G 重複検出ロジックの Interim を実装どおりに修正（1回の GET で判定してから SET、値なしは `no_start_received`、`stop` は新設の `interim_after_stop` として `ACCT_SEQUENCE_ERR` を出力し処理継続。「`no_start_received` が出力されない」実装上の制約の記載を削除）。4 Acct Server の Interim フローを更新。D-10 の参照セクション番号を修正（5.6→5.8） |
