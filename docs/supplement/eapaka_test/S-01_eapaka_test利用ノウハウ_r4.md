@@ -1,6 +1,6 @@
-# S-01 eapaka_test 利用ノウハウ (r3)
+# S-01 eapaka_test 利用ノウハウ (r4)
 
-**版数:** r3
+**版数:** r4
 **作成日:** 2026-02-24
 **改版日:** 2026-10-04
 **分類:** 補足資料
@@ -33,7 +33,7 @@ eapaka_test は、RADIUS 経由で EAP-AKA / EAP-AKA' を実行するサーバ�
 
 ```
 docs/supplement/eapaka_test/
-├── S-01_eapaka_test利用ノウハウ_r3.md    # 本ドキュメント
+├── S-01_eapaka_test利用ノウハウ_r4.md    # 本ドキュメント
 ├── configs/                               # 設定ファイル（5件）
 │   ├── example.yaml                       # サンプル設定ファイル
 │   ├── config_testvector.yaml             # テストベクターモード用（AMF=B9B9。IMSI 003 を含む全ケース）
@@ -344,7 +344,7 @@ docker compose exec valkey valkey-cli -a "$VALKEY_PASSWORD" --no-auth-warning HS
 - `policy_wildcard_ssid_testvector.yaml` は IMSI `001010000000006` を identity で指定
 - → サーバー側 `sub:001010000000006` の SQN を `FF9BB4D0B607` に設定する必要がある
 
-### 6.5 IND と再同期（aka-only-server 相手の場合）（r2追記）
+### 6.5 IND と再同期（r2追記、r4改訂）
 
 eapaka_test はクライアント側 SQN を **IND（SQN の下位5ビット）ごとの配列**で管理し、受信した AUTN の SQN を同じ IND スロットの値と比較して fresh 判定する。そのため、再同期（Sync-Failure / AUTS）が起きるかどうかは、サーバーが送る SQN の IND と `sqn_initial_hex` の IND の組み合わせで決まる。
 
@@ -360,7 +360,21 @@ aka-only-server（T-03 G10 / T-04 E2E-301〜316）を相手に再同期を確認
 3. クライアント側 IND=0 スロットが高値になり、aka-only-server の SQN が古いと判定されて AUTS が送られ、再同期後に Accept となる
 4. 再同期が実際に起きたことを、vector-gateway の `BACKEND_EXTERNAL_CALL`（`resync=true`）または aka-only-server のログ（`resync:true`）で確認する
 
-> **注意**: 既存 config の `FF9BB4D0B607` は IND=7 のため、aka-only-server が使う IND=0 とは別スロットになる。この値のまま `sqn.reset: true` で実行しても再同期は起きずに Accept となり、**テストは PASS するが再同期を検証できていない**。内部 Vector API を相手にする T-03 G3（INT-003 系）でも同じ理由で再同期が起きないことがあるため、`EAP_RESYNC_CHALLENGE` / `SQN_RESYNC` ログの有無で判定すること（2026-10-04 にテストベクターモードで `config_testvector.yaml` を使って実施した際は、INT-003-01/02 とも再同期が発生した）。
+> **注意**: 既存 config の `FF9BB4D0B607` は IND=7 のため、aka-only-server が使う IND=0 とは別スロットになる。この値のまま `sqn.reset: true` で実行しても再同期は起きずに Accept となり、**テストは PASS するが再同期を検証できていない**。
+
+内部 Vector API（T-03 G3 / INT-003 系、`config_testvector.yaml`）を相手に再同期を確認する場合は、サーバー側 SQN を `sqn_initial_hex`（`FF9BB4D0B607`、IND=7）と**同じ IND で少し古い値**にする（r4追記）。
+
+```bash
+# deployments/ で実行（VALKEY_PASSWORD を読み込んでおく）
+docker compose exec valkey valkey-cli -a "$VALKEY_PASSWORD" --no-auth-warning HSET sub:001010000000000 sqn "FF9BB4D0B587"
+# この後 resync_aka_testvector.yaml（sqn.reset: true）を実行すると、
+# Vector API が送る FF9BB4D0B5A7 がクライアント側の FF9BB4D0B607 以下となって AUTS が送られ、
+# SQN_RESYNC（sqn_ms=ff9bb4d0b607、sqn_new=ff9bb4d0b627）の後に Accept となる
+```
+
+- サーバー側 SQN を `000000000001`（IND=1）にすると、IND=1 スロット（未使用）と比較されて fresh と判定され、再同期は起きない（2026-10-04 に simwifi 実機で確認。r3 までの本書・T-03 r13 までの手順はこの値で、「2026-10-04 の実施時は再同期が発生した」としていたが再現しない）。
+- サーバー側 SQN をクライアント側から離しすぎると、Vector API のデルタ検証（SQN_MS - SQN_HE <= 2^28）に抵触して 400（`SQN_RESYNC_DELTA_ERR`）になる。
+- 再同期が実際に起きたかは、Auth Server の `EAP_RESYNC_CHALLENGE` と Vector API の `SQN_RESYNC` の有無で判定する。
 
 ---
 
@@ -411,7 +425,7 @@ eapaka_test のテストケースで `identity` を指定すると、config の 
 |:-----|:-----|:-----|
 | `SQN difference exceeds allowed range` | クライアント/サーバー間の SQN 乖離 | SQN リセット（セクション6.3） |
 | Resync 後も認証失敗 | SQN ストアファイルの IMSI 間干渉 | SQN ストアファイル削除 |
-| `sqn.reset: true` なのに再同期が起きず Accept | `sqn_initial_hex` の IND がサーバー側 SQN の IND と異なる | IND を合わせる（aka-only-server 相手なら `FF9BB4D0B600` 等。セクション6.5） |
+| `sqn.reset: true` なのに再同期が起きず Accept | `sqn_initial_hex` の IND がサーバー側 SQN の IND と異なる | IND を合わせる（aka-only-server 相手なら `FF9BB4D0B600` 等、内部 Vector API 相手ならサーバー側 SQN を `FF9BB4D0B587` 等。セクション6.5） |
 
 ### 8.4 Docker イメージ再ビルドの必要性
 
@@ -483,3 +497,4 @@ radclient -x -r 1 -t 3 127.0.0.1:1812 status TESTSECRET123 < /tmp/status.attrs
 | r1 | 2026-02-24 | 初版作成 |
 | r2 | 2026-10-04 | Vector Gateway 接続方式01（aka-only-server）対応: 6.5「IND と再同期（aka-only-server 相手の場合）」・9.4「aka-only-server 相手での利用パターン」を追加、3.5 に AKA' の `net_name` は AT_KDF_INPUT が優先される旨を追記、4.3 の INT-GW-PLMN-010 の前提を `441999:02` に変更、8.3 に再同期不発の行を追加、1.2/1.3 を更新。テストベクターモードの実動作（2026-10-04 確認）に合わせて修正: 3.2 にテストベクターモードの動作（Ki/OPc/AMF は Test Set 1 固定・AMF `B9B9`、`sub:{IMSI}` は SQN 管理のみ）を追記し、IMSI 003 のケースもテストベクターモードでは `config_testvector.yaml` を使い `config_testvector_imsi003.yaml` は実計算モード専用とした（1.3・3.3・4.3・5.4・6.3・7.1・7.2・8.1・8.2・9.1・9.2）。4.3 で `reject_imsi_not_found.yaml` の IMSI をテストベクター対象外の `001029999999999` に変更した旨と、`mismatch_strict_fail.yaml` は現実装では IMSI 未登録で Reject になり方式ミスマッチを検証できない旨を追記。Valkey 操作を `valkey-cli -a "$VALKEY_PASSWORD" --no-auth-warning` 形式に統一、`EAP_RESYNC` を `EAP_RESYNC_CHALLENGE` に修正 |
 | r3 | 2026-10-04 | テストベクターモードでも加入者登録を必須にした Vector API の実装修正の反映: 3.2 のテストベクターモードの動作を修正（テストベクター対象の IMSI も `sub:{IMSI}` の登録が必要で未登録なら 404。既定 SQN へのフォールバック・`sqn` だけの書き込みは廃止）。4.3 `reject_imsi_not_found.yaml`（テストベクター対象外の IMSI）は引き続き 404 を期待する旨を追記。8.1 の加入者データ未登録の行、9.1 の未登録 IMSI・テストデータ投入の記述を修正。9.4 の T-03 参照を r9 に更新。`testdata/cases/reject_imsi_not_found.yaml`・`policy_not_found_testvector.yaml` のコメントを更新 |
+| r4 | 2026-10-04 | 内部 Vector API 相手の再同期の手順を訂正: 6.5 の見出しを「IND と再同期」に改め、T-03 G3（INT-003 系）で再同期を起こすにはサーバー側 SQN を `sqn_initial_hex`（`FF9BB4D0B607`、IND=7）と同じ IND の少し古い値（`FF9BB4D0B587`）にすることを追記。`000000000001`（IND=1）では再同期が起きないこと（2026-10-04 simwifi 実機で確認）、デルタ検証との関係を追記し、「2026-10-04 の実施時は INT-003-01/02 とも再同期が発生した」の記述を訂正。8 のトラブルシューティング表の対処に内部 Vector API の場合を追記 |
