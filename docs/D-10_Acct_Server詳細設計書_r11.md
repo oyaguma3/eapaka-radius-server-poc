@@ -1,4 +1,4 @@
-# D-10 Acct Server詳細設計書 (r10)
+# D-10 Acct Server詳細設計書 (r11)
 
 ## ■セクション1: 概要
 
@@ -23,14 +23,14 @@
 
 | No. | ドキュメント | 参照内容 |
 |-----|-------------|---------|
-| D-01 | ミニPC版設計仕様書 (r10) | システム構成、パッケージ利用マップ |
+| D-01 | ミニPC版設計仕様書 (r16) | システム構成、パッケージ利用マップ |
 | D-02 | Valkeyデータ設計仕様書 (r13) | データ構造、キー設計、Go構造体 |
 | D-03 | Vector-APIインターフェース定義書およびEAP-AKAステートマシン設計書 (r6) | 認証フロー |
-| D-04 | ログ仕様設計書 (r25) | event_id定義、ログフォーマット、IMSIマスキング |
-| D-06 | エラーハンドリング詳細設計書 (r13) | エラー分類、タイムアウト、リトライ戦略 |
+| D-04 | ログ仕様設計書 (r30) | event_id定義、ログフォーマット、IMSIマスキング |
+| D-06 | エラーハンドリング詳細設計書 (r16) | エラー分類、タイムアウト、リトライ戦略 |
 | D-11 | Vector API詳細設計書 (r7) | AKA認証ベクター生成 |
-| D-08 | インフラ設定・運用設計書 (r17) | Docker Compose設定、環境変数 |
-| D-09 | Auth Server詳細設計書 (r11) | セッション作成処理（Class属性設定） |
+| D-08 | インフラ設定・運用設計書 (r19) | Docker Compose設定、環境変数 |
+| D-09 | Auth Server詳細設計書 (r16) | セッション作成処理（Class属性設定） |
 | E-02 | コーディング規約（簡易版） (r3) | コーディング規約 |
 | E-03 | 共通ライブラリ(pkg)設計書 (r4) | 共通ライブラリ（pkg） |
 
@@ -257,11 +257,13 @@ ENTRYPOINT ["/usr/local/bin/acct-server"]
 | `REDIS_HOST` | Yes | - | Valkeyホスト名 |
 | `REDIS_PORT` | Yes | - | Valkeyポート番号 |
 | `REDIS_PASS` | Yes | - | Valkeyパスワード |
-| `RADIUS_SECRET` | No | - | デフォルトShared Secret（フォールバック用） |
+| `RADIUS_SECRET` | No | （空） | デフォルトShared Secret（フォールバック用。任意。空を推奨）。クライアント登録（`client:{IP}`）のない送信元IPからのパケットにも使う。空ならフォールバックは無効（§4.2） |
 | `LISTEN_ADDR` | No | `:1813` | UDPリッスンアドレス |
 | `LOG_LEVEL` | No | `INFO` | ログレベル（`DEBUG` / `INFO` / `WARN` / `ERROR`。大文字小文字を区別しない。未知の値は `INFO`）。`pkg/logging.ParseLevel` で変換する（§10.3、D-04 §4.6） |
 | `LOG_MASK_IMSI` | No | `true` | IMSIマスキング有効化 |
 > **注記:** 環境変数名 `RADIUS_SECRET` はシステム全体で統一されている。D-01およびD-08の `.env` ファイルでも同名を使用すること。
+
+> **注記（`RADIUS_SECRET` は任意。空を推奨）:** 送信元IPの共有シークレットは、Admin TUIのクライアント登録（`client:{IP}`）で送信元IPごとに設定する。`RADIUS_SECRET` に値を設定すると、登録のない送信元IPからのパケットも、その値を知っていれば受け付ける（フォールバック。Valkeyエラー時・送信元IP抽出失敗時もこの値を使う。§4.2）。インターネットに公開するサーバー（VPS 等）では空のままにすること。空なら、登録のない送信元IPのパケットは `RADIUS_NO_SECRET`（WARN）を出して破棄される（応答しない）。値を設定するのは、閉じた LAN で AP の送信元IPを登録せずに試す場合に限る。Docker Compose は `RADIUS_SECRET: ${RADIUS_SECRET:-}` で渡すため、`.env` で未設定でも警告は出ない（D-08）。設定されているかどうかは起動ログの `radius_secret_fallback` と WARN で確認できる（§10.3）。Auth Server と同じ扱いである（D-09 §3.1）。
 
 ### 3.2 設定構造体
 
@@ -298,6 +300,8 @@ func Load() (*Config, error) {
     return &cfg, nil
 }
 ```
+
+> **注記（`RadiusSecret`）:** `RADIUS_SECRET` は `required` を付けない任意の設定で、未設定・空文字のときはフォールバックが無効になる（`server.NewSecretSource` に空文字を渡すと、登録のない送信元IPのパケットは破棄される。§4.2）。インターネットに公開するサーバーでは空にする（§3.1 注記）。
 
 ### 3.3 接続タイムアウト設定
 
@@ -425,6 +429,12 @@ func (s *DynamicSecretSource) RADIUSSecret(ctx context.Context, remoteAddr net.A
     return nil, nil
 }
 ```
+
+> **注記（フォールバックの共有シークレット）:**
+> - `client:{IP}` → フォールバック（`RADIUS_SECRET`）→ なし の順で決まる。フォールバックを設定すると、クライアント登録のない送信元IPからのパケットも、その値を知っていれば受け付ける（フォールバック使用時のログはない）。送信元IPの抽出失敗時・Valkeyエラー時もフォールバックを使う。
+> - `RADIUS_SECRET` は任意で、空を推奨する（§3.1 注記）。空なら `nil` を返し、`layeh.com/radius` の `PacketServer` がパケットを破棄する（応答しない）。登録のない送信元IPでは `RADIUS_NO_SECRET`（WARN）が出る。これは未登録の送信元からのパケットで出る正常な動作であり、正規の AP で出ている場合はクライアント登録（AP の送信元IP）を確認する。
+> - Valkeyエラー時も、フォールバックが空なら `RADIUS_SECRET_ERR` を出してパケットを破棄する（応答しない。NAS は再送する）。送信元IPの抽出失敗時はログを出さずに破棄する。
+> - フォールバックの設定の有無は起動ログの `radius_secret_fallback` と WARN で確認できる（§10.3）。
 
 ### 4.3 Request Authenticator検証
 
@@ -1950,7 +1960,9 @@ Valkey接続の復旧検知（`downtime_ms` の記録）は実装しない（D-0
 
 ### 10.3 起動・シャットダウン
 
-ロガーは環境変数 `LOG_LEVEL`（既定 `INFO`）以上のレベルを出力するJSON形式で初期化し、全ログに `app=acct-server` を付与する。レベル文字列は共通ライブラリの `pkg/logging.ParseLevel`（E-03 §5.6）で `slog.Level` に変換する（大文字小文字を区別せず前後の空白を除去、`WARNING` も `WARN`、未知の値・空文字は `INFO`）。起動ログ `acct-server起動開始` に `listen_addr` と `log_level`（設定値をそのまま出力）を出力する（D-04 §3.2.5、§4.6）。Acct ServerにはDEBUGログはない。
+ロガーは環境変数 `LOG_LEVEL`（既定 `INFO`）以上のレベルを出力するJSON形式で初期化し、全ログに `app=acct-server` を付与する。レベル文字列は共通ライブラリの `pkg/logging.ParseLevel`（E-03 §5.6）で `slog.Level` に変換する（大文字小文字を区別せず前後の空白を除去、`WARNING` も `WARN`、未知の値・空文字は `INFO`）。起動ログ `acct-server起動開始` に `listen_addr` と `log_level`（設定値をそのまま出力）、`radius_secret_fallback`（真偽値。`RADIUS_SECRET` が空でなければ `true`。シークレットの値は出さない）を出力する（D-04 §3.2.5、§4.6）。Acct ServerにはDEBUGログはない。
+
+`RADIUS_SECRET` が設定されているときは、起動ログに続けて `warnFallbackSecret` が WARN を1行出力する（`event_id` なし。msg `RADIUS_SECRETが設定されているため、クライアント登録のない送信元IPのパケットもフォールバックの共有シークレットで受け付ける（インターネットに公開する場合は空にすること）`）。インターネットに公開するサーバーでは、`docker compose logs acct-server | grep 起動開始` で `"radius_secret_fallback":false` であり、この WARN が出ていないことを確認する（§3.1 注記）。
 
 ```go
 // main.go（実装）
@@ -1988,7 +2000,9 @@ func main() {
     slog.Info("acct-server起動開始",
         "listen_addr", cfg.ListenAddr,
         "log_level", cfg.LogLevel,
+        "radius_secret_fallback", cfg.RadiusSecret != "",
     )
+    warnFallbackSecret(cfg.RadiusSecret)
 
     // 3. Valkeyクライアント初期化
     valkeyClient, err := store.NewValkeyClient(cfg)
@@ -2049,6 +2063,16 @@ func main() {
 
     slog.Info("acct-server停止完了")
 }
+
+// warnFallbackSecret は、RADIUS_SECRET（フォールバックの共有シークレット）が設定されているときにWARNログを出す。
+// 設定されていると、クライアント登録（client:{IP}）のない送信元IPからのパケットも
+// このシークレットで受け付けるため、インターネットに公開するサーバーでは空にすることを促す。
+func warnFallbackSecret(fallbackSecret string) {
+    if fallbackSecret == "" {
+        return
+    }
+    slog.Warn("RADIUS_SECRETが設定されているため、クライアント登録のない送信元IPのパケットもフォールバックの共有シークレットで受け付ける（インターネットに公開する場合は空にすること）")
+}
 ```
 
 ---
@@ -2078,3 +2102,4 @@ func main() {
 | r8 | 2026-10-04 | ログのIMSIマスク漏れ修正の反映: §6.1 IMSI取得優先順位の優先度3（IMSI抽出失敗時のUser-Name）を「そのまま」からマスク済み（pkg/logging.MaskUserName）に修正、§6.2のResolveIMSIのコードを実装（`internal/session/identifier.go`。引数 userName / classUUID、pkg/logging の MaskIMSI / MaskUserName を使用）に合わせ更新、§6.3を pkg/logging の MaskIMSI / MaskUserName による実装に更新。関連ドキュメント参照版数更新（D-04 r19→r20、D-06 r7→r8、D-09 r10→r11、E-03 r3→r4）。あわせて、廃止済みの internal/logging（mask.go）をディレクトリ構成から削除（IMSIマスキングは pkg/logging を使用） |
 | r9 | 2026-10-04 | Interimのシーケンス判定修正の反映: §5.4 Acct-Interim処理を実装（`CheckInterim` による重複・順序異常の一括判定、順序異常の msg `interim sequence error`、`sess:{UUID}` の存在確認と不在時の `ACCT_SESSION_NOT_FOUND`）に合わせて説明とコードを更新。§5.8 重複・順序異常検出を実装（`internal/acct/duplicate.go`）のコードに差し替え、`acct:seen` の値による判定表を追加（Stop後のInterim `interim_after_stop` を新設。削除した `CheckInterimDuplicate` / `HasSeenStart` / `MarkAsStart` の記載を削除し、旧実装でStartなしのInterimを検出できなかった旨を注記）。§5.7 `UpdateOnInterim` に存在確認後に呼び出す旨を注記。§7.1.3 データエラー表（セッション不在にInterimを追加、StartなしでInterimの対処を「受信値を記録して処理継続」に修正、Stop後のInterimを新設）、§8.1 event_id一覧（`VALKEY_CONN_ERR`、`ACCT_SESSION_NOT_FOUND`、`ACCT_DUPLICATE_START`、`ACCT_SEQUENCE_ERR` の説明）、§8.2 ログ出力例（StartなしInterimの msg）、§9.2 インターフェース定義（`DuplicateDetector`、`InterimCheckResult` を追加）を更新。関連ドキュメント参照版数更新（D-02 r12→r13、D-04 r20→r21） |
 | r10 | 2026-10-04 | acct-server の重複 Interim の event_id 分離・SYS_ERR 削除・LOG_LEVEL 対応の実装修正の反映: §5.4 / §5.8 / §7.1.3 / §8.1 で重複Interimの event_id を `ACCT_DUPLICATE_START` から `ACCT_DUPLICATE_INTERIM` に変更し、§8.2 にログ出力例を追加（重複Startは従来どおり `ACCT_DUPLICATE_START`）。Accounting処理（`ProcessStart` / `ProcessInterim` / `ProcessStop` / `ProcessOn` / `ProcessOff`）の戻り値から error を外したことに合わせ、§5.3〜§5.7 のコード、§9.2 `AccountingProcessor` の定義、§10.1 ハンドラー（`procErr` と `SYS_ERR`（`処理エラー`）の分岐を削除し、`PKT_SEND_ERR` を実装どおり追記。常にAccounting-Responseを返す旨を注記）を更新し、§8.1 から `SYS_ERR` を削除。`LOG_LEVEL` 対応: §3.1 環境変数一覧に `LOG_LEVEL`（と既存の `LISTEN_ADDR`）を追加、§3.2 設定構造体を実装に合わせ更新、§10.3 起動・シャットダウンのコードを実装の `main.go`（`logging.ParseLevel(cfg.LogLevel)`、起動ログの `log_level`）に差し替え、§2.3 `logging` を共通ライブラリ `pkg/logging` に修正。関連ドキュメント参照版数更新（D-04 r21→r25、D-06 r8→r13、D-08 r14→r17） |
+| r11 | 2026-10-04 | インターネット公開（VPS 等）に向けた安全面の修正の反映: §3.1 環境変数一覧の `RADIUS_SECRET` を任意（既定は空）・空を推奨とし、フォールバックの意味（登録のない送信元IPのパケットも受け付ける。インターネットに公開するサーバーでは空にする。空なら `RADIUS_NO_SECRET` で破棄）の注記を追加。§3.2 設定構造体に `RadiusSecret` が任意で空ならフォールバック無効である旨を注記。§4.2 Shared Secret解決にフォールバックの注意（空のときはパケット破棄、`RADIUS_NO_SECRET` は未登録の送信元で出る正常な動作）を追記。§10.3 起動・シャットダウンの説明とコードを実装の `main.go` に合わせて更新（起動ログの `radius_secret_fallback`、`RADIUS_SECRET` 設定時の WARN を出す `warnFallbackSecret`）。§1.3 参照版数更新（D-01 r10→r16、D-04 r25→r30、D-06 r13→r16、D-08 r17→r19、D-09 r11→r16） |

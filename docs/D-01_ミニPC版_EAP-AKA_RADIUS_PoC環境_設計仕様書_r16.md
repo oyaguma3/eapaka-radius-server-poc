@@ -1,4 +1,4 @@
-# D-01 ミニPC版 EAP-AKA RADIUS PoC環境 設計仕様書 (r15)
+# D-01 ミニPC版 EAP-AKA RADIUS PoC環境 設計仕様書 (r16)
 
 ## 1. システム概要
 
@@ -159,18 +159,40 @@ Auth ServerからVector Gateway、Vector GatewayからVector API（および aka
     - `10022/tcp` (SSH Remote Admin)
     - `1812/udp` (RADIUS Authentication)
     - `1813/udp` (RADIUS Accounting)
-  - **Block:** 上記以外全て（DBポート6379やAPIポート8080は外部から不可視）
+  - **Block:** 上記以外の、ホストのプロセスが待ち受けるポートへの受信（UFW の受信規則として）。Docker が公開したポートには及ばない（下記の注記）
   - 接続方式01で別ホストの aka-only-server に接続する場合、vector-gateway からの送信（Outbound、既定 8443/tcp）が必要となる（受信側の許可は不要）。
+
+> **注記（Docker と UFW の関係）:** Docker は compose の `ports:` で公開したポートへの転送を iptables の DOCKER チェーンで直接許可するため、公開ポートへの通信は UFW の規則を通らない（`ufw deny` しても公開ポートには届き、`ufw allow from <IP>` で送信元を絞ることもできない）。したがって外部から届くかどうかは、UFW ではなく compose の `ports:` の書き方で決まる。本構成では次のとおりとする。
+> - 外部（0.0.0.0 / [::]）に公開するのは auth-server の 1812/udp と acct-server の 1813/udp だけとする。
+> - ホストからだけ使う内部向けのポートは 127.0.0.1 にバインドする（valkey の 6379、fluent-bit の 24224/tcp・24224/udp。Docker のログドライバーはホストの `localhost:24224` に接続するので、外部に公開する必要はない）。
+> - vector-gateway・vector-api の 8080 は `expose:` のみでホストに公開しない（Docker ネットワーク内部からのみ到達可能）。
+> - RADIUS（1812/1813/udp）の送信元を絞りたい場合は、UFW ではなく、クラウド側のファイアウォール（VPS のネットワーク設定のファイアウォール、セキュリティグループ等）で AP の送信元IPだけを許可するのが確実である。ホスト側で絞る場合は iptables の `DOCKER-USER` チェーンに規則を置く。
+>
+> 上記の UFW の Allow のうち 1812/udp・1813/udp は、Docker の公開ポートには UFW が及ばないため、実際には許可の有無にかかわらず届く（ホスト側の意図を明示する記載として残す）。
+
+### インターネット越しに RADIUS を受ける場合（VPS 等）
+
+本PoCは LAN 内のミニPCを前提とするが、インターネットに直接さらされるサーバー（VPS 等）に置いて AP から RADIUS を受ける場合は、次の点に注意する。
+
+- RADIUS（UDP）は共有シークレットだけで守られる（パケットの認証と MPPE 鍵の暗号化）。RadSec（RADIUS over TLS）は本PoCのスコープ外である。共有シークレットは十分に長いランダムな値にする（`openssl rand -base64 24` 等で生成）。
+- フォールバックの共有シークレット `RADIUS_SECRET` は空にし、AP の送信元IPを Admin TUI のクライアント登録（`client:{IP}`）で登録する（下記「シークレット管理」）。
+- NAT の内側にある AP は、サーバーから見た送信元IPがルーターのグローバルIPになる。同じ NAT の内側の複数の AP は同じ IP として扱われる（同じ共有シークレット・同じクライアント登録になる。認可ポリシーの `nas_id` 判定は NAS-Identifier 属性で行うので AP ごとに分けられる）。グローバルIPが動的に変わる回線では、変わるたびにクライアント登録をやり直す必要がある（固定IPが望ましい）。
+- クラウド側のファイアウォールで 1812/1813/udp の送信元を AP のグローバルIPに絞ることを推奨する（上記の注記のとおり UFW では絞れない）。
+- 同じホスト上から 127.0.0.1 宛てに送る試験では、送信元IPが Docker ブリッジのゲートウェイIP（例: `172.18.0.1`）になるため、そのIPを `client:{IP}` に登録する。
 
 ### シークレット管理 (環境変数とDBの併用)
 
 以下の機密情報は `.env` ファイルで管理し、各アプリへ注入します（コンテナアプリは `envconfig` 経由、Admin TUIは `os.Getenv()` で直接取得）。
 
 - `VALKEY_PASSWORD`: DBアクセス用パスワード（必須）
-- `RADIUS_SECRET`: **デフォルト共有シークレット**（フォールバック用）
+- `RADIUS_SECRET`: **フォールバックの共有シークレット**（任意。空を推奨）
   - **優先順位:**
     1. Valkey `client:{IP}` 内の `secret` を使用 (本番/登録済みクライアント)
-    2. 上記がない場合、環境変数 `RADIUS_SECRET` を使用 (テスト/未登録クライアント)
+    2. 上記がない場合、環境変数 `RADIUS_SECRET` を使用 (テスト/未登録クライアント)。Valkey エラー時・送信元IPの抽出失敗時もこちらを使う
+    3. `RADIUS_SECRET` も空の場合、共有シークレットなしとしてパケットを破棄する（応答しない。auth-server / acct-server が `RADIUS_NO_SECRET`（WARN）を出力）
+  - `RADIUS_SECRET` を設定すると、クライアント登録のない送信元IPからのパケットも、そのシークレットを知っていれば受け付ける。インターネットに公開するサーバー（VPS 等）では空のままとし、AP の送信元IPを `client:{IP}` に登録する。閉じた LAN で、AP の送信元IPを登録せずに試す場合にだけ設定する。
+  - compose は `RADIUS_SECRET: ${RADIUS_SECRET:-}` で渡すため、`.env` に設定がなくても警告は出ない。`.env.example` では既定でコメントアウトしている。
+  - auth-server / acct-server は起動開始ログ（INFO）の属性 `radius_secret_fallback`（`RADIUS_SECRET` が空でなければ `true`）でフォールバックの有無を示し、設定されている場合は続けて WARN を1行出力する（シークレットの値はログに出さない。D-04 参照）。
 - aka-only-server 接続用の証明書（接続方式01使用時のみ）: クライアント証明書（秘密鍵を含む `av-client.pem`）と AV 用サーバー証明書（`av-server.pem`）を `deployments/certs/` に置き、vector-gateway の `/certs` に読み取り専用でマウントする。`deployments/certs/` の中身は `.gitignore` で Git 管理外（`.gitkeep` のみコミット）。
 
 ## 5. コンテナ構成詳細 (Docker Compose)
@@ -182,7 +204,9 @@ Auth ServerからVector Gateway、Vector GatewayからVector API（および aka
 | **3**   | **vector-gateway**  | なし                 | ルーティング。PLMNベースでバックエンド選択（`00`: vector-api、`01`: aka-only-server）。外部公開なし。`GET /health` でヘルスチェック応答。`./certs` を `/certs` に読み取り専用マウント（aka-only-server 接続用証明書）。 |
 | **4**   | **vector-api**      | なし                 | 内部API。外部公開なし。`TEST_VECTOR_ENABLED` 環境変数でテストベクターモードを有効化可能（compose が `.env` の `TEST_VECTOR_ENABLED`／`TEST_VECTOR_IMSI_PREFIX` を渡す。既定は無効）。`GET /health` でヘルスチェック応答。 |
 | **5**   | **valkey**          | 127.0.0.1:6379       | DB。ホスト(TUI)用にlocalhostのみバインド。`--requirepass` 有効化。 |
-| **6**   | **fluent-bit**      | 24224/tcp, 24224/udp | ログ収集。設定は `configs/fluent-bit/fluent-bit.yaml`（YAML形式）。出力先は `/output_logs` 固定。 |
+| **6**   | **fluent-bit**      | 127.0.0.1:24224/tcp, 127.0.0.1:24224/udp | ログ収集。設定は `configs/fluent-bit/fluent-bit.yaml`（YAML形式）。出力先は `/output_logs` 固定。Docker のログドライバーがホストの `localhost:24224` に接続するため、localhostのみバインド（外部には公開しない）。 |
+
+> **注記（公開ポート）:** 外部（0.0.0.0 / [::]）に公開するのは auth-server の 1812/udp と acct-server の 1813/udp だけである。valkey の 6379 と fluent-bit の 24224 は 127.0.0.1 のみで待ち受け、vector-gateway・vector-api はホストに公開しない。Docker の公開ポートは UFW を通らないため、内部向けのポートを 0.0.0.0 で公開しないこと（4章の注記）。
 
 > **注記（オーバーレイ）:** aka-only-server を同一ホストで動かす場合は、`deployments/docker-compose.aka-av.yml` を重ねて起動する（`docker compose -f docker-compose.yml -f docker-compose.aka-av.yml up -d`）。このオーバーレイは vector-gateway だけを aka-only-server の compose が作る共有ネットワーク（external、名前 `${AKA_SHARED_NETWORK:-aka-av}`）に参加させる。共有ネットワークは aka-only-server 側が作るため、先に aka-only-server を起動しておく。別ホストの aka-only-server に接続する場合はオーバーレイを重ねない。
 
@@ -260,7 +284,7 @@ services:
       REDIS_PORT: "6379"
       REDIS_PASS: ${VALKEY_PASSWORD}
       VECTOR_API_URL: http://vector-gateway:8080
-      RADIUS_SECRET: ${RADIUS_SECRET}
+      RADIUS_SECRET: ${RADIUS_SECRET:-}
       LOG_MASK_IMSI: ${LOG_MASK_IMSI:-true}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
@@ -294,7 +318,7 @@ services:
       REDIS_HOST: valkey
       REDIS_PORT: "6379"
       REDIS_PASS: ${VALKEY_PASSWORD}
-      RADIUS_SECRET: ${RADIUS_SECRET}
+      RADIUS_SECRET: ${RADIUS_SECRET:-}
       LOG_MASK_IMSI: ${LOG_MASK_IMSI:-true}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
@@ -429,9 +453,10 @@ services:
   fluent-bit:
     image: fluent/fluent-bit:4.2
     command: ["/fluent-bit/bin/fluent-bit", "-c", "/fluent-bit/etc/fluent-bit.yaml"]
+    # Docker のログドライバーはホストの localhost:24224 に接続する。外部には公開しない
     ports:
-      - "24224:24224"
-      - "24224:24224/udp"
+      - "127.0.0.1:24224:24224"
+      - "127.0.0.1:24224:24224/udp"
     volumes:
       - ../configs/fluent-bit/fluent-bit.yaml:/fluent-bit/etc/fluent-bit.yaml:ro
       - ./logs_on_host:/output_logs
@@ -517,12 +542,12 @@ VECTOR_GATEWAY_PLMN_MAP=""
 
 1. **OSインストール:** Ubuntu Server (LTS) をインストール。
 2. **SSH設定変更:** `/etc/ssh/sshd_config` を編集し、Portを `10022` に変更、rootログイン無効化。
-3. **FW設定:** `ufw allow 10022/tcp`, `ufw allow 1812/udp`, `ufw allow 1813/udp` を実行後に有効化。
+3. **FW設定:** `ufw allow 10022/tcp`, `ufw allow 1812/udp`, `ufw allow 1813/udp` を実行後に有効化。Docker の公開ポートは UFW を通らないため、RADIUS の送信元を絞る場合はクラウド側のファイアウォールまたは iptables の `DOCKER-USER` チェーンを使う（4章の注記）。
 4. **ログ解析ツール導入:** `sudo apt install lnav`。リポジトリ内の `lnav_formats/eap_aka_log.json` を `~/.lnav/formats/` に配置。
 5. **Docker導入:** 公式スクリプトでインストールし、ユーザーを `docker` グループに追加。
 6. **デプロイ:**
    - リポジトリを `git clone`。
-   - `.env` ファイルを作成し、シークレット（DBパスワード等）を設定。
+   - `.env` ファイルを作成し、シークレット（DBパスワード等）を設定。`RADIUS_SECRET`（フォールバック）は空のままとし、AP の送信元IPを Admin TUI でクライアント登録する（4章）。
    - `docker compose up -d` で起動。
 7. **ツール配置:**
    - 開発機でビルドした `admin-tui` バイナリを `scp -P 10022` で転送。
@@ -549,3 +574,4 @@ VECTOR_GATEWAY_PLMN_MAP=""
 | r13 | 2026-10-04 | acct-server の LOG_LEVEL 対応に伴う compose 修正の反映: §7 docker-compose.yml の acct-server の environment に `LOG_LEVEL: ${LOG_LEVEL:-INFO}` を追加（実ファイルと一致）し、ログレベルの注記を4サーバー（auth-server / acct-server / vector-gateway / vector-api）とも `.env` の値を渡す形に修正（「acct-server は INFO 固定のため渡さない」を削除） |
 | r14 | 2026-10-04 | §3.3 Valkeyキースキーマ概要を実装（D-02 r17）に合わせて修正: 実装に存在しない `audit:log`（監査ログ）と `acct:{ID}`（課金セッション）を削除し、`sess:{UUID}`（アクティブセッション）・`idx:user:{IMSI}`（ユーザー検索インデックス）・`acct:seen:{Acct-Session-Id}`（Accounting重複検出キャッシュ）を追加。`sub:{IMSI}` の使用コンポーネントから Auth Server を削除（参照するのは Vector API と Admin TUI）、`eap:{UUID}` の用途を EAP認証コンテキストに修正。監査ログは Valkey に保存せず Admin TUI の標準出力に JSON で出力する旨の注記を追加し、§3.1 Admin TUI の監査ログの説明も同様に修正 |
 | r15 | 2026-10-04 | vector-gateway のバックエンド向けタイムアウトを auth-server より短くした実装修正の反映: §3.5 Vector Gateway接続設定の Vector Gateway → Vector API / aka-only-server のタイムアウトを 5秒 → 3秒に修正し、Auth Server（5秒）より短くする理由の注記を追加。§7 docker-compose.yml の `VECTOR_GATEWAY_INTERNAL_TIMEOUT` / `VECTOR_GATEWAY_AKAONLY_TIMEOUT` の既定値を `3s` に修正（実ファイルと一致）、§8 環境変数表の既定値を `3s` に修正 |
+| r16 | 2026-10-04 | インターネット公開（VPS 等）に向けた安全面の実装修正の反映: §4 ファイアウォールの「Block: 上記以外全て」を、UFW の受信規則としての記載であり Docker の公開ポートには及ばない旨に訂正し、Docker と UFW の関係の注記（公開ポートは UFW を素通りする、内部向けは 127.0.0.1 にバインド、RADIUS の送信元はクラウド側のファイアウォールまたは `DOCKER-USER` で絞る）を追加。§4 に「インターネット越しに RADIUS を受ける場合（VPS 等）」を新設（共有シークレットの強度、RadSec はスコープ外、`RADIUS_SECRET` を空にしてクライアント登録、NAT 配下の AP と送信元IP、クラウド側のファイアウォール、同一ホストからの試験の送信元IP）。§4 シークレット管理の `RADIUS_SECRET` を任意（空を推奨）とし、空の場合の動作（`RADIUS_NO_SECRET` で破棄）、Valkey エラー時等のフォールバック、compose の `${RADIUS_SECRET:-}`、起動ログの `radius_secret_fallback` と WARN を追記。§5 の fluent-bit の公開ポートを `127.0.0.1:24224/tcp, 127.0.0.1:24224/udp` に修正し、公開ポートの注記を追加。§7 docker-compose.yml を実ファイルと一致させた（auth-server / acct-server の `RADIUS_SECRET: ${RADIUS_SECRET:-}`、fluent-bit の `127.0.0.1:24224` バインドとコメント）。§9 の FW設定・デプロイに注記を追加 |
