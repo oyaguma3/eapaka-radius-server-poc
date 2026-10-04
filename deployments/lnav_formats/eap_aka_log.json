@@ -27,6 +27,7 @@
             "session_time": { "kind": "integer" },
             "failure_count": { "kind": "integer" },
             "resync_count": { "kind": "integer" },
+            "attempt": { "kind": "integer" },
             "http_status": { "kind": "integer" }
         },
         "sample": [

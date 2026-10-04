@@ -37,7 +37,8 @@ type SQNValidator interface {
 // SubscriberRepository は加入者データアクセスのインターフェース。
 type SubscriberRepository interface {
 	Get(ctx context.Context, imsi string) (*store.Subscriber, error)
-	UpdateSQN(ctx context.Context, imsi string, sqn string) error
+	// CompareAndSetSQN はSQNが oldSQN のときだけ newSQN に書き換え、書き換えたかどうかを返す。
+	CompareAndSetSQN(ctx context.Context, imsi, oldSQN, newSQN string) (bool, error)
 }
 
 // TestVectorProvider はテストベクター生成のインターフェース。

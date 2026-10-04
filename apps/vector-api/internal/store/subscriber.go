@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"fmt"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // Subscriber は加入者情報を表す。
@@ -47,14 +49,28 @@ func (s *SubscriberStore) Get(ctx context.Context, imsi string) (*Subscriber, er
 	}, nil
 }
 
-// UpdateSQN は加入者のSQNを更新する。
-func (s *SubscriberStore) UpdateSQN(ctx context.Context, imsi string, sqn string) error {
+// compareAndSetSQNScript は sqn が期待値と一致するときだけ新しい値に書き換える。
+// キーまたは sqn フィールドが無い場合は書き換えず（キーを新たに作らない）、0 を返す。
+var compareAndSetSQNScript = redis.NewScript(`
+local cur = redis.call('HGET', KEYS[1], 'sqn')
+if cur == false or cur ~= ARGV[1] then
+  return 0
+end
+redis.call('HSET', KEYS[1], 'sqn', ARGV[2])
+return 1
+`)
+
+// CompareAndSetSQN は加入者のSQNが oldSQN と一致するときだけ newSQN に更新する。
+// 更新したときは true を返す。一致しない（他のリクエストが先に更新した）ときや、
+// 加入者が削除されていたときは false を返す。
+// oldSQN には Get で読んだ値をそのまま渡す（大文字小文字を含めて文字列で比較する）。
+func (s *SubscriberStore) CompareAndSetSQN(ctx context.Context, imsi, oldSQN, newSQN string) (bool, error) {
 	key := "sub:" + imsi
 
-	err := s.client.client.HSet(ctx, key, "sqn", sqn).Err()
+	n, err := compareAndSetSQNScript.Run(ctx, s.client.client, []string{key}, oldSQN, newSQN).Int()
 	if err != nil {
-		return fmt.Errorf("failed to update SQN: %w", err)
+		return false, fmt.Errorf("failed to compare and set SQN: %w", err)
 	}
 
-	return nil
+	return n == 1, nil
 }

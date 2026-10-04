@@ -1,4 +1,4 @@
-# D-03 Vector-APIインターフェース定義書およびEAP-AKAステートマシン設計書 (r7)
+# D-03 Vector-APIインターフェース定義書およびEAP-AKAステートマシン設計書 (r8)
 
 ---
 
@@ -77,7 +77,7 @@ RFC7807 (Problem Details) に準拠した形式で返します。
 | 403 Forbidden | aka-only-server が認証ベクター払い出しを拒否（cause: AUTHENTICATION_REJECTED。下表参照） | Vector Gateway（接続方式01） |
 | 404 Not Found | 指定されたIMSIがValkeyに存在しない | Vector API |
 | 404 Not Found | 指定されたIMSIが aka-only-server に登録されていない（cause: USER_NOT_FOUND） | Vector Gateway（接続方式01） |
-| 409 Conflict | SQN更新競合がリトライ上限を超過（D-11参照） | Vector API |
+| 409 Conflict | 同一IMSIへの並行リクエストでSQNの書き換えが競合し、やり直し（最大3回試行）でも書き換えられなかった（D-11参照） | Vector API |
 | 500 Internal Server Error | Valkey接続エラー、Milenage計算の予期せぬエラー | Vector API |
 | 501 Not Implemented | 未実装の接続方式IDが指定された | Vector Gateway |
 | 502 Bad Gateway | Vector GatewayからVector APIへの通信エラー | Vector Gateway |
@@ -85,7 +85,7 @@ RFC7807 (Problem Details) に準拠した形式で返します。
 
 > **注記:** 
 > - 501 Not Implementedは、PLMNマップで未実装（または未設定）の接続方式IDが指定された場合にVector Gatewayが返却する（下記の接続方式 `01` の注記を参照）。
-> - 409 Conflictは、Phase 1で追加されたSQN競合制御（WATCH/MULTI CAS）のリトライ上限超過時に返却される。
+> - 409 Conflictは、Vector APIのSQN競合制御（Lua スクリプトによる `sqn` の比較・置き換え。D-02 §2.A、D-11 §7.5・§13.6）で、3回とも競合した場合（またはやり直し前の待機中にリクエストが期限切れ・キャンセルとなった場合）に返却される。`title` は `Conflict`、`detail` は固定文 `SQN update conflict`（IMSIや原因は含めない）。Vector Gatewayは他の4xxと同様にそのまま中継する。Auth Serverは Circuit Breaker の失敗回数に数えず、Access-Reject とする（端末は認証をやり直す）。5xxではなく409とするのは、1つのIMSIの競合で Circuit Breaker が開き全体の認証が止まるのを避けるためである（D-06 §3.4.3）。r7 までは「Phase 1で追加された WATCH/MULTI CAS」と記載していたが、WATCH/MULTI は設計のみで、実装は Lua による比較・置き換えである。
 > - 接続方式 `01`（aka-only-server）は実装済み。`VECTOR_GATEWAY_AKAONLY_URL` が未設定の場合は `01` も未登録となり、`01` を指定したPLMNは501となる。`02`〜`99` は未実装（501）。
 > - 接続方式 `01` の 400/403/404 は、aka-only-server の ProblemDetails（title/status/detail/cause）を Vector Gateway が RFC7807 形式（`type: about:blank`、title/status/detail を引き継ぎ）に詰め替えたもの。`cause` は内部IFに含まれず、Vector Gatewayのログにのみ出力される（D-04参照）。
 
@@ -101,7 +101,7 @@ RFC7807 (Problem Details) に準拠した形式で返します。
 
 > **注記:**
 > - 再同期時の AUTS 検証失敗は、内部Vector API（接続方式00）では **400**、接続方式01では **403** となる。
-> - Auth Server は 200 以外の 4xx（400/403/404 等）を Circuit Breaker 対象外の APIError として扱い、Access-Reject とする。403 は 404/400 と同様に扱われるため、Auth Server 側の変更は不要（ログは 403 → `VECTOR_API_ERR`（http_status=403）、404 → `VECTOR_IMSI_NOT_FOUND`）。
+> - Auth Server は 200 以外の 4xx（400/403/404/409 等）を Circuit Breaker 対象外の APIError として扱い、Access-Reject とする。403 は 404/400 と同様に扱われるため、Auth Server 側の変更は不要（ログは 403 → `VECTOR_API_ERR`（http_status=403）、404 → `VECTOR_IMSI_NOT_FOUND`）。
 > - 502 は Auth Server の Circuit Breaker の失敗回数に数えられる。Circuit Breaker は接続方式ごとに分かれていないため、`01` 向けの通信失敗が続いて開くと `00` 向けの認証も停止する。Vector Gateway は `01` 失敗時に `00` へのフォールバックを行わない（SQN競合回避のため）。エラー変換の詳細はD-06を参照。
 
 ```json
@@ -453,3 +453,4 @@ EAP認証成功後の認可処理。`policy:{IMSI}` を参照し、接続可否�
 | r5 | 2026-02-18 | PolicyRule新構造反映: Post-Auth Policy Checkのルール評価をSSID/Action/TimeMin/TimeMax構造に更新、関連ドキュメント版数更新 |
 | r6 | 2026-10-04 | 接続方式01（aka-only-server）対応: 接続構成図・注記を更新（内部IFは変更なし）、Error Responseに接続方式01由来の400/403/404/502を追加、403の3ケース（detailで区別）と再同期AUTS検証失敗が403となる点を明記、Auth ServerでのCB対象外扱い・502のCB計上を注記。既存記載の実装との不一致を修正（2a の404時ログを `AUTH_IMSI_NOT_FOUND` → `VECTOR_IMSI_NOT_FOUND`、APIエラー時ログに `VECTOR_CONN_ERR` / `VECTOR_CB_OPEN` / `VECTOR_UNKNOWN_ERR` を追記、再同期APIエラー時のAuth Server側ログを `VECTOR_API_ERR` 等に修正、404応答例の detail を実装の文言に修正）。D-04 r19 の event_id 全面整合に合わせて修正（2b の `EAP_PSEUDONYM_FALLBACK` を削除（フル認証誘導時は専用ログなし）、§7 不正な状態遷移の `EAP_INVALID_STATE` を `EAP_STATE_ERR` / `EAP_UNEXPECTED_IDENTITY` / `EAP_UNKNOWN_SUBTYPE` に修正、3a のJSONパース失敗時ログ `POLICY_PARSE_ERR` を `AUTH_POLICY_NOT_FOUND` に修正、§5 Client-Error受信時にエラーコードを記録しない旨を明記） |
 | r7 | 2026-10-04 | ポリシーの `nas_id` で `"*"` を任意の NAS に一致させた Auth Server の実装修正に合わせ、3a Post-Auth Policy Check のルール評価を実装の PolicyRule 構造（`nas_id` / `allowed_ssids` / `vlan_id` / `session_timeout`）に修正（r5 で記載した `ssid` / `action` / `time_min` / `time_max` による評価は実装に存在しないため削除）。`nas_id` は `"*"` 単独で任意の NAS に一致（部分一致なし）、それ以外は完全一致であることを明記。評価結果の分岐表を「ルール一致 → Accept（VLAN・Session-Timeout 付与）／不一致 → default で判定」に整理し、Access-Accept 時の VLAN・Session-Timeout 属性を追記 |
+| r8 | 2026-10-04 | SQN競合制御の実装（Lua による `sqn` の比較・置き換え、競合時のやり直し最大3回、HTTP 409）の反映（1.1 Error Response）: 409 Conflict の説明を実装に合わせて修正（3回とも競合・待機中の期限切れ等で返す、`detail` は固定文 `SQN update conflict`、Vector Gateway はそのまま中継、Auth Server は Circuit Breaker 対象外として Access-Reject、5xx にしない理由）。「Phase 1で追加されたSQN競合制御（WATCH/MULTI CAS）」の記述を、Lua による比較・置き換えに修正。接続方式01の注記の Circuit Breaker 対象外の 4xx の例に 409 を追加 |

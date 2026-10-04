@@ -87,6 +87,15 @@ var (
 		EventID: "VALKEY_CONN_ERR",
 	}
 
+	// ErrSQNConflict は、SQNの書き換えが他のリクエストと競合し、やり直しの上限を超えたことを表す。
+	ErrSQNConflict = &ProblemError{
+		Status:  409,
+		Title:   "Conflict",
+		Detail:  "SQN update conflict",
+		Message: "SQN update conflict exceeded retry limit",
+		EventID: "SQN_CONFLICT_ERR",
+	}
+
 	ErrMilenageCalculation = &ProblemError{
 		Status:  500,
 		Title:   "Internal Server Error",
