@@ -54,6 +54,10 @@ type Entry struct {
 	TargetIMSI string     `json:"target_imsi,omitempty"` // 対象IMSI（該当時のみ）
 	AdminUser  string     `json:"admin_user"`            // 管理者ユーザー
 	Details    string     `json:"details,omitempty"`     // 追加詳細情報
+	// RecordCount はインポート/エクスポートしたレコード件数（import / export のみ。0件も出力する）
+	RecordCount *int `json:"record_count,omitempty"`
+	// ResultCount は検索結果の件数（search のみ。検索に失敗した場合は出力しない）
+	ResultCount *int `json:"result_count,omitempty"`
 }
 
 // Logger は監査ログを出力する。
@@ -86,18 +90,32 @@ func (l *Logger) Log(op Operation, targetType TargetType, targetKey, targetIMSI,
 
 // LogWithDetails は詳細情報付きで監査ログエントリを出力する。
 func (l *Logger) LogWithDetails(op Operation, targetType TargetType, targetKey, targetIMSI, msg, details string) {
-	entry := Entry{
-		Time:       time.Now().UTC().Format(time.RFC3339),
-		Level:      "INFO",
-		App:        "admin-tui",
-		EventID:    "AUDIT_LOG",
-		Msg:        msg,
+	l.write(Entry{
 		Operation:  op,
 		TargetType: targetType,
 		TargetKey:  targetKey,
 		TargetIMSI: targetIMSI,
-		AdminUser:  l.adminUser,
+		Msg:        msg,
 		Details:    details,
+	})
+}
+
+// write は共通項目を設定して監査ログエントリを出力する。
+func (l *Logger) write(e Entry) {
+	entry := Entry{
+		Time:        time.Now().UTC().Format(time.RFC3339),
+		Level:       "INFO",
+		App:         "admin-tui",
+		EventID:     "AUDIT_LOG",
+		Msg:         e.Msg,
+		Operation:   e.Operation,
+		TargetType:  e.TargetType,
+		TargetKey:   e.TargetKey,
+		TargetIMSI:  e.TargetIMSI,
+		AdminUser:   l.adminUser,
+		Details:     e.Details,
+		RecordCount: e.RecordCount,
+		ResultCount: e.ResultCount,
 	}
 
 	data, err := json.Marshal(entry)
@@ -125,17 +143,51 @@ func (l *Logger) LogDelete(targetType TargetType, targetKey, targetIMSI string) 
 	l.Log(OpDelete, targetType, targetKey, targetIMSI, string(targetType)+" deleted")
 }
 
-// LogImport はIMPORT操作のログを出力する。
+// LogImport はIMPORT操作のログを出力する（件数を record_count に記録する）。
 func (l *Logger) LogImport(targetType TargetType, count int, filename string) {
-	l.LogWithDetails(OpImport, targetType, filename, "", string(targetType)+" imported", "")
+	l.write(Entry{
+		Operation:   OpImport,
+		TargetType:  targetType,
+		TargetKey:   filename,
+		Msg:         string(targetType) + " imported",
+		RecordCount: &count,
+	})
 }
 
-// LogExport はEXPORT操作のログを出力する。
+// LogExport はEXPORT操作のログを出力する（件数を record_count に記録する）。
 func (l *Logger) LogExport(targetType TargetType, count int, filename string) {
-	l.LogWithDetails(OpExport, targetType, filename, "", string(targetType)+" exported", "")
+	l.write(Entry{
+		Operation:   OpExport,
+		TargetType:  targetType,
+		TargetKey:   filename,
+		Msg:         string(targetType) + " exported",
+		RecordCount: &count,
+	})
 }
 
 // LogSearch はSEARCH操作のログを出力する。
-func (l *Logger) LogSearch(targetType TargetType, query string, resultCount int) {
-	l.LogWithDetails(OpSearch, targetType, "", "", string(targetType)+" searched", query)
+// セッション検索（IMSIで検索）では検索したIMSIを target_imsi に、それ以外は検索語を details に記録する。
+// 検索に成功した場合は結果件数を result_count に記録し、失敗した場合は details に理由を記録する。
+func (l *Logger) LogSearch(targetType TargetType, query string, resultCount int, searchErr error) {
+	e := Entry{
+		Operation:  OpSearch,
+		TargetType: targetType,
+		Msg:        string(targetType) + " searched",
+	}
+	if targetType == TargetSession {
+		e.TargetIMSI = query
+	} else {
+		e.Details = query
+	}
+	if searchErr != nil {
+		failure := "search failed: " + searchErr.Error()
+		if e.Details != "" {
+			e.Details += "; " + failure
+		} else {
+			e.Details = failure
+		}
+	} else {
+		e.ResultCount = &resultCount
+	}
+	l.write(e)
 }
