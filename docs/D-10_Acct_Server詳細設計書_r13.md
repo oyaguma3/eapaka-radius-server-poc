@@ -1,4 +1,4 @@
-# D-10 Acct Server詳細設計書 (r12)
+# D-10 Acct Server詳細設計書 (r13)
 
 ## ■セクション1: 概要
 
@@ -769,8 +769,9 @@ func HandleStatusServer(request *radiuspkg.Packet, secret []byte, srcIP, traceID
     // 5. Response Authenticator計算
     response.Authenticator = calculateResponseAuthenticator(response, request.Authenticator, secret)
     
-    slog.Info("Status-Server: 応答送信",
-        "event_id", "PKT_RECV",
+    // 定期的に届くヘルスチェックのため、正常応答のログはDEBUGとする（失敗はWARNのまま）
+    slog.Debug("Status-Server: 応答送信",
+        "event_id", "RADIUS_STATUS_OK",
         "trace_id", traceID,
         "src_ip", srcIP)
     
@@ -827,7 +828,8 @@ func AddMessageAuthenticator(packet *radiuspkg.Packet, secret []byte) {
 #### 4.7.4 注意点
 
 - Status-Server は課金処理ではなく死活監視用
-- ログ出力は INFO レベル（`PKT_RECV`）
+- 応答時のログは DEBUG レベル（`RADIUS_STATUS_OK`。event_id は Auth Server と同じ。2026-10-05 の修正より前は `PKT_RECV`）。Status-Server は NAS や RADIUS プロキシ（radsecproxy 等）からヘルスチェックとして定期的に届き、送信元が複数あると INFO ログが埋まるため。疎通をログで確かめたいときは `LOG_LEVEL=DEBUG` にする
+- Message-Authenticator検証失敗（`RADIUS_AUTH_ERR`、WARN）と応答の送信失敗（`PKT_SEND_ERR`、ERROR）は従来どおり出力する
 - Valkey の状態確認は行わない（シンプルな応答）
 
 ---
@@ -1635,7 +1637,7 @@ D-04で定義されたevent_idを使用する。
 
 | event_id | レベル | 説明 |
 |----------|--------|------|
-| `PKT_RECV` | INFO | Status-Server応答送信（Accounting-Request受信時は出力しない） |
+| `RADIUS_STATUS_OK` | DEBUG | Status-Server応答送信（§4.7.4。旧 `PKT_RECV`） |
 | `VALKEY_CONN_ERR` | ERROR | 起動時のValkey接続失敗、実行時の読み取り系Valkeyエラー（重複・順序判定（Interim受信値の記録失敗を含む）・セッション存在確認） |
 | `DB_WRITE_ERR` | ERROR | Valkey書き込み失敗（セッション更新・停止マーク・セッション削除・インデックス削除） |
 | `PKT_SEND_ERR` | ERROR | Accounting-Response / Status-Server応答の送信失敗 |
@@ -2167,3 +2169,4 @@ func (s *Server) Shutdown(ctx context.Context) error {
 | r10 | 2026-10-04 | acct-server の重複 Interim の event_id 分離・SYS_ERR 削除・LOG_LEVEL 対応の実装修正の反映: §5.4 / §5.8 / §7.1.3 / §8.1 で重複Interimの event_id を `ACCT_DUPLICATE_START` から `ACCT_DUPLICATE_INTERIM` に変更し、§8.2 にログ出力例を追加（重複Startは従来どおり `ACCT_DUPLICATE_START`）。Accounting処理（`ProcessStart` / `ProcessInterim` / `ProcessStop` / `ProcessOn` / `ProcessOff`）の戻り値から error を外したことに合わせ、§5.3〜§5.7 のコード、§9.2 `AccountingProcessor` の定義、§10.1 ハンドラー（`procErr` と `SYS_ERR`（`処理エラー`）の分岐を削除し、`PKT_SEND_ERR` を実装どおり追記。常にAccounting-Responseを返す旨を注記）を更新し、§8.1 から `SYS_ERR` を削除。`LOG_LEVEL` 対応: §3.1 環境変数一覧に `LOG_LEVEL`（と既存の `LISTEN_ADDR`）を追加、§3.2 設定構造体を実装に合わせ更新、§10.3 起動・シャットダウンのコードを実装の `main.go`（`logging.ParseLevel(cfg.LogLevel)`、起動ログの `log_level`）に差し替え、§2.3 `logging` を共通ライブラリ `pkg/logging` に修正。関連ドキュメント参照版数更新（D-04 r21→r25、D-06 r8→r13、D-08 r14→r17） |
 | r11 | 2026-10-04 | インターネット公開（VPS 等）に向けた安全面の修正の反映: §3.1 環境変数一覧の `RADIUS_SECRET` を任意（既定は空）・空を推奨とし、フォールバックの意味（登録のない送信元IPのパケットも受け付ける。インターネットに公開するサーバーでは空にする。空なら `RADIUS_NO_SECRET` で破棄）の注記を追加。§3.2 設定構造体に `RadiusSecret` が任意で空ならフォールバック無効である旨を注記。§4.2 Shared Secret解決にフォールバックの注意（空のときはパケット破棄、`RADIUS_NO_SECRET` は未登録の送信元で出る正常な動作）を追記。§10.3 起動・シャットダウンの説明とコードを実装の `main.go` に合わせて更新（起動ログの `radius_secret_fallback`、`RADIUS_SECRET` 設定時の WARN を出す `warnFallbackSecret`）。§1.3 参照版数更新（D-01 r10→r16、D-04 r25→r30、D-06 r13→r16、D-08 r17→r19、D-09 r11→r16） |
 | r12 | 2026-10-04 | RADIUSパケットの検証をハンドラーに一本化し、RADIUSライブラリのログをJSONにした実装修正（`PacketServer` に `InsecureSkipVerify: true` と `ErrorLog: logging.NewRADIUSLibraryLogger()` を設定）の反映: §4.1 の処理フローにデコード（失敗時 `RADIUS_LIB_ERR`）・Secret不明・`RADIUS_AUTH_ERR` を追記し、パケットの認証をハンドラーで行う方針と理由の注記を追加。§4.2 注記にライブラリの DEBUG ログを追記。§4.3 の `VerifyAccountingAuthenticator` を実装のコードに置き換え、`MarshalBinary` による検証が受信バイト列での検証と等価であること・ライブラリが検証しないことを注記。§7.1.2 のパケットパース失敗のログを `RADIUS_LIB_ERR` に修正し、Authenticator検証失敗・未知のRADIUS Codeの条件を実装に合わせて修正。§8.1 の `RADIUS_AUTH_ERR` / `RADIUS_UNKNOWN_CODE` の説明を修正し `RADIUS_LIB_ERR` を追加、以前は Accounting-Request のシークレット不一致で `RADIUS_AUTH_ERR` が出ていなかった旨を注記。§10.3 に `internal/server/server.go` の実装を追加し「DEBUGログはない」を修正。§2.1 / §2.3 に `server_test.go`・`NewRADIUSLibraryLogger` を追加。§1.3 参照版数更新（D-04 r30→r31、D-06 r16→r17、D-09 r16→r17、E-03 r4→r9） |
+| r13 | 2026-10-05 | Status-Server に正常に応答したときのログを DEBUG に下げた実装修正（D-04 r32）の反映: §4.7 の `HandleStatusServer` の例の `slog.Info` を `slog.Debug` に、§4.7.4 注意点を DEBUG とその理由（radsecproxy 等の複数のプロキシが定期的に送る構成で INFO ログが埋まる）に修正、§8.1 の `PKT_RECV` を DEBUG に変更。あわせて event_id を `PKT_RECV` から Auth Server と同じ `RADIUS_STATUS_OK` に変更（§4.7 の例、§4.7.4、§8.1）。検証失敗の `RADIUS_AUTH_ERR`（WARN）と `PKT_SEND_ERR`（ERROR）は変更なし |

@@ -1,4 +1,4 @@
-﻿# D-09 Auth Server詳細設計書 (r18)
+﻿# D-09 Auth Server詳細設計書 (r19)
 
 ## ■セクション1: 概要
 
@@ -1063,7 +1063,7 @@ func NewServer(addr string, handler radius.Handler, secretSource radius.SecretSo
 | サーバー起動   | -                  | INFO            | リッスンアドレス       |
 | Secret解決失敗 | `RADIUS_NO_SECRET` | WARN            | 送信元IP               |
 | ライブラリのエラー（デコード失敗等） | `RADIUS_LIB_ERR` | WARN（Secret不明で破棄したときは DEBUG） | ライブラリのメッセージ（`error`） |
-| パケット受信   | `PKT_RECV`         | INFO            | 送信元IP、RADIUSコード |
+| パケット受信   | `PKT_RECV`         | INFO（Status-Serverは DEBUG） | 送信元IP、RADIUSコード |
 | 処理完了       | `AUTH_SUCCESS` 等  | INFO/WARN/ERROR | 結果に応じたevent_id   |
 
 ### 4.7 依存関係
@@ -1352,7 +1352,8 @@ func (ps *ProxyStates) Apply(p *radius.Packet)
 **注意点：**
 
 - Status-Server は認証処理ではなく死活監視用
-- ログ出力は受信時の `PKT_RECV`（INFO）に加え、応答時に `RADIUS_STATUS_OK`（INFO）、Message-Authenticator検証失敗時に `RADIUS_STATUS_AUTH_FAIL`（WARN。応答なし）
+- ログ出力は受信時の `PKT_RECV`（DEBUG）に加え、応答時に `RADIUS_STATUS_OK`（DEBUG）、Message-Authenticator検証失敗時に `RADIUS_STATUS_AUTH_FAIL`（WARN。応答なし）、応答の送信失敗時に `PKT_SEND_ERR`（ERROR）
+- 正常時のログを DEBUG とするのは、Status-Server が NAS や RADIUS プロキシ（radsecproxy 等）からヘルスチェックとして定期的に届き、送信元が複数あると INFO ログが埋まるため。受信の `PKT_RECV` も、`ServeRADIUS`（`internal/server/handler.go`）で Code が Status-Server のときだけ DEBUG で出力する（Access-Request 等は INFO のまま）。疎通をログで確かめたいときは `LOG_LEVEL=DEBUG` にする
 - Valkey/Vector Gateway の状態確認は行わない（シンプルな応答）
 
 ### 5.9 処理フロー図
@@ -1402,13 +1403,13 @@ PacketServer
 
 | 処理                          | event_id              | レベル | 追加フィールド          |
 | ----------------------------- | --------------------- | ------ | ----------------------- |
-| RADIUSパケット受信（全Code）  | `PKT_RECV`            | INFO   | `trace_id`, `src_ip`, `code` |
+| RADIUSパケット受信（全Code）  | `PKT_RECV`            | INFO（Status-Serverは DEBUG。§5.8） | `trace_id`, `src_ip`, `code` |
 | Message-Authenticator検証失敗 | `PKT_MA_INVALID`      | WARN   | `trace_id`, `src_ip`    |
 | EAP-Message属性なし           | `PKT_NO_EAP`          | WARN   | `trace_id`, `src_ip`    |
 | Access-Request / Status-Server 以外のCode（Accounting-Request、未知のCode等） | `PKT_UNKNOWN_CODE`    | WARN   | `trace_id`, `code`（送信元IPは直前の `PKT_RECV` の `src_ip`） |
 | パケットドロップ              | `PKT_DROP`            | INFO   | `trace_id`              |
 | 応答送信失敗                  | `PKT_SEND_ERR`        | ERROR  | `trace_id`, `error`     |
-| Status-Server応答             | `RADIUS_STATUS_OK`    | INFO   | `trace_id`, `src_ip`    |
+| Status-Server応答             | `RADIUS_STATUS_OK`    | DEBUG  | `trace_id`, `src_ip`    |
 | Status-Server MA検証失敗      | `RADIUS_STATUS_AUTH_FAIL` | WARN | `trace_id`, `src_ip`  |
 | 送信元IP抽出不可              | `RADIUS_IP_EXTRACT_ERR` | WARN | `remote_addr`           |
 | Secret解決時のValkeyエラー    | `RADIUS_SECRET_ERR`   | WARN   | `src_ip`, `error`       |
@@ -4679,3 +4680,4 @@ Auth Server内で直接参照する外部パッケージの型：
 | r16 | 2026-10-04 | インターネット公開（VPS 等）に向けた安全面の修正の反映: §3.1 環境変数一覧の `RADIUS_SECRET` を任意（既定は空）・空を推奨とし、フォールバックの意味（登録のない送信元IPのパケットも受け付ける。インターネットに公開するサーバーでは空にする。空なら `RADIUS_NO_SECRET` で破棄）の注記を追加。§3.2 / §10.3.1 設定構造体に `RadiusSecret` が任意で空ならフォールバック無効である旨を注記。§3.3 初期化シーケンス・§3.4 main.go に起動ログの `radius_secret_fallback` と `warnFallbackSecret`（`RADIUS_SECRET` 設定時の WARN）を追加。§3.8 起動ログの例に `radius_secret_fallback` を追加し、WARN の msg と公開サーバーでの確認方法を追記。§4.2 / §4.3 / §5.2 Shared Secret解決にフォールバックが空のときの動作（パケット破棄）とフォールバックの注意を追記。§1.3 参照版数更新（D-01 r10→r16、D-04 r23→r30、D-06 r8→r16、D-08 r14→r19） |
 | r17 | 2026-10-04 | RADIUSパケットの検証をハンドラーに一本化し、RADIUSライブラリのログをJSONにした実装修正の反映: §4.3 に「PacketServerの設定（パケットの認証とライブラリのログ）」を新設（`InsecureSkipVerify: true` と `ErrorLog: logging.NewRADIUSLibraryLogger()`、`NewServer` のコード、方針と理由）。§4.2 / §5.9 の処理フローのライブラリ内部処理を「デコード（失敗時は `RADIUS_LIB_ERR`）、認証は行わない」に修正し、その他のCodeを `PKT_UNKNOWN_CODE` と明記。§5.3 Code別処理に、Accounting-Request や未知のCodeもハンドラーに届く旨の注記を追加。§4.6 / §5.10 のログ表に `RADIUS_LIB_ERR`（WARN、Secret不明で破棄したときはDEBUG）を追加し、`PKT_UNKNOWN_CODE` の条件を修正、§5.10 注記の「デコード失敗はログを出力しない」を修正。§2.7 / §4.7 の `server.go` の記述を更新。§1.3 参照版数更新（D-04 r30→r31、D-06 r16→r17） |
 | r18 | 2026-10-04 | §3.4 の main.go の例で、RADIUS サーバーの生成を実装どおり `server.NewServer(cfg.ListenAddr, handler, secretSource)` に訂正（r17 までは `server.New(cfg.ListenAddr, secretSource, handler)` と、関数名と引数の順序が実装と異なっていた） |
+| r19 | 2026-10-05 | Status-Server に正常に応答したときのログを DEBUG に下げた実装修正（D-04 r32）の反映: §4.6 / §5.10 の `PKT_RECV` を Status-Server のときだけ DEBUG、§5.10 の `RADIUS_STATUS_OK` を DEBUG に変更。§5.8 の注意点に、DEBUG とする理由（radsecproxy 等の複数のプロキシが定期的に送る構成で INFO ログが埋まる）と `PKT_SEND_ERR` を追記。検証失敗の `RADIUS_STATUS_AUTH_FAIL`（WARN）は変更なし |
