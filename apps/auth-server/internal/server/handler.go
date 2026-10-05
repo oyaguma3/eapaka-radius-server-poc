@@ -26,7 +26,13 @@ func (h *Handler) ServeRADIUS(w radius.ResponseWriter, r *radius.Request) {
 	traceID := resolveTraceID(r)
 	srcIP := extractIP(r.RemoteAddr)
 
-	slog.Info("RADIUSパケット受信",
+	// Status-Serverは複数のNAS・プロキシ（radsecproxy等）から定期的に届くため、
+	// INFOログが埋まらないよう受信ログはDEBUGとする
+	level := slog.LevelInfo
+	if r.Code == radius.CodeStatusServer {
+		level = slog.LevelDebug
+	}
+	slog.Log(context.Background(), level, "RADIUSパケット受信",
 		"event_id", "PKT_RECV",
 		"trace_id", traceID,
 		"src_ip", srcIP,

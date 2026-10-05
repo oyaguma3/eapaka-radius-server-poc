@@ -32,8 +32,9 @@ func HandleStatusServer(request *radius.Packet, secret []byte, srcIP, traceID st
 
 	// Response Authenticatorはgo-radiusライブラリのEncode()が自動計算する
 
-	slog.Info("Status-Server: 応答送信",
-		"event_id", "PKT_RECV",
+	// 定期的に届くヘルスチェックのため、正常応答のログはDEBUGとする（失敗はWARNのまま）
+	slog.Debug("Status-Server: 応答送信",
+		"event_id", "RADIUS_STATUS_OK",
 		"trace_id", traceID,
 		"src_ip", srcIP,
 	)

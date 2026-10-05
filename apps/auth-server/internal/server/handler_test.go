@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/md5"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"strings"
@@ -456,5 +457,104 @@ func TestHandler_StatusServer_WriteError(t *testing.T) {
 	// Write自体は呼ばれるが、エラーログのみ
 	if len(rw.written) != 1 {
 		t.Fatalf("written packets: got %d, want 1", len(rw.written))
+	}
+}
+
+// captureLogs はテスト中のログをDEBUG以上で取得し、event_idからlevelへの対応を返す関数を用意する
+func captureLogs(t *testing.T) func() map[string]string {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	return func() map[string]string {
+		levels := make(map[string]string)
+		for line := range strings.Lines(buf.String()) {
+			var entry struct {
+				Level   string `json:"level"`
+				EventID string `json:"event_id"`
+			}
+			if err := json.Unmarshal([]byte(line), &entry); err != nil {
+				t.Fatalf("invalid log line: %q: %v", line, err)
+			}
+			levels[entry.EventID] = entry.Level
+		}
+		return levels
+	}
+}
+
+func TestHandler_StatusServer_LogLevel(t *testing.T) {
+	secret := []byte("test-secret")
+
+	tests := []struct {
+		name       string
+		validMA    bool
+		wantLevels map[string]string
+	}{
+		{
+			// 正常応答は定期的なヘルスチェックのためDEBUG
+			name:    "success is logged at debug",
+			validMA: true,
+			wantLevels: map[string]string{
+				"PKT_RECV":         "DEBUG",
+				"RADIUS_STATUS_OK": "DEBUG",
+			},
+		},
+		{
+			// 検証失敗はWARNのまま
+			name:    "ma failure stays warn",
+			validMA: false,
+			wantLevels: map[string]string{
+				"PKT_RECV":                "DEBUG",
+				"RADIUS_STATUS_AUTH_FAIL": "WARN",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+			logs := captureLogs(t)
+
+			p := &radius.Packet{Code: radius.CodeStatusServer, Identifier: 1, Secret: secret}
+			if tt.validMA {
+				setValidMessageAuthenticator(p, secret)
+			} else {
+				_ = rfc2869.MessageAuthenticator_Set(p, make([]byte, 16))
+			}
+
+			NewHandler(mocks.NewMockEAPProcessor(ctrl)).
+				ServeRADIUS(&mockResponseWriter{}, &radius.Request{Packet: p})
+
+			got := logs()
+			if len(got) != len(tt.wantLevels) {
+				t.Errorf("logged events = %v, want %v", got, tt.wantLevels)
+			}
+			for eventID, want := range tt.wantLevels {
+				if got[eventID] != want {
+					t.Errorf("%s level = %q, want %q", eventID, got[eventID], want)
+				}
+			}
+		})
+	}
+}
+
+func TestHandler_AccessRequest_PktRecvIsInfo(t *testing.T) {
+	// Status-Server以外の受信ログはINFOのまま
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	logs := captureLogs(t)
+
+	mockEngine := mocks.NewMockEAPProcessor(ctrl)
+	mockEngine.EXPECT().Process(gomock.Any(), gomock.Any()).Return(&eap.Result{Action: eap.ActionDrop})
+
+	secret := []byte("test-secret")
+	p := buildTestAccessRequest(secret, buildTestEAPIdentity())
+	NewHandler(mockEngine).ServeRADIUS(&mockResponseWriter{}, &radius.Request{Packet: p})
+
+	if got := logs()["PKT_RECV"]; got != "INFO" {
+		t.Errorf("PKT_RECV level = %q, want INFO", got)
 	}
 }
