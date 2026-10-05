@@ -29,7 +29,8 @@ func HandleStatusServer(request *radius.Packet, secret []byte, srcIP, traceID st
 	// 4. Message-Authenticator生成
 	SetMessageAuthenticator(resp, secret, request.Authenticator)
 
-	slog.Info("Status-Server: 応答送信",
+	// 定期的に届くヘルスチェックのため、正常応答のログはDEBUGとする（失敗はWARNのまま）
+	slog.Debug("Status-Server: 応答送信",
 		"event_id", "RADIUS_STATUS_OK",
 		"trace_id", traceID,
 		"src_ip", srcIP,

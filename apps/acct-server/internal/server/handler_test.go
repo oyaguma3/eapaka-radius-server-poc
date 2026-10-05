@@ -1,11 +1,14 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/md5"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"net"
 	"testing"
 
@@ -445,5 +448,42 @@ func TestHandlerWithUDPAddress(t *testing.T) {
 
 	if !proc.startCalled {
 		t.Error("ProcessStart should be called")
+	}
+}
+
+func TestServeRADIUS_StatusServer_LogLevel(t *testing.T) {
+	tests := []struct {
+		name        string
+		validMA     bool
+		wantEventID string
+		wantLevel   string
+	}{
+		// 正常応答は定期的なヘルスチェックのためDEBUG（event_idはauth-serverと同じRADIUS_STATUS_OK）
+		{"success is logged at debug", true, "RADIUS_STATUS_OK", "DEBUG"},
+		// 検証失敗はWARNのまま
+		{"ma failure stays warn", false, "RADIUS_AUTH_ERR", "WARN"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+			defer slog.SetDefault(prev)
+
+			secret := []byte("testing123")
+			NewHandler(&mockProcessor{}).ServeRADIUS(&mockResponseWriter{}, createStatusServerRequest(t, secret, tt.validMA))
+
+			var entry struct {
+				Level   string `json:"level"`
+				EventID string `json:"event_id"`
+			}
+			if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+				t.Fatalf("expected exactly one log line, got %q: %v", buf.String(), err)
+			}
+			if entry.EventID != tt.wantEventID || entry.Level != tt.wantLevel {
+				t.Errorf("log = {%q, %q}, want {%q, %q}", entry.Level, entry.EventID, tt.wantLevel, tt.wantEventID)
+			}
+		})
 	}
 }
