@@ -11,13 +11,14 @@ import (
 
 // Session はアクティブセッションを表す（D-09 セクション9.3.1準拠）。
 type Session struct {
-	IMSI         string `redis:"imsi"`
-	NasIP        string `redis:"nas_ip"`
-	StartTime    int64  `redis:"start_time"`
-	ClientIP     string `redis:"client_ip"`
-	AcctID       string `redis:"acct_id"`
-	InputOctets  int64  `redis:"input_octets"`
-	OutputOctets int64  `redis:"output_octets"`
+	IMSI          string `redis:"imsi"`
+	NasIP         string `redis:"nas_ip"`
+	NasIdentifier string `redis:"nas_identifier"` // ポリシー評価に使ったNAS-Identifier（プロキシ経由でもNASを識別できる）
+	StartTime     int64  `redis:"start_time"`
+	ClientIP      string `redis:"client_ip"`
+	AcctID        string `redis:"acct_id"`
+	InputOctets   int64  `redis:"input_octets"`
+	OutputOctets  int64  `redis:"output_octets"`
 }
 
 // sessionStore はSessionStoreの実装。

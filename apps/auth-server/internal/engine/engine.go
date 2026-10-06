@@ -538,6 +538,7 @@ func (e *EngineImpl) handleChallengeResponse(ctx context.Context, req *eap.Reque
 			"event_id", "AUTH_POLICY_NOT_FOUND",
 			"trace_id", traceID,
 			"imsi", maskedIMSI,
+			"nas_identifier", req.NASIdentifier,
 			"error", err,
 		)
 		_ = e.ctxStore.Delete(ctx, traceID)
@@ -556,6 +557,7 @@ func (e *EngineImpl) handleChallengeResponse(ctx context.Context, req *eap.Reque
 			"event_id", "AUTH_POLICY_DENIED",
 			"trace_id", traceID,
 			"imsi", maskedIMSI,
+			"nas_identifier", req.NASIdentifier,
 			"reason", evalResult.DenyReason,
 		)
 		_ = e.ctxStore.Delete(ctx, traceID)
@@ -569,9 +571,10 @@ func (e *EngineImpl) handleChallengeResponse(ctx context.Context, req *eap.Reque
 	// セッション作成
 	sessionID := session.GenerateSessionID()
 	sess := &session.Session{
-		IMSI:      eapCtx.IMSI,
-		NasIP:     req.SrcIP,
-		StartTime: time.Now().Unix(),
+		IMSI:          eapCtx.IMSI,
+		NasIP:         req.SrcIP,
+		NasIdentifier: req.NASIdentifier,
+		StartTime:     time.Now().Unix(),
 	}
 	if err := e.sessStore.Create(ctx, sessionID, sess); err != nil {
 		slog.Error("セッション作成失敗",
@@ -608,6 +611,7 @@ func (e *EngineImpl) handleChallengeResponse(ctx context.Context, req *eap.Reque
 		"event_id", "AUTH_SUCCESS",
 		"trace_id", traceID,
 		"imsi", maskedIMSI,
+		"nas_identifier", req.NASIdentifier,
 		"session_id", sessionID,
 	)
 

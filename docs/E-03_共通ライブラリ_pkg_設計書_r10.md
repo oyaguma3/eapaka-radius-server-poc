@@ -1,4 +1,4 @@
-# E-03 共通ライブラリ(pkg)設計書 (r9)
+# E-03 共通ライブラリ(pkg)設計書 (r10)
 
 ## 1. 概要
 
@@ -933,7 +933,8 @@ const (
 type Session struct {
     UUID          string `json:"uuid"`            // セッション識別子
     IMSI          string `json:"imsi"`            // 加入者IMSI
-    NasIP         string `json:"nas_ip"`          // NAS IPアドレス
+    NasIP         string `json:"nas_ip"`          // NAS IPアドレス（パケットの送信元IP。プロキシ経由ではプロキシのIP）
+    NasIdentifier string `json:"nas_identifier"`  // NAS-Identifier（プロキシ経由でもNASを識別できる）
     ClientIP      string `json:"client_ip"`       // クライアントIPアドレス
     AcctSessionID string `json:"acct_session_id"` // アカウンティングセッションID
     StartTime     int64  `json:"start_time"`      // セッション開始時刻（Unix秒）
@@ -941,7 +942,7 @@ type Session struct {
     OutputOctets  int64  `json:"output_octets"`   // 送信バイト数
 }
 
-// NewSession は新しいSessionを生成する。
+// NewSession は新しいSessionを生成する（NasIdentifier は引数に含めないため、必要なら生成後に設定する）。
 func NewSession(uuid, imsi, nasIP, clientIP, acctSessionID string, startTime int64) *Session {
     return &Session{
         UUID:          uuid,
@@ -1311,3 +1312,4 @@ func (h *GatewayHandler) handleBackendError(c *gin.Context, err error) {
 | r7 | 2026-10-04 | vector-api / vector-gateway のログレベル変換を `pkg/logging.ParseLevel` に統一した実装修正の反映: §5.6 の利用箇所に Vector Gateway / Vector API（各 `main.go` の `initLogger`）を追加し、「Vector Gateway / Vector API は独自に変換しており本関数を使っていない」旨の記述を削除（3コンポーネントで `LOG_LEVEL` の解釈が同じになった。`WARNING` も `WARN`） |
 | r8 | 2026-10-04 | acct-server の LOG_LEVEL 対応の実装修正の反映: §5.6 の `ParseLevel` の利用箇所に Acct Server（`apps/acct-server/main.go` のロガー初期化）を追加して4コンポーネントとし、「Acct Server は LOG_LEVEL に対応しておらず使っていない」を削除。§1.3 関連ドキュメントの D-04 の版数を r25 に更新 |
 | r9 | 2026-10-04 | RADIUSライブラリのログをJSONにした実装修正（`pkg/logging/radiuslib.go` 新設）の反映: §5.8 RADIUSライブラリのログを新設し、`NewRADIUSLibraryLogger()`（`layeh.com/radius` の `PacketServer.ErrorLog` に設定する `*log.Logger`。ライブラリの1行を msg `RADIUSライブラリのエラー`・`event_id`=`RADIUS_LIB_ERR`・`error` で slog に出力、WARN（`empty secret returned from secret source` を含む行は DEBUG）、`src_ip` なし）と定数 `EventRADIUSLibError` の目的・動作・使い方を記載。§2.1 / §2.2 / §5.1 に追加し、§8.3 に `layeh.com/radius` に依存しない旨を追記。§1.3 参照版数更新（D-04 r25→r31、D-06 r6→r17） |
+| r10 | 2026-10-06 | `model.Session` に `NasIdentifier`（`json:"nas_identifier"`。Valkey の `sess:{UUID}` の `nas_identifier`。D-02 r20）を追加。radsecproxy 等のプロキシ経由では `NasIP` がプロキシのIPになり NAS を区別できないため。`NewSession` の引数は変えない |

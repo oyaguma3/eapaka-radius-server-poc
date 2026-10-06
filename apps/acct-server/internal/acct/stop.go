@@ -70,6 +70,7 @@ func (p *Processor) ProcessStop(ctx context.Context, attrs *radius.AccountingAtt
 		"event_id", "ACCT_STOP",
 		"trace_id", traceID,
 		"src_ip", srcIP,
+		"nas_identifier", attrs.NasIdentifier,
 		"imsi", imsi,
 		"acct_session_id", attrs.AcctSessionID,
 		"input_octets", attrs.InputOctets,

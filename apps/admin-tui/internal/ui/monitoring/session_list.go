@@ -24,6 +24,9 @@ const (
 	SortByNasIP
 )
 
+// nasIDMaxLen はセッション一覧・検索結果に表示するNAS-IDの最大文字数（NAS-Identifierは最大253バイト）
+const nasIDMaxLen = 24
+
 // SessionListScreen はセッション一覧画面を表す。
 type SessionListScreen struct {
 	table        *tview.Table
@@ -54,7 +57,7 @@ func NewSessionListScreen(app *ui.App, sessionStore *store.SessionStore) *Sessio
 		table:        table,
 		app:          app,
 		sessionStore: sessionStore,
-		filter:       ui.NewFilter("IMSI", "NasIP"),
+		filter:       ui.NewFilter("IMSI", "NasIdentifier", "NasIP", "ClientIP"),
 		pagination:   ui.NewPagination(ui.DefaultPageSize),
 		sortField:    SortByStartTime,
 		sortDesc:     true, // 最新順
@@ -183,7 +186,7 @@ func (s *SessionListScreen) sortSessions() {
 
 func (s *SessionListScreen) getFilteredSessions() []*model.Session {
 	return ui.FilterItems(s.sessions, s.filter, func(session *model.Session) []string {
-		return []string{session.IMSI, session.NasIP, session.ClientIP}
+		return []string{session.IMSI, session.NasIdentifier, session.NasIP, session.ClientIP}
 	})
 }
 
@@ -191,8 +194,8 @@ func (s *SessionListScreen) render() {
 	s.table.Clear()
 
 	// ヘッダー
-	headers := []string{"IMSI", "NAS IP", "Client IP", "Start Time", "Duration", "Traffic"}
-	sortIndicators := []string{"", "", "", "", "", ""}
+	headers := []string{"IMSI", "NAS-ID", "NAS IP", "Client IP", "Start Time", "Duration", "Traffic"}
+	sortIndicators := []string{"", "", "", "", "", "", ""}
 	switch s.sortField {
 	case SortByIMSI:
 		if s.sortDesc {
@@ -202,15 +205,15 @@ func (s *SessionListScreen) render() {
 		}
 	case SortByStartTime:
 		if s.sortDesc {
-			sortIndicators[3] = " ▼"
+			sortIndicators[4] = " ▼"
 		} else {
-			sortIndicators[3] = " ▲"
+			sortIndicators[4] = " ▲"
 		}
 	case SortByNasIP:
 		if s.sortDesc {
-			sortIndicators[1] = " ▼"
+			sortIndicators[2] = " ▼"
 		} else {
-			sortIndicators[1] = " ▲"
+			sortIndicators[2] = " ▲"
 		}
 	}
 
@@ -237,33 +240,39 @@ func (s *SessionListScreen) render() {
 			SetAlign(tview.AlignLeft).
 			SetExpansion(1))
 
+		// NAS-ID（プロキシ経由ではNAS IPがプロキシのIPになるため、NASの識別に使う）
+		s.table.SetCell(row, 1, tview.NewTableCell(format.Truncate(format.OrDash(session.NasIdentifier), nasIDMaxLen)).
+			SetTextColor(tcell.ColorWhite).
+			SetAlign(tview.AlignLeft).
+			SetExpansion(1))
+
 		// NAS IP
-		s.table.SetCell(row, 1, tview.NewTableCell(session.NasIP).
+		s.table.SetCell(row, 2, tview.NewTableCell(session.NasIP).
 			SetTextColor(tcell.ColorWhite).
 			SetAlign(tview.AlignLeft).
 			SetExpansion(1))
 
 		// Client IP
-		s.table.SetCell(row, 2, tview.NewTableCell(session.ClientIP).
+		s.table.SetCell(row, 3, tview.NewTableCell(session.ClientIP).
 			SetTextColor(tcell.ColorWhite).
 			SetAlign(tview.AlignLeft).
 			SetExpansion(1))
 
 		// Start Time
-		s.table.SetCell(row, 3, tview.NewTableCell(format.DateTimeShort(session.StartTime)).
+		s.table.SetCell(row, 4, tview.NewTableCell(format.DateTimeShort(session.StartTime)).
 			SetTextColor(tcell.ColorGray).
 			SetAlign(tview.AlignLeft).
 			SetExpansion(1))
 
 		// Duration
-		s.table.SetCell(row, 4, tview.NewTableCell(format.Elapsed(session.StartTime)).
+		s.table.SetCell(row, 5, tview.NewTableCell(format.Elapsed(session.StartTime)).
 			SetTextColor(tcell.ColorTeal).
 			SetAlign(tview.AlignLeft).
 			SetExpansion(1))
 
 		// Traffic
 		totalTraffic := session.InputOctets + session.OutputOctets
-		s.table.SetCell(row, 5, tview.NewTableCell(format.BytesShort(totalTraffic)).
+		s.table.SetCell(row, 6, tview.NewTableCell(format.BytesShort(totalTraffic)).
 			SetTextColor(tcell.ColorGreen).
 			SetAlign(tview.AlignLeft).
 			SetExpansion(1))
@@ -366,7 +375,7 @@ func (s *SessionListScreen) setupKeyBindings() {
 func (s *SessionListScreen) showFilterDialog() {
 	dialog := ui.NewInputDialog(
 		"Filter Sessions",
-		"IMSI/IP contains:",
+		"IMSI/NAS-ID/IP contains:",
 		s.filter.Query,
 		func(value string) {
 			s.SetFilter(value)
