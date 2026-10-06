@@ -32,12 +32,19 @@ func (h *Handler) ServeRADIUS(w radius.ResponseWriter, r *radius.Request) {
 	if r.Code == radius.CodeStatusServer {
 		level = slog.LevelDebug
 	}
-	slog.Log(context.Background(), level, "RADIUSパケット受信",
+	attrs := []any{
 		"event_id", "PKT_RECV",
 		"trace_id", traceID,
 		"src_ip", srcIP,
 		"code", r.Code,
-	)
+	}
+	// Access-RequestはNAS-Identifierも出す。radsecproxy等のプロキシ経由ではsrc_ipがプロキシのIPになるため、
+	// NASを識別する手がかりになる（同じ認証のログはtrace_idで追える）
+	if r.Code == radius.CodeAccessRequest {
+		nasID, _ := radiuspkg.GetNASIdentifier(r.Packet)
+		attrs = append(attrs, "nas_identifier", nasID)
+	}
+	slog.Log(context.Background(), level, "RADIUSパケット受信", attrs...)
 
 	switch r.Code {
 	case radius.CodeAccessRequest:

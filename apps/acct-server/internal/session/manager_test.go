@@ -159,3 +159,45 @@ func TestManagerRemoveUserIndex(t *testing.T) {
 		t.Errorf("members count = %d, want 1", len(members))
 	}
 }
+
+// TestManagerUpdate_NASIdentifier は Start / Interim で NAS-Identifier があれば上書きし、
+// 空ならセッションの値（Auth Server が書いた値）を残すことを確認する
+func TestManagerUpdate_NASIdentifier(t *testing.T) {
+	tests := []struct {
+		name    string
+		update  func(SessionManager, context.Context) error
+		wantNAS string
+	}{
+		{"start overwrites", func(m SessionManager, ctx context.Context) error {
+			return m.UpdateOnStart(ctx, "test-uuid", &SessionStartData{StartTime: 1706000000, NasIP: "172.30.0.10", NasIdentifier: "ap-001", AcctID: "acct-1"})
+		}, "ap-001"},
+		{"start keeps when empty", func(m SessionManager, ctx context.Context) error {
+			return m.UpdateOnStart(ctx, "test-uuid", &SessionStartData{StartTime: 1706000000, NasIP: "172.30.0.10", AcctID: "acct-1"})
+		}, "auth-value"},
+		{"interim overwrites", func(m SessionManager, ctx context.Context) error {
+			return m.UpdateOnInterim(ctx, "test-uuid", &SessionInterimData{NasIP: "172.30.0.10", NasIdentifier: "ap-001"})
+		}, "ap-001"},
+		{"interim keeps when empty", func(m SessionManager, ctx context.Context) error {
+			return m.UpdateOnInterim(ctx, "test-uuid", &SessionInterimData{NasIP: "172.30.0.10"})
+		}, "auth-value"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mr, mgr := setupManager(t)
+			mr.HSet("sess:test-uuid", "imsi", "001010123456789", "nas_identifier", "auth-value")
+			ctx := context.Background()
+
+			if err := tt.update(mgr, ctx); err != nil {
+				t.Fatalf("update failed: %v", err)
+			}
+			sess, err := mgr.Get(ctx, "test-uuid")
+			if err != nil {
+				t.Fatalf("Get failed: %v", err)
+			}
+			if sess.NasIdentifier != tt.wantNAS {
+				t.Errorf("NasIdentifier = %q, want %q", sess.NasIdentifier, tt.wantNAS)
+			}
+		})
+	}
+}

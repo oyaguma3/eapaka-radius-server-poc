@@ -1811,3 +1811,84 @@ func TestEngine_IdentityLog_UserNameMasked(t *testing.T) {
 		})
 	}
 }
+
+// TestEngine_NASIdentifier は認可の結果のログに nas_identifier が出ること、
+// 認証成功時にセッションへ NAS-Identifier が保存されることを確認する（プロキシ経由でもNASを識別するため）
+func TestEngine_NASIdentifier(t *testing.T) {
+	tests := []struct {
+		name       string
+		policy     *policy.Policy
+		policyErr  error
+		allowed    bool
+		wantEvent  string
+		wantAction eap.Action
+	}{
+		{"accept", &policy.Policy{Default: "allow"}, nil, true, "AUTH_SUCCESS", eap.ActionAccept},
+		{"policy denied", &policy.Policy{Default: "deny"}, nil, false, "AUTH_POLICY_DENIED", eap.ActionReject},
+		{"policy not found", nil, policy.ErrPolicyNotFound, false, "AUTH_POLICY_NOT_FOUND", eap.ActionReject},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			var buf bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+			defer slog.SetDefault(prev)
+
+			eng, _, mockCtxStore, mockSessStore, mockPolicyStore, mockEvaluator := newChallengeTestEngine(ctrl)
+			keys := eapaka.DeriveKeysAKA("0"+testIMSI+"@realm", testCK, testIK)
+			eapCtx := makeChallengeContext(eapaka.TypeAKA, keys.K_aut, testXRES, keys.MSK)
+
+			mockCtxStore.EXPECT().Get(gomock.Any(), testTraceID).Return(eapCtx, nil)
+			mockCtxStore.EXPECT().Delete(gomock.Any(), testTraceID).Return(nil)
+			mockPolicyStore.EXPECT().GetPolicy(gomock.Any(), testIMSI).Return(tt.policy, tt.policyErr)
+			if tt.policyErr == nil {
+				mockEvaluator.EXPECT().Evaluate(gomock.Any(), testNASID, testSSID).
+					Return(&policy.EvaluationResult{Allowed: tt.allowed, DenyReason: "no matching rule"})
+			}
+			var saved *session.Session
+			if tt.allowed {
+				mockSessStore.EXPECT().Create(gomock.Any(), gomock.Any(), gomock.Any()).
+					DoAndReturn(func(_ context.Context, _ string, sess *session.Session) error {
+						saved = sess
+						return nil
+					})
+				mockSessStore.EXPECT().AddUserIndex(gomock.Any(), testIMSI, gomock.Any()).Return(nil)
+			}
+
+			req := &eap.Request{
+				TraceID:       testTraceID,
+				SrcIP:         "172.30.0.10",
+				NASIdentifier: testNASID,
+				CalledStation: "AA-BB-CC-DD-EE-FF:" + testSSID,
+				UserName:      "0" + testIMSI + "@realm",
+				State:         []byte(testTraceID),
+				EAPMessage:    buildChallengeResponseEAPMessage(2, eapaka.TypeAKA, keys.K_aut, testXRES),
+			}
+			if result := eng.Process(context.Background(), req); result.Action != tt.wantAction {
+				t.Fatalf("Action: got %v, want %v", result.Action, tt.wantAction)
+			}
+
+			if !strings.Contains(buf.String(), `"event_id":"`+tt.wantEvent+`"`) {
+				t.Fatalf("%s が出力されていない: %s", tt.wantEvent, buf.String())
+			}
+			for line := range strings.Lines(buf.String()) {
+				if strings.Contains(line, `"event_id":"`+tt.wantEvent+`"`) &&
+					!strings.Contains(line, `"nas_identifier":"`+testNASID+`"`) {
+					t.Errorf("%s に nas_identifier がない: %s", tt.wantEvent, line)
+				}
+			}
+			if tt.allowed {
+				if saved == nil {
+					t.Fatal("セッションが保存されていない")
+				}
+				if saved.NasIdentifier != testNASID || saved.NasIP != "172.30.0.10" {
+					t.Errorf("session NasIdentifier=%q NasIP=%q, want %q / %q", saved.NasIdentifier, saved.NasIP, testNASID, "172.30.0.10")
+				}
+			}
+		})
+	}
+}

@@ -24,6 +24,7 @@ func (p *Processor) ProcessInterim(ctx context.Context, attrs *radius.Accounting
 			"event_id", "ACCT_DUPLICATE_INTERIM",
 			"trace_id", traceID,
 			"src_ip", srcIP,
+			"nas_identifier", attrs.NasIdentifier,
 			"acct_session_id", attrs.AcctSessionID,
 		)
 		return
@@ -34,6 +35,7 @@ func (p *Processor) ProcessInterim(ctx context.Context, attrs *radius.Accounting
 			"event_id", "ACCT_SEQUENCE_ERR",
 			"trace_id", traceID,
 			"src_ip", srcIP,
+			"nas_identifier", attrs.NasIdentifier,
 			"acct_session_id", attrs.AcctSessionID,
 			"reason", check.SequenceReason,
 		)
@@ -55,14 +57,16 @@ func (p *Processor) ProcessInterim(ctx context.Context, attrs *radius.Accounting
 				"event_id", "ACCT_SESSION_NOT_FOUND",
 				"trace_id", traceID,
 				"src_ip", srcIP,
+				"nas_identifier", attrs.NasIdentifier,
 				"class_uuid", sessionUUID,
 			)
 		default:
 			err = p.sessionManager.UpdateOnInterim(ctx, sessionUUID, &session.SessionInterimData{
-				NasIP:        srcIP,
-				ClientIP:     attrs.FramedIPAddress,
-				InputOctets:  int64(attrs.InputOctets),
-				OutputOctets: int64(attrs.OutputOctets),
+				NasIP:         srcIP,
+				NasIdentifier: attrs.NasIdentifier,
+				ClientIP:      attrs.FramedIPAddress,
+				InputOctets:   int64(attrs.InputOctets),
+				OutputOctets:  int64(attrs.OutputOctets),
 			})
 			if err != nil {
 				slog.Error("session update failed",
@@ -80,6 +84,7 @@ func (p *Processor) ProcessInterim(ctx context.Context, attrs *radius.Accounting
 		"event_id", "ACCT_INTERIM",
 		"trace_id", traceID,
 		"src_ip", srcIP,
+		"nas_identifier", attrs.NasIdentifier,
 		"imsi", imsi,
 		"acct_session_id", attrs.AcctSessionID,
 		"input_octets", attrs.InputOctets,

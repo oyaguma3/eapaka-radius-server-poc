@@ -20,6 +20,7 @@ func (p *Processor) ProcessStart(ctx context.Context, attrs *radius.AccountingAt
 				"event_id", "ACCT_SEQUENCE_ERR",
 				"trace_id", traceID,
 				"src_ip", srcIP,
+				"nas_identifier", attrs.NasIdentifier,
 				"acct_session_id", attrs.AcctSessionID,
 				"reason", seqErr.Reason,
 			)
@@ -36,6 +37,7 @@ func (p *Processor) ProcessStart(ctx context.Context, attrs *radius.AccountingAt
 			"event_id", "ACCT_DUPLICATE_START",
 			"trace_id", traceID,
 			"src_ip", srcIP,
+			"nas_identifier", attrs.NasIdentifier,
 			"acct_session_id", attrs.AcctSessionID,
 		)
 		return
@@ -48,6 +50,7 @@ func (p *Processor) ProcessStart(ctx context.Context, attrs *radius.AccountingAt
 			"event_id", "ACCT_SESSION_NOT_FOUND",
 			"trace_id", traceID,
 			"src_ip", srcIP,
+			"nas_identifier", attrs.NasIdentifier,
 			"acct_session_id", attrs.AcctSessionID,
 		)
 	}
@@ -66,14 +69,16 @@ func (p *Processor) ProcessStart(ctx context.Context, attrs *radius.AccountingAt
 				"event_id", "ACCT_SESSION_NOT_FOUND",
 				"trace_id", traceID,
 				"src_ip", srcIP,
+				"nas_identifier", attrs.NasIdentifier,
 				"class_uuid", sessionUUID,
 			)
 		} else {
 			err = p.sessionManager.UpdateOnStart(ctx, sessionUUID, &session.SessionStartData{
-				StartTime: time.Now().Unix(),
-				NasIP:     srcIP,
-				AcctID:    attrs.AcctSessionID,
-				ClientIP:  attrs.FramedIPAddress,
+				StartTime:     time.Now().Unix(),
+				NasIP:         srcIP,
+				NasIdentifier: attrs.NasIdentifier,
+				AcctID:        attrs.AcctSessionID,
+				ClientIP:      attrs.FramedIPAddress,
 			})
 			if err != nil {
 				slog.Error("session update failed",
@@ -91,6 +96,7 @@ func (p *Processor) ProcessStart(ctx context.Context, attrs *radius.AccountingAt
 		"event_id", "ACCT_START",
 		"trace_id", traceID,
 		"src_ip", srcIP,
+		"nas_identifier", attrs.NasIdentifier,
 		"imsi", imsi,
 		"acct_session_id", attrs.AcctSessionID,
 	)

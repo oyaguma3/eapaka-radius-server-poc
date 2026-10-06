@@ -44,6 +44,9 @@ func (m *manager) UpdateOnStart(ctx context.Context, uuid string, data *SessionS
 		"nas_ip":     data.NasIP,
 		"acct_id":    data.AcctID,
 	}
+	if data.NasIdentifier != "" {
+		fields["nas_identifier"] = data.NasIdentifier
+	}
 	if data.ClientIP != "" {
 		fields["client_ip"] = data.ClientIP
 	}
@@ -56,6 +59,9 @@ func (m *manager) UpdateOnInterim(ctx context.Context, uuid string, data *Sessio
 		"nas_ip":        data.NasIP,
 		"input_octets":  data.InputOctets,
 		"output_octets": data.OutputOctets,
+	}
+	if data.NasIdentifier != "" {
+		fields["nas_identifier"] = data.NasIdentifier
 	}
 	if data.ClientIP != "" {
 		fields["client_ip"] = data.ClientIP

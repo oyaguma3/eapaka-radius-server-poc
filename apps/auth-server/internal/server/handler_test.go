@@ -558,3 +558,84 @@ func TestHandler_AccessRequest_PktRecvIsInfo(t *testing.T) {
 		t.Errorf("PKT_RECV level = %q, want INFO", got)
 	}
 }
+
+func TestHandler_PktRecv_NASIdentifier(t *testing.T) {
+	secret := []byte("test-secret")
+
+	tests := []struct {
+		name    string
+		packet  func() *radius.Packet
+		wantKey bool
+		want    string
+	}{
+		{
+			name: "access-request has nas_identifier",
+			packet: func() *radius.Packet {
+				p := &radius.Packet{Code: radius.CodeAccessRequest, Identifier: 1, Secret: secret}
+				_ = rfc2869.EAPMessage_Set(p, buildTestEAPIdentity())
+				_ = rfc2865.NASIdentifier_SetString(p, "ap-001")
+				setValidMessageAuthenticator(p, secret)
+				return p
+			},
+			wantKey: true,
+			want:    "ap-001",
+		},
+		{
+			// NAS-Identifierのない Access-Request でも、属性は空文字で出す（ログの形を揃える）
+			name: "access-request without nas-identifier",
+			packet: func() *radius.Packet {
+				return buildTestAccessRequest(secret, buildTestEAPIdentity())
+			},
+			wantKey: true,
+			want:    "",
+		},
+		{
+			// Status-Server は NAS-Identifier を持たないので出さない
+			name: "status-server has no nas_identifier",
+			packet: func() *radius.Packet {
+				p := &radius.Packet{Code: radius.CodeStatusServer, Identifier: 1, Secret: secret}
+				setValidMessageAuthenticator(p, secret)
+				return p
+			},
+			wantKey: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			var buf bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+			defer slog.SetDefault(prev)
+
+			mockEngine := mocks.NewMockEAPProcessor(ctrl)
+			mockEngine.EXPECT().Process(gomock.Any(), gomock.Any()).Return(&eap.Result{Action: eap.ActionDrop}).AnyTimes()
+			NewHandler(mockEngine).ServeRADIUS(&mockResponseWriter{}, &radius.Request{Packet: tt.packet()})
+
+			var found bool
+			for line := range strings.Lines(buf.String()) {
+				var entry map[string]any
+				if err := json.Unmarshal([]byte(line), &entry); err != nil {
+					t.Fatalf("invalid log line: %q: %v", line, err)
+				}
+				if entry["event_id"] != "PKT_RECV" {
+					continue
+				}
+				found = true
+				got, ok := entry["nas_identifier"]
+				if ok != tt.wantKey {
+					t.Fatalf("nas_identifier present = %v, want %v: %s", ok, tt.wantKey, line)
+				}
+				if ok && got != tt.want {
+					t.Errorf("nas_identifier = %q, want %q", got, tt.want)
+				}
+			}
+			if !found {
+				t.Fatalf("PKT_RECV is not logged: %s", buf.String())
+			}
+		})
+	}
+}
