@@ -1,4 +1,4 @@
-# D-10 Acct Server詳細設計書 (r13)
+# D-10 Acct Server詳細設計書 (r14)
 
 ## ■セクション1: 概要
 
@@ -881,6 +881,7 @@ func (p *Processor) ProcessStart(ctx context.Context, attrs *radius.AccountingAt
                 "event_id", "ACCT_SEQUENCE_ERR",
                 "trace_id", traceID,
                 "src_ip", srcIP,
+                "nas_identifier", attrs.NasIdentifier,
                 "acct_session_id", attrs.AcctSessionID,
                 "reason", seqErr.Reason,
             )
@@ -897,6 +898,7 @@ func (p *Processor) ProcessStart(ctx context.Context, attrs *radius.AccountingAt
             "event_id", "ACCT_DUPLICATE_START",
             "trace_id", traceID,
             "src_ip", srcIP,
+            "nas_identifier", attrs.NasIdentifier,
             "acct_session_id", attrs.AcctSessionID,
         )
         return
@@ -909,6 +911,7 @@ func (p *Processor) ProcessStart(ctx context.Context, attrs *radius.AccountingAt
             "event_id", "ACCT_SESSION_NOT_FOUND",
             "trace_id", traceID,
             "src_ip", srcIP,
+            "nas_identifier", attrs.NasIdentifier,
             "acct_session_id", attrs.AcctSessionID,
         )
     }
@@ -927,14 +930,16 @@ func (p *Processor) ProcessStart(ctx context.Context, attrs *radius.AccountingAt
                 "event_id", "ACCT_SESSION_NOT_FOUND",
                 "trace_id", traceID,
                 "src_ip", srcIP,
+                "nas_identifier", attrs.NasIdentifier,
                 "class_uuid", sessionUUID,
             )
         } else {
             err = p.sessionManager.UpdateOnStart(ctx, sessionUUID, &session.SessionStartData{
-                StartTime: time.Now().Unix(),
-                NasIP:     srcIP,
-                AcctID:    attrs.AcctSessionID,
-                ClientIP:  attrs.FramedIPAddress,
+                StartTime:     time.Now().Unix(),
+                NasIP:         srcIP,
+                NasIdentifier: attrs.NasIdentifier,
+                AcctID:        attrs.AcctSessionID,
+                ClientIP:      attrs.FramedIPAddress,
             })
             if err != nil {
                 slog.Error("session update failed",
@@ -952,6 +957,7 @@ func (p *Processor) ProcessStart(ctx context.Context, attrs *radius.AccountingAt
         "event_id", "ACCT_START",
         "trace_id", traceID,
         "src_ip", srcIP,
+        "nas_identifier", attrs.NasIdentifier,
         "imsi", imsi,
         "acct_session_id", attrs.AcctSessionID,
     )
@@ -986,6 +992,7 @@ func (p *Processor) ProcessInterim(ctx context.Context, attrs *radius.Accounting
             "event_id", "ACCT_DUPLICATE_INTERIM",
             "trace_id", traceID,
             "src_ip", srcIP,
+            "nas_identifier", attrs.NasIdentifier,
             "acct_session_id", attrs.AcctSessionID,
         )
         return
@@ -996,6 +1003,7 @@ func (p *Processor) ProcessInterim(ctx context.Context, attrs *radius.Accounting
             "event_id", "ACCT_SEQUENCE_ERR",
             "trace_id", traceID,
             "src_ip", srcIP,
+            "nas_identifier", attrs.NasIdentifier,
             "acct_session_id", attrs.AcctSessionID,
             "reason", check.SequenceReason,
         )
@@ -1017,14 +1025,16 @@ func (p *Processor) ProcessInterim(ctx context.Context, attrs *radius.Accounting
                 "event_id", "ACCT_SESSION_NOT_FOUND",
                 "trace_id", traceID,
                 "src_ip", srcIP,
+                "nas_identifier", attrs.NasIdentifier,
                 "class_uuid", sessionUUID,
             )
         default:
             err = p.sessionManager.UpdateOnInterim(ctx, sessionUUID, &session.SessionInterimData{
-                NasIP:        srcIP,
-                ClientIP:     attrs.FramedIPAddress,
-                InputOctets:  int64(attrs.InputOctets),
-                OutputOctets: int64(attrs.OutputOctets),
+                NasIP:         srcIP,
+                NasIdentifier: attrs.NasIdentifier,
+                ClientIP:      attrs.FramedIPAddress,
+                InputOctets:   int64(attrs.InputOctets),
+                OutputOctets:  int64(attrs.OutputOctets),
             })
             if err != nil {
                 slog.Error("session update failed",
@@ -1042,6 +1052,7 @@ func (p *Processor) ProcessInterim(ctx context.Context, attrs *radius.Accounting
         "event_id", "ACCT_INTERIM",
         "trace_id", traceID,
         "src_ip", srcIP,
+        "nas_identifier", attrs.NasIdentifier,
         "imsi", imsi,
         "acct_session_id", attrs.AcctSessionID,
         "input_octets", attrs.InputOctets,
@@ -1117,6 +1128,7 @@ func (p *Processor) ProcessStop(ctx context.Context, attrs *radius.AccountingAtt
         "event_id", "ACCT_STOP",
         "trace_id", traceID,
         "src_ip", srcIP,
+        "nas_identifier", attrs.NasIdentifier,
         "imsi", imsi,
         "acct_session_id", attrs.AcctSessionID,
         "input_octets", attrs.InputOctets,
@@ -1361,6 +1373,9 @@ func (m *Manager) UpdateOnStart(ctx context.Context, uuid string, data *SessionS
         "nas_ip", data.NasIP,
         "acct_id", data.AcctID,
     )
+    if data.NasIdentifier != "" { // 空なら Auth Server が書いた値を残す
+        pipe.HSet(ctx, key, "nas_identifier", data.NasIdentifier)
+    }
     if data.ClientIP != "" {
         pipe.HSet(ctx, key, "client_ip", data.ClientIP)
     }
@@ -1383,6 +1398,9 @@ func (m *Manager) UpdateOnInterim(ctx context.Context, uuid string, data *Sessio
         "input_octets", data.InputOctets,
         "output_octets", data.OutputOctets,
     )
+    if data.NasIdentifier != "" {
+        pipe.HSet(ctx, key, "nas_identifier", data.NasIdentifier)
+    }
     if data.ClientIP != "" {
         pipe.HSet(ctx, key, "client_ip", data.ClientIP)
     }
@@ -1635,6 +1653,8 @@ var (
 
 D-04で定義されたevent_idを使用する。
 
+> **`nas_identifier`:** `src_ip` を持つ課金のログ（`ACCT_START` / `ACCT_INTERIM` / `ACCT_STOP`、`ACCT_SESSION_NOT_FOUND`、`ACCT_DUPLICATE_START` / `ACCT_DUPLICATE_INTERIM`、`ACCT_SEQUENCE_ERR`。`ACCT_ON` / `ACCT_OFF` は以前から）には、Accounting-Request の NAS-Identifier を `nas_identifier` として出力する（属性がなければ空文字）。radsecproxy 等のプロキシ経由では `src_ip` がプロキシのIPになるため、NAS の識別に使う（D-04 §4.7、D-08 §5.8）。
+
 | event_id | レベル | 説明 |
 |----------|--------|------|
 | `RADIUS_STATUS_OK` | DEBUG | Status-Server応答送信（§4.7.4。旧 `PKT_RECV`） |
@@ -1783,27 +1803,30 @@ D-04で定義されたevent_idを使用する。
 package session
 
 type Session struct {
-    IMSI         string `redis:"imsi"`
-    StartTime    int64  `redis:"start_time"`
-    NasIP        string `redis:"nas_ip"`
-    ClientIP     string `redis:"client_ip"`
-    AcctID       string `redis:"acct_id"`
-    InputOctets  int64  `redis:"input_octets"`
-    OutputOctets int64  `redis:"output_octets"`
+    IMSI          string `redis:"imsi"`
+    StartTime     int64  `redis:"start_time"`
+    NasIP         string `redis:"nas_ip"`
+    NasIdentifier string `redis:"nas_identifier"` // NAS-Identifier（プロキシ経由でもNASを識別できる）
+    ClientIP      string `redis:"client_ip"`
+    AcctID        string `redis:"acct_id"`
+    InputOctets   int64  `redis:"input_octets"`
+    OutputOctets  int64  `redis:"output_octets"`
 }
 
 type SessionStartData struct {
-    StartTime int64
-    NasIP     string
-    AcctID    string
-    ClientIP  string
+    StartTime     int64
+    NasIP         string
+    NasIdentifier string // 空ならセッションの値（Auth Serverが書いた値）を残す
+    AcctID        string
+    ClientIP      string
 }
 
 type SessionInterimData struct {
-    NasIP        string
-    ClientIP     string
-    InputOctets  int64
-    OutputOctets int64
+    NasIP         string
+    NasIdentifier string // 空ならセッションの値を残す
+    ClientIP      string
+    InputOctets   int64
+    OutputOctets  int64
 }
 ```
 
@@ -2170,3 +2193,4 @@ func (s *Server) Shutdown(ctx context.Context) error {
 | r11 | 2026-10-04 | インターネット公開（VPS 等）に向けた安全面の修正の反映: §3.1 環境変数一覧の `RADIUS_SECRET` を任意（既定は空）・空を推奨とし、フォールバックの意味（登録のない送信元IPのパケットも受け付ける。インターネットに公開するサーバーでは空にする。空なら `RADIUS_NO_SECRET` で破棄）の注記を追加。§3.2 設定構造体に `RadiusSecret` が任意で空ならフォールバック無効である旨を注記。§4.2 Shared Secret解決にフォールバックの注意（空のときはパケット破棄、`RADIUS_NO_SECRET` は未登録の送信元で出る正常な動作）を追記。§10.3 起動・シャットダウンの説明とコードを実装の `main.go` に合わせて更新（起動ログの `radius_secret_fallback`、`RADIUS_SECRET` 設定時の WARN を出す `warnFallbackSecret`）。§1.3 参照版数更新（D-01 r10→r16、D-04 r25→r30、D-06 r13→r16、D-08 r17→r19、D-09 r11→r16） |
 | r12 | 2026-10-04 | RADIUSパケットの検証をハンドラーに一本化し、RADIUSライブラリのログをJSONにした実装修正（`PacketServer` に `InsecureSkipVerify: true` と `ErrorLog: logging.NewRADIUSLibraryLogger()` を設定）の反映: §4.1 の処理フローにデコード（失敗時 `RADIUS_LIB_ERR`）・Secret不明・`RADIUS_AUTH_ERR` を追記し、パケットの認証をハンドラーで行う方針と理由の注記を追加。§4.2 注記にライブラリの DEBUG ログを追記。§4.3 の `VerifyAccountingAuthenticator` を実装のコードに置き換え、`MarshalBinary` による検証が受信バイト列での検証と等価であること・ライブラリが検証しないことを注記。§7.1.2 のパケットパース失敗のログを `RADIUS_LIB_ERR` に修正し、Authenticator検証失敗・未知のRADIUS Codeの条件を実装に合わせて修正。§8.1 の `RADIUS_AUTH_ERR` / `RADIUS_UNKNOWN_CODE` の説明を修正し `RADIUS_LIB_ERR` を追加、以前は Accounting-Request のシークレット不一致で `RADIUS_AUTH_ERR` が出ていなかった旨を注記。§10.3 に `internal/server/server.go` の実装を追加し「DEBUGログはない」を修正。§2.1 / §2.3 に `server_test.go`・`NewRADIUSLibraryLogger` を追加。§1.3 参照版数更新（D-04 r30→r31、D-06 r16→r17、D-09 r16→r17、E-03 r4→r9） |
 | r13 | 2026-10-05 | Status-Server に正常に応答したときのログを DEBUG に下げた実装修正（D-04 r32）の反映: §4.7 の `HandleStatusServer` の例の `slog.Info` を `slog.Debug` に、§4.7.4 注意点を DEBUG とその理由（radsecproxy 等の複数のプロキシが定期的に送る構成で INFO ログが埋まる）に修正、§8.1 の `PKT_RECV` を DEBUG に変更。あわせて event_id を `PKT_RECV` から Auth Server と同じ `RADIUS_STATUS_OK` に変更（§4.7 の例、§4.7.4、§8.1）。検証失敗の `RADIUS_AUTH_ERR`（WARN）と `PKT_SEND_ERR`（ERROR）は変更なし |
+| r14 | 2026-10-06 | NAS-Identifier を NAS の識別情報としてセッションとログに加えた実装修正（D-04 r33、D-02 r20）の反映（radsecproxy 等のプロキシ経由では送信元IPがプロキシのIPになり NAS を区別できないため）: §5 の Start / Interim / Stop のコードで `src_ip` を持つログに `nas_identifier` を追加し、Start / Interim のセッション更新に `NasIdentifier`（NAS-Identifier があるときだけ `nas_identifier` を上書き、なければ Auth Server が書いた値を残す）を追加。§5.7（セッション状態操作）の UpdateOnStart / UpdateOnInterim、§9.1 の型定義を更新。§8.1 に `nas_identifier` の注記を追加 |

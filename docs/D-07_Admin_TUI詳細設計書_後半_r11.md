@@ -1,4 +1,4 @@
-# D-07 Admin TUI 詳細設計書【後半】(r10)
+# D-07 Admin TUI 詳細設計書【後半】(r11)
 
 ## 1. 概要
 
@@ -27,7 +27,7 @@
 | ドキュメント | 参照内容 |
 |-------------|---------|
 | D-05_Admin_TUI詳細設計書_前半_r11 | 共通仕様、キーバインド規約、ページネーション仕様、ページライフサイクル管理、tview Table Selectable状態管理、非同期データ取得パターン |
-| D-02_Valkeyデータ設計仕様書 (r17) | `sess:{UUID}`, `idx:user:{IMSI}` のデータ構造 |
+| D-02_Valkeyデータ設計仕様書 (r20) | `sess:{UUID}`, `idx:user:{IMSI}` のデータ構造 |
 | D-06_エラーハンドリング詳細設計書 (r13) | TUIエラー表示仕様 |
 
 ### 1.4 PoC対象外機能
@@ -255,7 +255,7 @@ Statistics Dashboard画面に遷移した際、TextViewにフォーカスを設�
 | IMSI | IMSI 昇順 | start_time 降順 → UUID 昇順 | `IMSI ▲` |
 
 **注記：**
-- 表示カラムの並び（IMSI, NAS IP, Client IP, Start Time, Duration, Traffic）はソート項目によらず固定である。
+- 表示カラムの並び（IMSI, NAS-ID, NAS IP, Client IP, Start Time, Duration, Traffic）はソート項目によらず固定である。NAS-ID はソート項目にしない。
 - NAS IP は文字列として比較するため、`172.19.0.10` は `172.19.0.9` より前に並ぶ。
 - 値が同じ行は開始時刻の新しい順、さらに同じなら UUID 順に並べ、再読み込み（`r` / `F5`）のたびに表示順が変わらないようにする（§5.8.5）。
 - ソート項目は Session List 画面が存在する間（再読み込み・フィルタ適用時、Session Search から戻ったときを含む）保持する。モニタリングメニューから Session List を開き直すと Start Time ▼ に戻る。
@@ -266,12 +266,12 @@ Statistics Dashboard画面に遷移した際、TextViewにフォーカスを設�
 
 ```
 ┌ Session List 1-9 of 9 (Page 1/1) ─────────────────────────────────────────────────┐
-│ IMSI              NAS IP        Client IP    Start Time ▼  Duration       Traffic │
-│ 001010000000003   172.19.0.1                 02-22 22:50   22h 5m 21s     0B      │
-│ 001010000000006   172.19.0.1                 02-22 22:50   22h 5m 58s     0B      │
-│ 001010000000003   172.19.0.1                 02-22 22:43   22h 12m 36s    0B      │
-│ 001010000000001   172.19.0.1                 02-22 22:43   22h 12m 46s    0B      │
-│ :                 :             :             :             :              :      │
+│ IMSI             NAS-ID  NAS IP       Client IP  Start Time ▼ Duration    Traffic │
+│ 001010000000003  ap-001  172.30.0.10  10.0.0.51  02-22 22:50  22h 5m 21s  759.5K  │
+│ 001010000000006  ap-002  172.30.0.10             02-22 22:50  22h 5m 58s  0B      │
+│ 001010000000003  -       172.19.0.1              02-22 22:43  22h 12m 36s 0B      │
+│ 001010000000001  ap-001  172.30.0.10             02-22 22:43  22h 12m 46s 0B      │
+│ :                :       :            :          :            :           :       │
 └───────────────────────────────────────────────────────────────────────────────────┘
 F1:Help  |  q:Back/Quit  |  Ctrl+Q:Exit
 ```
@@ -281,6 +281,7 @@ F1:Help  |  q:Back/Quit  |  Ctrl+Q:Exit
 - `Duration` は開始時刻からの経過時間を `format.Elapsed` で `XXh XXm XXs` 形式（スペース区切り、秒あり。1時間未満は `XXm XXs`、1分未満は `XXs`）で表示する。Teal（青緑）で表示
 - `Traffic` は入力・出力オクテットの合計を `format.BytesShort` のコンパクト表記（`0B`, `512B`, `1.2K`, `5.3M`, `1.0G` 等。1024 単位、小数1桁）で表示する。緑色で表示
 - `Client IP` はセッションによって空欄の場合がある
+- `NAS-ID` はセッションの `nas_identifier`（NAS-Identifier）を表示する。値がない（NAS-Identifier のないセッション、または `nas_identifier` を追加する前に作られたセッション）場合は `-`、24文字を超える場合は先頭21文字＋`...` で表示する（`format.OrDash` / `format.Truncate`）。radsecproxy 等のプロキシ経由では `NAS IP` がすべてプロキシのIPになるため、NAS の識別には `NAS-ID` を使う（D-08 §5.8）
 - ボーダータイトルに `Session List 1-N of M (Page X/Y)` 形式でページ情報を表示する
 
 ### 5.4 フィルタダイアログ
@@ -290,7 +291,7 @@ Session List 画面で `/` または `F6` キーを押下すると、フィル�
 ```
               ┌ Filter Sessions ───────────────────────┐
               │                                        │
-              │  IMSI/IP contains:  [              ]   │
+              │  IMSI/NAS-ID/IP contains: [         ] │
               │                                        │
               │       < OK >  < Cancel >               │
               │                                        │
@@ -300,7 +301,7 @@ Session List 画面で `/` または `F6` キーを押下すると、フィル�
 | 項目 | 仕様 |
 |------|------|
 | タイトル | `Filter Sessions` |
-| フィルタ対象 | IMSI、NAS IP、Client IP（部分一致） |
+| フィルタ対象 | IMSI、NAS-ID、NAS IP、Client IP（部分一致）。ラベルは `IMSI/NAS-ID/IP contains:` |
 | フィルタ適用時 | ボーダータイトルに `(Filter: "入力値")` を追加表示 |
 | ダイアログを閉じる | `OK` で適用。`Cancel` ボタンまたは `Esc` でフィルタを変えずに閉じる（`Esc` は `tview.Form.SetCancelFunc` で `Cancel` と同じ処理を呼ぶ。D-05 §3.7） |
 | クリア | 空文字で OK 押下、またはフィルタ適用中に一覧画面で `Esc` |
@@ -310,7 +311,8 @@ Session List 画面で `/` または `F6` キーを押下すると、フィル�
 | カラム | 内容 | 表示形式 | 備考 |
 |--------|------|---------|------|
 | IMSI | 加入者識別番号 | 15桁 | - |
-| NAS IP | NAS IPアドレス | 可変幅 | - |
+| NAS-ID | NAS-Identifier | 可変幅（最大24文字） | 値がなければ `-` |
+| NAS IP | NAS IPアドレス（パケットの送信元IP） | 可変幅 | プロキシ経由ではプロキシのIP |
 | Client IP | クライアントIPアドレス | 可変幅 | 空欄の場合あり |
 | Start Time | セッション開始時刻 | `MM-DD HH:MM` | 既定のソート項目（ソートインジケータ `▼`。§5.2） |
 | Duration | セッション経過時間 | `XXh XXm XXs` | Teal（青緑）表示 |
@@ -362,6 +364,7 @@ Auth Server / Acct Server はセッションを **Redis Hash型** で保存す�
 |---------------------|-----|------------------------|------|
 | `imsi` | String | `IMSI` | 加入者識別番号 |
 | `nas_ip` | String | `NasIP` | NAS IPアドレス |
+| `nas_identifier` | String | `NasIdentifier` | NAS-Identifier（ない場合は空文字。D-02 §2） |
 | `client_ip` | String | `ClientIP` | クライアントIPアドレス |
 | `acct_id` | String | `AcctSessionID` | アカウンティングセッションID |
 | `start_time` | String (数値) | `StartTime` (int64) | セッション開始時刻（Unix秒） |
@@ -380,6 +383,7 @@ func mapToSession(uuid string, m map[string]string) (*model.Session, error) {
         UUID:          uuid,
         IMSI:          m["imsi"],
         NasIP:         m["nas_ip"],
+        NasIdentifier: m["nas_identifier"],
         ClientIP:      m["client_ip"],
         AcctSessionID: m["acct_id"],
     }
@@ -585,12 +589,12 @@ IMSI完全一致検索により、特定加入者のセッション詳細を表�
 │  Press '/' to search for another IMSI                                ← 灰色         │
 │                                                                                    │
 ├ Sessions ──────────────────────────────────────────────────────────────────────────┤
-│ UUID            NAS IP        Client IP    Start Time    Duration       In/Out     │
-│ e499a25b...     172.19.0.1                 02-22 22:40   22h 22m 22s   0B/0B       │
-│ e44f5786...     172.19.0.1                 02-22 22:40   22h 22m 16s   0B/0B       │
-│ 4673e913...     172.19.0.1                 02-22 22:41   22h 22m 2s    0B/0B       │
-│ 57db0767...     172.19.0.1                 02-22 22:41   22h 21m 50s   0B/0B       │
-│ 1abef930...     172.19.0.1                 02-22 22:41   22h 21m 41s   0B/0B       │
+│ UUID          NAS-ID  NAS IP       Client IP  Start Time   Duration     In/Out     │
+│ e499a25b...   ap-001  172.30.0.10  10.0.0.51  02-22 22:40  22h 22m 22s  0B/0B      │
+│ e44f5786...   ap-001  172.30.0.10             02-22 22:40  22h 22m 16s  0B/0B      │
+│ 4673e913...   -       172.19.0.1              02-22 22:41  22h 22m 2s   0B/0B      │
+│ 57db0767...   ap-002  172.30.0.10             02-22 22:41  22h 21m 50s  0B/0B      │
+│ 1abef930...   ap-001  172.30.0.10             02-22 22:41  22h 21m 41s  0B/0B      │
 └────────────────────────────────────────────────────────────────────────────────────┘
 F1:Help  |  q:Back/Quit  |  Ctrl+Q:Exit
 ```
@@ -640,6 +644,7 @@ Session Search 画面に遷移した直後（§6.2 初期状態）と、Session 
 | カラム | 内容 | 表示形式 | 備考 |
 |--------|------|---------|------|
 | UUID | セッションUUID | 先頭8文字 + `...` | 例: `e499a25b...` |
+| NAS-ID | NAS-Identifier | 可変幅（最大24文字） | Session List と同形式（値がなければ `-`） |
 | NAS IP | NAS IPアドレス | 可変幅 | - |
 | Client IP | クライアントIPアドレス | 可変幅 | 空欄の場合あり |
 | Start Time | セッション開始時刻 | `MM-DD HH:MM` | Session List と同形式 |
@@ -953,7 +958,8 @@ type StatisticsStore struct {
 type Session struct {
     UUID          string `json:"uuid"`            // セッション識別子（キーから取得）
     IMSI          string `json:"imsi"`            // 加入者IMSI
-    NasIP         string `json:"nas_ip"`          // NAS IPアドレス
+    NasIP         string `json:"nas_ip"`          // NAS IPアドレス（パケットの送信元IP。プロキシ経由ではプロキシのIP）
+    NasIdentifier string `json:"nas_identifier"`  // NAS-Identifier（プロキシ経由でもNASを識別できる）
     ClientIP      string `json:"client_ip"`       // クライアントIPアドレス
     AcctSessionID string `json:"acct_session_id"` // アカウンティングセッションID（Hash の acct_id）
     StartTime     int64  `json:"start_time"`      // セッション開始時刻（Unix秒）
@@ -980,7 +986,7 @@ type SessionListScreen struct {
     app          *ui.App
     sessionStore *store.SessionStore
     sessions     []*model.Session
-    filter       *ui.Filter     // 対象: IMSI / NAS IP / Client IP（§5.4）
+    filter       *ui.Filter     // 対象: IMSI / NAS-ID / NAS IP / Client IP（§5.4）
     pagination   *ui.Pagination // 50件/ページ（§5.7）
     sortField    SortField      // 既定: SortByStartTime
     sortDesc     bool           // 既定: true
@@ -1188,3 +1194,4 @@ Admin TUIの監査ログでは、**IMSIを常に生値（マスキングなし�
 | r8 | 2026-10-04 | D-04 r19 の event_id 全面整合に合わせて修正: §6.10.1 クリーンアップ処理のコード例を実装（`SessionStore.GetByIMSI`。インデックス空時のSCANフォールバック、UUIDごとのSREM）に合わせて修正し、実装に存在しない event_id `IDX_USER_CLEANUP` / `IDX_USER_CLEANUP_ERR` を削除。§6.10.2 を「event_id定義」から「ログ出力」に改め、成功時はログなし・失敗時は `log.Printf` の非構造化テキスト（標準エラー出力）のみである旨と出力例を記載。§10.1.1/§10.2 の監査ログ（`AUDIT_LOG`）の検索時の記録内容を実装に合わせて修正（検索IMSIは `details` に記録、`target_imsi`・`result_count` なし、msg `session searched`、`time` は秒精度）。§1.3 関連ドキュメントの版数を現行版に更新（D-02 r12、D-06 r7） |
 | r9 | 2026-10-04 | Admin TUI の監査ログに検索IMSIと件数を正しく記録する実装修正の反映: §10.1 に Session Detail 検索（`search`）の記録内容の表を追加（検索したIMSIを `details` ではなく `target_imsi` に全桁で記録、検索の実行後に出力し結果件数を `result_count` に記録、検索に失敗した場合は `result_count` を出さず `details` に `search failed: <理由>`。session 以外の検索は検索語を `details` に記録）。§10.1.1 の `details` の行（検索IMSIを `details` に記録、`target_imsi` は出力しない）を削除し `target_imsi` の行に検索IMSIを追記。§10.2 の出力例を `target_imsi` / `result_count` に修正し、検索失敗時の例を追加。§6.9.1 非同期検索パターンのコード例を、検索の実行後に `LogSearch(audit.TargetSession, imsi, len(sessions), err)` を呼ぶ形に修正。§1.3 関連ドキュメントの版数を現行版に更新（D-05 r10、D-02 r17、D-06 r13） |
 | r10 | 2026-10-04 | Admin TUI のキー配線漏れを修正した実装修正の反映: §5.1 / §5.2 Session List のソートを、元設計の2モード（start_time 降順 / IMSI 昇順、`i` / `t` キーで切替、表示カラム順が変わる）から現行の `s` キーによる3項目の切り替え（Start Time ▼ → NAS IP ▲ → IMSI ▲。向きは項目ごとに固定、表示カラム順は固定、同値は start_time 降順 → UUID 昇順）に修正。§5.3 / §5.5 ソートインジケータを `▼`（降順）/ `▲`（昇順）に修正（緑色の記述を削除）。§5.8.4 のソート関数例（`sortByStartTimeDesc` / `sortByIMSIAsc`）を削除し、§5.8.5 ソート処理（`ToggleSort` / `nextSortField` / `sortSessions`）を新設。§8.2 の `SortMode` を実装の `SortField`（IMSI / StartTime / NasIP）に修正。§5.4 フィルタダイアログを `F6` でも開けること、`Cancel` ボタンまたは `Esc` で閉じることを追記。§6.2 / §6.5 IMSI検索ダイアログの `Cancel` に `Esc` を追加。§4.7 Statistics の `?` を `F1` / `?`（グローバルキー）に、`Esc` を `Esc` / `q` に修正。§5.9 に `s` キーを追加。§7.1 ヘルプは `F1` / `?` で開き、入力欄では `?` が文字として入力される旨を追記。§1.3 関連ドキュメントの版数を更新（D-05 r11）。あわせて、キー操作・画面遷移の記述を実装（`main.go`、`internal/ui/monitoring`）に合わせて修正: §2.2 / §3.1 Session List から Session Search への遷移キーを `/` から `Enter` に修正（`/` はフィルタ）。§3.2 モニタリングメニューの `(q) Back` を追記。§4.8 Statistics のエラー表示を実装（画面に `Error loading statistics`、ステータスバーに `Failed to load` / `Failed to refresh`。`---` 表示・前回値の維持はない）に修正。§5.7 ページネーションのナビゲーションを `←` / `→` から `PgUp` / `PgDn` に、UI形式をボーダータイトルのページ情報に修正。§5.9 に `↑` / `↓` と `Enter`（Session Search へ遷移）を追加。§5.10 エラー表示のメッセージを実装に修正。§6.2 / §6.5 IMSI検索ダイアログのタイトル・入力欄・表示タイミングと、入力値を検証しないことを追記。§6.4 結果なしの表示を `No sessions found` に修正。§6.8 Session Search はページ分割しない（全件を1テーブル）ことに修正し、§6.9.2 の処理フローも合わせて修正。§6.11 Session Search のキーから実装にない `PgUp` / `PgDn`（ページ切替）・`r` / `F5`（再取得）を削除し、`Tab`・`Esc`（テーブル→サマリ、サマリ→Session List）・`q`（Session List へ）に修正。§6.12 / §6.13 の IMSI 形式検証（`IMSI must be 15 digits`）を削除し、検索失敗時の表示（`Search failed`）に修正。Session Search の検索結果を画面側で開始時刻の新しい順に並べる実装修正（`session_detail.go` に `sortByStartTimeDesc` を追加。`GetByIMSI` は並べ替えない）の反映: §6.9.1 のコード例を検索後に `sortByStartTimeDesc` を適用する形に、§6.9.2 の手順4を画面側での並べ替え（start_time 降順、同値は UUID 昇順）に修正し、§6.9.3 の設計初期の実装イメージ（`SessionDetailSummary`・`fetchSessionsByIMSI`。通信量合計の計算・取得側でのソート）を `sortByStartTimeDesc` に差し替え。§1.4 PoC対象外の「NAS-IP / Client-IP フィルタ」を、Session List のフィルタで IMSI・NAS IP・Client IP の部分一致の絞り込みを提供していることに合わせて「項目を指定した条件検索」に改め、§11 No.5 も同様に修正。§4 Statistics Dashboard を実装（`store/statistics.go`）に合わせて修正: §4.1 概要を件数のサマリに、§4.3 にデータ取得方法（SCAN）と Last updated を追記し、§4.4 通信量は表示しないことを明記、§4.5 キャッシュ仕様を要求時更新の1分キャッシュ（バックグラウンド定期更新なし、`r` で `ClearCache`、失敗時はキャッシュを更新しない）と実装イメージに差し替え、§8.1 を実装の `Statistics` / `StatisticsStore` に差し替え。設計初期のまま残っていたコード片・型名を実装に合わせて修正: §5.3 / §5.5 Duration の表示色を Teal に、Traffic の表記を `format.BytesShort` の `1.2K` / `5.3M` 形式に修正。§5.6 実装にない Acct-ID の切り詰め（`truncateAcctID`）を削除し、Session Search の UUID の短縮表示に差し替え。§5.8.4 `fetchAllSessions`（`SessionListItem`）を実装の `SessionStore.List` に差し替え。§8.2 / §8.3 の設計初期の構造体（`SessionListItem` / `SessionDetailItem` / `SessionDetailSummary`、上限値の定数）を、実装の `pkg/model.Session`、`SessionListScreen`・`SortField`、`SessionDetailScreen` に差し替え。§9 の KB 単位・カンマ区切りのフォーマット関数（`FormatWithCommas` / `FormatTrafficKB` / `FormatSessionTrafficKB` / `FormatErrorPlaceholder`）を、実装の `internal/format`（`DateTime` / `DateTimeShort` / `Elapsed`・`Duration` / `BytesShort`）に差し替え |
+| r11 | 2026-10-06 | セッションに NAS-Identifier（`nas_identifier`）を記録した実装修正の反映（radsecproxy 等のプロキシ経由では NAS IP がプロキシのIPになり NAS を区別できないため）: Session List（§5.2 注記、§5.3 レイアウト、§5.5 表示項目）と Session Search（§6.3 レイアウト、§6.7 表示項目）に NAS-ID カラムを追加（IMSI / UUID の次。値がなければ `-`、24文字を超えれば省略）。§5.4 フィルタの対象に NAS-ID を追加しラベルを `IMSI/NAS-ID/IP contains:` に変更。§5.8.2 の Hash フィールド対応、§5.8.3 の mapToSession、構造体定義に `nas_identifier` / `NasIdentifier` を追加。NAS-ID はソート項目にしない。§1.3 の D-02 の版数を r20 に更新 |
