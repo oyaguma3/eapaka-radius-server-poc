@@ -1,0 +1,890 @@
+openapi: 3.0.3
+info:
+  title: EAP-AKA RADIUS PoC Provisioning API
+  version: 0.1.0-draft
+  description: |
+    EAP-AKA RADIUS PoC環境の加入者、RADIUSクライアント、認可ポリシーを操作する API（D-13）。
+    本PoCの外に置く BFF や、将来の統合API（eapaka-node-provisioner）から使う。
+    作法は aka-only-server の管理API（admin-api.yaml）に揃えている。
+
+    認証:
+    - mTLS 必須。サーバー側に静的設定された管理クライアントの証明書（SHA-256 フィンガープリント）だけを受け付ける。
+      証明書なし、または未登録の証明書による接続は TLS ハンドシェイクで拒否する。
+    - 管理クライアントは全権として扱う。利用者や権限の概念はこの API にはない。
+
+    監査ログ:
+    - 変更操作と、秘密の値（Ki / OPc、共有シークレット）の取得は監査ログに記録する。
+    - 管理クライアントは `X-Operator-Id` ヘッダーで操作者 ID を渡す。
+      省略した場合、監査ログには管理クライアントの識別名だけが残る。
+
+    表記:
+    - 16進文字列は大文字・小文字のどちらも受け付け、小文字で返す。
+    - 日時は RFC 3339 形式の UTC。
+    - エラーは ProblemDetails（`application/problem+json`）で返す。
+
+    Admin TUI との関係:
+    - Admin TUI と同じ Valkey のキー・形式を読み書きする。原則として Admin TUI と同時には使わない。
+      同時に使った場合、作成は後の方が 409 になり、変更・削除は後勝ちになる。
+
+servers:
+  - url: https://{host}:{port}/admin/v1
+    variables:
+      host:
+        default: localhost
+      port:
+        default: '9444'
+
+tags:
+  - name: status
+    description: サーバーの状態
+  - name: subscribers
+    description: 加入者（sub:{IMSI}）
+  - name: clients
+    description: RADIUSクライアント（client:{IP}）
+  - name: policies
+    description: 認可ポリシー（policy:{IMSI}）
+
+paths:
+  /status:
+    parameters:
+      - $ref: '#/components/parameters/OperatorId'
+      - $ref: '#/components/parameters/TraceId'
+    get:
+      tags: [status]
+      summary: サーバーの状態を取得する
+      operationId: getStatus
+      responses:
+        '200':
+          description: サーバーの状態
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /subscribers:
+    parameters:
+      - $ref: '#/components/parameters/OperatorId'
+      - $ref: '#/components/parameters/TraceId'
+    get:
+      tags: [subscribers]
+      summary: 加入者の一覧を取得する
+      operationId: listSubscribers
+      description: IMSI の昇順で返す。Ki と OPc は含まない。
+      parameters:
+        - $ref: '#/components/parameters/ImsiPrefix'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: 加入者の一覧
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriberList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [subscribers]
+      summary: 加入者を登録する
+      operationId: createSubscriber
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubscriberCreate'
+            example:
+              imsi: '001010000000001'
+              ki: 465b5ce8b199b49faa5f0a2ee238a6bc
+              opc: cd63cb71954a9f4e48a5994e37a02baf
+              amf: '8000'
+              sqn: '000000000000'
+      responses:
+        '201':
+          description: 登録した加入者。Ki と OPc は含まない。
+          headers:
+            Location:
+              description: 登録した加入者の URI（例 `/admin/v1/subscribers/001010000000001`）
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subscriber'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: 同じ IMSI の加入者が既に存在する。`cause` は `SUBSCRIBER_ALREADY_EXISTS`。
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /subscribers/{imsi}:
+    parameters:
+      - $ref: '#/components/parameters/Imsi'
+      - $ref: '#/components/parameters/OperatorId'
+      - $ref: '#/components/parameters/TraceId'
+    get:
+      tags: [subscribers]
+      summary: 加入者を取得する
+      operationId: getSubscriber
+      description: Ki と OPc は含まない。
+      responses:
+        '200':
+          description: 加入者
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subscriber'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/SubscriberNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    patch:
+      tags: [subscribers]
+      summary: 加入者を変更する
+      operationId: updateSubscriber
+      description: |
+        指定した項目だけを変更する（JSON Merge Patch）。
+        `sqn` を指定しなければ SQN には触れない（認証で進んだ SQN を巻き戻さない）。
+        `sqn` を指定した場合は、そのまま書き換える。
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/SubscriberUpdate'
+            example:
+              amf: b9b9
+      responses:
+        '200':
+          description: 変更後の加入者。Ki と OPc は含まない。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subscriber'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/SubscriberNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [subscribers]
+      summary: 加入者を削除する
+      operationId: deleteSubscriber
+      description: |
+        `sub:{IMSI}` だけを削除する。同じ IMSI の認可ポリシーやセッションは削除しない。
+        削除時点の SQN と AMF を監査ログに記録する。
+      responses:
+        '204':
+          description: 削除した
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/SubscriberNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /subscribers/{imsi}/keys:
+    parameters:
+      - $ref: '#/components/parameters/Imsi'
+      - $ref: '#/components/parameters/OperatorId'
+      - $ref: '#/components/parameters/TraceId'
+    get:
+      tags: [subscribers]
+      summary: 加入者の Ki と OPc を取得する
+      operationId: getSubscriberKeys
+      description: この操作は監査ログに記録する（値は記録しない）。
+      responses:
+        '200':
+          description: Ki と OPc
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriberKeys'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/SubscriberNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /clients:
+    parameters:
+      - $ref: '#/components/parameters/OperatorId'
+      - $ref: '#/components/parameters/TraceId'
+    get:
+      tags: [clients]
+      summary: RADIUSクライアントの一覧を取得する
+      operationId: listClients
+      description: 全件を IP アドレスの順（数値として比較）で返す。共有シークレットは含まない。
+      responses:
+        '200':
+          description: RADIUSクライアントの一覧
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientList'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [clients]
+      summary: RADIUSクライアントを登録する
+      operationId: createClient
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientCreate'
+            example:
+              ip: 192.168.10.1
+              secret: c2VjcmV0LWV4YW1wbGU
+              name: AP-OFFICE-01
+              vendor: generic
+      responses:
+        '201':
+          description: 登録した RADIUSクライアント。共有シークレットは含まない。
+          headers:
+            Location:
+              description: 登録した RADIUSクライアントの URI（例 `/admin/v1/clients/192.168.10.1`）
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Client'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: 同じ IP の RADIUSクライアントが既に存在する。`cause` は `CLIENT_ALREADY_EXISTS`。
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /clients/{ip}:
+    parameters:
+      - $ref: '#/components/parameters/ClientIp'
+      - $ref: '#/components/parameters/OperatorId'
+      - $ref: '#/components/parameters/TraceId'
+    get:
+      tags: [clients]
+      summary: RADIUSクライアントを取得する
+      operationId: getClient
+      description: 共有シークレットは含まない。
+      responses:
+        '200':
+          description: RADIUSクライアント
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Client'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/ClientNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    patch:
+      tags: [clients]
+      summary: RADIUSクライアントを変更する
+      operationId: updateClient
+      description: |
+        指定した項目だけを変更する（JSON Merge Patch）。
+        IP アドレスは変更できない（削除して登録し直す）。
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/ClientUpdate'
+            example:
+              secret: bmV3LXNlY3JldC1leGFtcGxl
+      responses:
+        '200':
+          description: 変更後の RADIUSクライアント。共有シークレットは含まない。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Client'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/ClientNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [clients]
+      summary: RADIUSクライアントを削除する
+      operationId: deleteClient
+      responses:
+        '204':
+          description: 削除した
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/ClientNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /clients/{ip}/secret:
+    parameters:
+      - $ref: '#/components/parameters/ClientIp'
+      - $ref: '#/components/parameters/OperatorId'
+      - $ref: '#/components/parameters/TraceId'
+    get:
+      tags: [clients]
+      summary: RADIUSクライアントの共有シークレットを取得する
+      operationId: getClientSecret
+      description: この操作は監査ログに記録する（値は記録しない）。
+      responses:
+        '200':
+          description: 共有シークレット
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientSecret'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/ClientNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /policies:
+    parameters:
+      - $ref: '#/components/parameters/OperatorId'
+      - $ref: '#/components/parameters/TraceId'
+    get:
+      tags: [policies]
+      summary: 認可ポリシーの一覧を取得する
+      operationId: listPolicies
+      description: IMSI の昇順で返す。
+      parameters:
+        - $ref: '#/components/parameters/ImsiPrefix'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: 認可ポリシーの一覧
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /policies/{imsi}:
+    parameters:
+      - $ref: '#/components/parameters/Imsi'
+      - $ref: '#/components/parameters/OperatorId'
+      - $ref: '#/components/parameters/TraceId'
+    get:
+      tags: [policies]
+      summary: 認可ポリシーを取得する
+      operationId: getPolicy
+      responses:
+        '200':
+          description: 認可ポリシー
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Policy'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/PolicyNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags: [policies]
+      summary: 認可ポリシーを作成する、または置き換える
+      operationId: putPolicy
+      description: |
+        ポリシー全体を置き換える。存在しなければ作成する。
+        加入者（sub:{IMSI}）の有無は確認しない（接続方式01では加入者の鍵を aka-only-server が持つため）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PolicyPut'
+            example:
+              default: deny
+              rules:
+                - nasId: AP-OFFICE-01
+                  allowedSsids: [CORP-WIFI]
+                  vlanId: '100'
+                  sessionTimeout: 3600
+                - nasId: '*'
+                  allowedSsids: [GUEST-WIFI]
+      responses:
+        '200':
+          description: 置き換えた認可ポリシー
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Policy'
+        '201':
+          description: 作成した認可ポリシー
+          headers:
+            Location:
+              description: 作成した認可ポリシーの URI（例 `/admin/v1/policies/001010000000001`）
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Policy'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [policies]
+      summary: 認可ポリシーを削除する
+      operationId: deletePolicy
+      responses:
+        '204':
+          description: 削除した
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/PolicyNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+components:
+  parameters:
+    Imsi:
+      name: imsi
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Imsi'
+    ClientIp:
+      name: ip
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Ipv4'
+    ImsiPrefix:
+      name: prefix
+      in: query
+      description: IMSI の前方一致条件。
+      schema:
+        type: string
+        pattern: '^[0-9]{1,15}$'
+    Cursor:
+      name: cursor
+      in: query
+      description: 前のページの `nextCursor`。省略時は先頭から返す。
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+        default: 50
+    OperatorId:
+      name: X-Operator-Id
+      in: header
+      required: false
+      description: 操作者 ID。監査ログに記録する。
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9._@-]{1,64}$'
+    TraceId:
+      name: X-Trace-ID
+      in: header
+      required: false
+      description: トレースID。ログの `trace_id` に使う。省略時はサーバーが採番し、応答の `X-Trace-ID` ヘッダーで返す。
+      schema:
+        type: string
+        maxLength: 64
+
+  responses:
+    BadRequest:
+      description: |
+        リクエストが不正。`cause` は次のいずれか。項目ごとの理由は `invalidParams` に入る。
+        - `INVALID_MSG_FORMAT`: JSON として解釈できない、Content-Type が違う
+        - `INVALID_QUERY_PARAM`: クエリパラメーターの値が不正
+        - `MANDATORY_IE_MISSING`: 必須項目がない
+        - `MANDATORY_IE_INCORRECT`: 必須項目の値が不正（パスの IMSI / IP を含む）
+        - `OPTIONAL_IE_INCORRECT`: 任意項目の値が不正
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    SubscriberNotFound:
+      description: 加入者が存在しない。`cause` は `USER_NOT_FOUND`。
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    ClientNotFound:
+      description: RADIUSクライアントが存在しない。`cause` は `CLIENT_NOT_FOUND`。
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    PolicyNotFound:
+      description: 認可ポリシーが存在しない。`cause` は `POLICY_NOT_FOUND`。
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    InternalError:
+      description: サーバー内部のエラー（Valkey のエラー等）。`cause` は `SYSTEM_FAILURE`。
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+
+  schemas:
+    Imsi:
+      type: string
+      pattern: '^[0-9]{15}$'
+      example: '001010000000001'
+
+    Ipv4:
+      type: string
+      format: ipv4
+      example: 192.168.10.1
+
+    Hex128:
+      type: string
+      pattern: '^[A-Fa-f0-9]{32}$'
+
+    Sqn:
+      type: string
+      description: SQN（48bit）。Vector API が認証のたびに進める。
+      pattern: '^[A-Fa-f0-9]{12}$'
+      example: ff9bb4d0b607
+
+    Amf:
+      type: string
+      pattern: '^[A-Fa-f0-9]{4}$'
+      example: '8000'
+
+    Subscriber:
+      type: object
+      required:
+        - imsi
+        - amf
+        - sqn
+      properties:
+        imsi:
+          $ref: '#/components/schemas/Imsi'
+        amf:
+          $ref: '#/components/schemas/Amf'
+        sqn:
+          $ref: '#/components/schemas/Sqn'
+        createdAt:
+          type: string
+          format: date-time
+          description: 登録日時。値を持たない加入者（古いデータ等）では省略する。
+
+    SubscriberCreate:
+      type: object
+      required:
+        - imsi
+        - ki
+        - opc
+      properties:
+        imsi:
+          $ref: '#/components/schemas/Imsi'
+        ki:
+          $ref: '#/components/schemas/Hex128'
+        opc:
+          $ref: '#/components/schemas/Hex128'
+        amf:
+          allOf:
+            - $ref: '#/components/schemas/Amf'
+          default: '8000'
+        sqn:
+          allOf:
+            - $ref: '#/components/schemas/Sqn'
+          default: '000000000000'
+
+    SubscriberUpdate:
+      type: object
+      description: 変更する項目だけを指定する。`null` は指定できない。
+      minProperties: 1
+      properties:
+        ki:
+          $ref: '#/components/schemas/Hex128'
+        opc:
+          $ref: '#/components/schemas/Hex128'
+        amf:
+          $ref: '#/components/schemas/Amf'
+        sqn:
+          $ref: '#/components/schemas/Sqn'
+
+    SubscriberKeys:
+      type: object
+      required:
+        - ki
+        - opc
+      properties:
+        ki:
+          $ref: '#/components/schemas/Hex128'
+        opc:
+          $ref: '#/components/schemas/Hex128'
+
+    SubscriberList:
+      type: object
+      required:
+        - items
+        - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Subscriber'
+        total:
+          type: integer
+          description: '`prefix` に一致する加入者の総数。`prefix` 省略時は全加入者数。'
+        nextCursor:
+          type: string
+          description: 次のページがある場合だけ返す。
+
+    ClientSecretValue:
+      type: string
+      description: 共有シークレット。印字可能ASCII（空白を除く）1〜128文字。
+      pattern: '^[\x21-\x7E]{1,128}$'
+
+    ClientName:
+      type: string
+      pattern: '^[A-Za-z0-9_-]{1,64}$'
+
+    ClientVendor:
+      type: string
+      pattern: '^[A-Za-z0-9 -]{0,64}$'
+
+    Client:
+      type: object
+      required:
+        - ip
+        - name
+        - vendor
+      properties:
+        ip:
+          $ref: '#/components/schemas/Ipv4'
+        name:
+          $ref: '#/components/schemas/ClientName'
+        vendor:
+          $ref: '#/components/schemas/ClientVendor'
+
+    ClientCreate:
+      type: object
+      required:
+        - ip
+        - secret
+        - name
+      properties:
+        ip:
+          $ref: '#/components/schemas/Ipv4'
+        secret:
+          $ref: '#/components/schemas/ClientSecretValue'
+        name:
+          $ref: '#/components/schemas/ClientName'
+        vendor:
+          allOf:
+            - $ref: '#/components/schemas/ClientVendor'
+          default: ''
+
+    ClientUpdate:
+      type: object
+      description: 変更する項目だけを指定する。`null` は指定できない。
+      minProperties: 1
+      properties:
+        secret:
+          $ref: '#/components/schemas/ClientSecretValue'
+        name:
+          $ref: '#/components/schemas/ClientName'
+        vendor:
+          $ref: '#/components/schemas/ClientVendor'
+
+    ClientSecret:
+      type: object
+      required:
+        - secret
+      properties:
+        secret:
+          $ref: '#/components/schemas/ClientSecretValue'
+
+    ClientList:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Client'
+
+    PolicyDefault:
+      type: string
+      enum:
+        - allow
+        - deny
+
+    PolicyRule:
+      type: object
+      required:
+        - nasId
+        - allowedSsids
+      properties:
+        nasId:
+          type: string
+          description: NAS-Identifier（印字可能ASCII 1〜253文字）。`*` 単独は任意の NAS に一致する。それ以外は完全一致。
+          pattern: '^[\x21-\x7E]{1,253}$'
+        allowedSsids:
+          type: array
+          description: 許可する SSID（1〜32バイト）。`*` は任意の SSID に一致する。比較は大文字小文字を区別しない。
+          minItems: 1
+          items:
+            type: string
+            minLength: 1
+            maxLength: 32
+        vlanId:
+          type: string
+          description: 割り当てる VLAN ID（0〜4094）。省略・空文字は未設定。
+          pattern: '^[0-9]{0,4}$'
+        sessionTimeout:
+          type: integer
+          description: Session-Timeout（秒）。省略・0 は未設定。
+          minimum: 0
+          maximum: 86400
+
+    Policy:
+      type: object
+      required:
+        - imsi
+        - default
+        - rules
+      properties:
+        imsi:
+          $ref: '#/components/schemas/Imsi'
+        default:
+          $ref: '#/components/schemas/PolicyDefault'
+        rules:
+          type: array
+          description: 先頭から順に評価し、最初に一致したルールを採用する。
+          items:
+            $ref: '#/components/schemas/PolicyRule'
+
+    PolicyPut:
+      type: object
+      required:
+        - default
+        - rules
+      properties:
+        default:
+          $ref: '#/components/schemas/PolicyDefault'
+        rules:
+          type: array
+          items:
+            $ref: '#/components/schemas/PolicyRule'
+
+    PolicyList:
+      type: object
+      required:
+        - items
+        - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Policy'
+        total:
+          type: integer
+          description: '`prefix` に一致する認可ポリシーの総数。`prefix` 省略時は全件数。'
+        nextCursor:
+          type: string
+          description: 次のページがある場合だけ返す。
+
+    Status:
+      type: object
+      required:
+        - version
+        - nodeName
+        - startedAt
+        - subscriberCount
+        - clientCount
+        - policyCount
+      properties:
+        version:
+          type: string
+          description: provisioning-api のバージョン。
+        nodeName:
+          type: string
+          description: ノードの識別名（PROVISIONING_API_NODE_NAME）。
+        startedAt:
+          type: string
+          format: date-time
+        subscriberCount:
+          type: integer
+        clientCount:
+          type: integer
+        policyCount:
+          type: integer
+
+    InvalidParam:
+      type: object
+      required:
+        - param
+      properties:
+        param:
+          type: string
+          description: 不正だった項目の名前（例 `rules[0].nasId`）。
+        reason:
+          type: string
+
+    ProblemDetails:
+      type: object
+      properties:
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        cause:
+          type: string
+          enum:
+            - INVALID_MSG_FORMAT
+            - INVALID_QUERY_PARAM
+            - MANDATORY_IE_MISSING
+            - MANDATORY_IE_INCORRECT
+            - OPTIONAL_IE_INCORRECT
+            - USER_NOT_FOUND
+            - CLIENT_NOT_FOUND
+            - POLICY_NOT_FOUND
+            - SUBSCRIBER_ALREADY_EXISTS
+            - CLIENT_ALREADY_EXISTS
+            - SYSTEM_FAILURE
+        invalidParams:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/InvalidParam'
