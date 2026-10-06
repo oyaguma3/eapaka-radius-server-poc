@@ -143,7 +143,7 @@ func (s *SessionDetailScreen) render() {
 	s.sessionsList.Clear()
 
 	// ヘッダー
-	headers := []string{"UUID", "NAS IP", "Client IP", "Start Time", "Duration", "In/Out"}
+	headers := []string{"UUID", "NAS-ID", "NAS IP", "Client IP", "Start Time", "Duration", "In/Out"}
 	for col, header := range headers {
 		cell := tview.NewTableCell(header).
 			SetTextColor(tcell.ColorYellow).
@@ -177,26 +177,32 @@ func (s *SessionDetailScreen) render() {
 			SetAlign(tview.AlignLeft).
 			SetExpansion(1))
 
+		// NAS-ID（プロキシ経由ではNAS IPがプロキシのIPになるため、NASの識別に使う）
+		s.sessionsList.SetCell(row, 1, tview.NewTableCell(format.Truncate(format.OrDash(session.NasIdentifier), nasIDMaxLen)).
+			SetTextColor(tcell.ColorWhite).
+			SetAlign(tview.AlignLeft).
+			SetExpansion(1))
+
 		// NAS IP
-		s.sessionsList.SetCell(row, 1, tview.NewTableCell(session.NasIP).
+		s.sessionsList.SetCell(row, 2, tview.NewTableCell(session.NasIP).
 			SetTextColor(tcell.ColorWhite).
 			SetAlign(tview.AlignLeft).
 			SetExpansion(1))
 
 		// Client IP
-		s.sessionsList.SetCell(row, 2, tview.NewTableCell(session.ClientIP).
+		s.sessionsList.SetCell(row, 3, tview.NewTableCell(session.ClientIP).
 			SetTextColor(tcell.ColorWhite).
 			SetAlign(tview.AlignLeft).
 			SetExpansion(1))
 
 		// Start Time
-		s.sessionsList.SetCell(row, 3, tview.NewTableCell(format.DateTimeShort(session.StartTime)).
+		s.sessionsList.SetCell(row, 4, tview.NewTableCell(format.DateTimeShort(session.StartTime)).
 			SetTextColor(tcell.ColorGray).
 			SetAlign(tview.AlignLeft).
 			SetExpansion(1))
 
 		// Duration
-		s.sessionsList.SetCell(row, 4, tview.NewTableCell(format.Elapsed(session.StartTime)).
+		s.sessionsList.SetCell(row, 5, tview.NewTableCell(format.Elapsed(session.StartTime)).
 			SetTextColor(tcell.ColorTeal).
 			SetAlign(tview.AlignLeft).
 			SetExpansion(1))
@@ -205,7 +211,7 @@ func (s *SessionDetailScreen) render() {
 		trafficDisplay := fmt.Sprintf("%s/%s",
 			format.BytesShort(session.InputOctets),
 			format.BytesShort(session.OutputOctets))
-		s.sessionsList.SetCell(row, 5, tview.NewTableCell(trafficDisplay).
+		s.sessionsList.SetCell(row, 6, tview.NewTableCell(trafficDisplay).
 			SetTextColor(tcell.ColorGreen).
 			SetAlign(tview.AlignLeft).
 			SetExpansion(1))

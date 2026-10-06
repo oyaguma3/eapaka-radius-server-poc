@@ -1,4 +1,4 @@
-﻿# D-09 Auth Server詳細設計書 (r19)
+﻿# D-09 Auth Server詳細設計書 (r20)
 
 ## ■セクション1: 概要
 
@@ -753,6 +753,7 @@ slog.Info("認証成功",
     "event_id", "AUTH_SUCCESS",
     "trace_id", traceID,
     "imsi", logging.MaskIMSI(imsi, cfg.LogMaskIMSI),
+    "nas_identifier", req.NASIdentifier, // NASの識別用（プロキシ経由では src_ip がプロキシのIPになるため。D-04 §4.7）
     "session_id", sessionID)
 ```
 
@@ -1063,7 +1064,7 @@ func NewServer(addr string, handler radius.Handler, secretSource radius.SecretSo
 | サーバー起動   | -                  | INFO            | リッスンアドレス       |
 | Secret解決失敗 | `RADIUS_NO_SECRET` | WARN            | 送信元IP               |
 | ライブラリのエラー（デコード失敗等） | `RADIUS_LIB_ERR` | WARN（Secret不明で破棄したときは DEBUG） | ライブラリのメッセージ（`error`） |
-| パケット受信   | `PKT_RECV`         | INFO（Status-Serverは DEBUG） | 送信元IP、RADIUSコード |
+| パケット受信   | `PKT_RECV`         | INFO（Status-Serverは DEBUG） | 送信元IP、RADIUSコード、NAS-Identifier（Access-Requestのとき） |
 | 処理完了       | `AUTH_SUCCESS` 等  | INFO/WARN/ERROR | 結果に応じたevent_id   |
 
 ### 4.7 依存関係
@@ -1403,7 +1404,7 @@ PacketServer
 
 | 処理                          | event_id              | レベル | 追加フィールド          |
 | ----------------------------- | --------------------- | ------ | ----------------------- |
-| RADIUSパケット受信（全Code）  | `PKT_RECV`            | INFO（Status-Serverは DEBUG。§5.8） | `trace_id`, `src_ip`, `code` |
+| RADIUSパケット受信（全Code）  | `PKT_RECV`            | INFO（Status-Serverは DEBUG。§5.8） | `trace_id`, `src_ip`, `code`。Access-Requestのときは `nas_identifier`（属性がなければ空文字） |
 | Message-Authenticator検証失敗 | `PKT_MA_INVALID`      | WARN   | `trace_id`, `src_ip`    |
 | EAP-Message属性なし           | `PKT_NO_EAP`          | WARN   | `trace_id`, `src_ip`    |
 | Access-Request / Status-Server 以外のCode（Accounting-Request、未知のCode等） | `PKT_UNKNOWN_CODE`    | WARN   | `trace_id`, `code`（送信元IPは直前の `PKT_RECV` の `src_ip`） |
@@ -3024,9 +3025,9 @@ Challenge応答検証成功
 
 | 処理                  | event_id                | レベル | 追加フィールド                      |
 | --------------------- | ----------------------- | ------ | ----------------------------------- |
-| ポリシー未設定・パースエラー・Valkeyエラー | `AUTH_POLICY_NOT_FOUND` | WARN   | `trace_id`, `imsi`, `error`         |
-| ルール不一致でDeny    | `AUTH_POLICY_DENIED`    | WARN   | `trace_id`, `imsi`, `reason`        |
-| ルール一致でAccept    | -（`AUTH_SUCCESS` のみ）| -      | -                                   |
+| ポリシー未設定・パースエラー・Valkeyエラー | `AUTH_POLICY_NOT_FOUND` | WARN   | `trace_id`, `imsi`, `nas_identifier`, `error` |
+| ルール不一致でDeny    | `AUTH_POLICY_DENIED`    | WARN   | `trace_id`, `imsi`, `nas_identifier`, `reason` |
+| ルール一致でAccept    | -（`AUTH_SUCCESS` のみ。`nas_identifier` を含む）| -      | -                                   |
 | default=allowでAccept | -（`AUTH_SUCCESS` のみ）| -      | -                                   |
 
 > **注記:** ポリシーのJSONパース失敗専用のevent_idはなく、`AUTH_POLICY_NOT_FOUND` の `error` 属性で区別する。`AUTH_POLICY_DENIED` は `nas_id` / `ssid` を出力しない。Accept時のポリシー評価結果のログ（DEBUGを含む）は出力しない。
@@ -3298,13 +3299,14 @@ func (s *contextStore) Delete(ctx context.Context, traceID string) error {
 ```go
 // Session は認証成功後のアクティブセッション情報を保持する
 type Session struct {
-    IMSI         string `redis:"imsi"`
-    NasIP        string `redis:"nas_ip"`
-    StartTime    int64  `redis:"start_time"`    // Unix timestamp（Acct Startで設定）
-    ClientIP     string `redis:"client_ip"`     // Acct Start/Interimで設定
-    AcctID       string `redis:"acct_id"`       // Acct Startで設定
-    InputOctets  int64  `redis:"input_octets"`  // Acct Interim/Stopで更新
-    OutputOctets int64  `redis:"output_octets"` // Acct Interim/Stopで更新
+    IMSI          string `redis:"imsi"`
+    NasIP         string `redis:"nas_ip"`
+    NasIdentifier string `redis:"nas_identifier"` // ポリシー評価に使ったNAS-Identifier（Acct Start/Interimで上書き）
+    StartTime     int64  `redis:"start_time"`     // Unix timestamp（Acct Startで設定）
+    ClientIP      string `redis:"client_ip"`      // Acct Start/Interimで設定
+    AcctID        string `redis:"acct_id"`        // Acct Startで設定
+    InputOctets   int64  `redis:"input_octets"`   // Acct Interim/Stopで更新
+    OutputOctets  int64  `redis:"output_octets"`  // Acct Interim/Stopで更新
 }
 ```
 
@@ -3361,11 +3363,13 @@ func (s *sessionStore) Create(ctx context.Context, sessionID string, sess *Sessi
 | フィールド | 値                       | 備考                    |
 | ---------- | ------------------------ | ----------------------- |
 | `imsi`     | 認証済みIMSI             | EAPコンテキストから取得 |
-| `nas_ip`   | RADIUSパケットの送信元IP | Access-Requestから取得  |
+| `nas_ip`   | RADIUSパケットの送信元IP | Access-Requestから取得（プロキシ経由ではプロキシのIP） |
+| `nas_identifier` | ポリシー評価に使った NAS-Identifier | Access-Requestから取得（属性がなければ空文字）。プロキシ経由でも NAS を識別するため（D-02 §2、D-08 §5.8） |
 
 **後続更新（Acct Server側）：**
 
 - `start_time`, `client_ip`, `acct_id` → Acct-Start時
+- `nas_ip`、`nas_identifier`（NAS-Identifier があるとき） → Acct-Start/Interim時
 - `input_octets`, `output_octets` → Acct-Interim/Stop時
 
 #### 9.3.4 Session IDの生成
@@ -3632,14 +3636,16 @@ func (h *Handler) handleAuthSuccess(
     traceID string,
     eapCtx *session.EAPContext,
     nasIP string,
+    nasIdentifier string,
 ) (string, error) {
     // セッションID生成
     sessionID := session.GenerateSessionID()
     
     // セッション作成
     sess := &session.Session{
-        IMSI:  eapCtx.IMSI,
-        NasIP: nasIP,
+        IMSI:          eapCtx.IMSI,
+        NasIP:         nasIP,
+        NasIdentifier: nasIdentifier,
     }
     
     if err := h.sessionStore.Create(ctx, sessionID, sess); err != nil {
@@ -3741,7 +3747,7 @@ func isRetryableError(err error) bool {
 **セッション：**
 
 - Session IDとTrace IDは別々に生成
-- Auth ServerではIMSIとNasIPのみ設定、他はAcct Serverで更新
+- Auth ServerではIMSI・NasIP・NasIdentifier・StartTimeを設定、他はAcct Serverで更新
 - Class属性にSession IDを格納してAcct Serverと連携
 
 **ユーザーインデックス：**
@@ -3964,13 +3970,14 @@ package session
 
 // Session は認証成功後のアクティブセッション情報を保持する
 type Session struct {
-    IMSI         string `redis:"imsi"`
-    NasIP        string `redis:"nas_ip"`
-    StartTime    int64  `redis:"start_time"`    // Unix timestamp
-    ClientIP     string `redis:"client_ip"`     // Framed-IP-Address
-    AcctID       string `redis:"acct_id"`       // Acct-Session-Id
-    InputOctets  int64  `redis:"input_octets"`
-    OutputOctets int64  `redis:"output_octets"`
+    IMSI          string `redis:"imsi"`
+    NasIP         string `redis:"nas_ip"`
+    NasIdentifier string `redis:"nas_identifier"` // ポリシー評価に使ったNAS-Identifier（プロキシ経由でもNASを識別できる）
+    StartTime     int64  `redis:"start_time"`     // Unix timestamp
+    ClientIP      string `redis:"client_ip"`      // Framed-IP-Address
+    AcctID        string `redis:"acct_id"`        // Acct-Session-Id
+    InputOctets   int64  `redis:"input_octets"`
+    OutputOctets  int64  `redis:"output_octets"`
 }
 ```
 
@@ -4681,3 +4688,4 @@ Auth Server内で直接参照する外部パッケージの型：
 | r17 | 2026-10-04 | RADIUSパケットの検証をハンドラーに一本化し、RADIUSライブラリのログをJSONにした実装修正の反映: §4.3 に「PacketServerの設定（パケットの認証とライブラリのログ）」を新設（`InsecureSkipVerify: true` と `ErrorLog: logging.NewRADIUSLibraryLogger()`、`NewServer` のコード、方針と理由）。§4.2 / §5.9 の処理フローのライブラリ内部処理を「デコード（失敗時は `RADIUS_LIB_ERR`）、認証は行わない」に修正し、その他のCodeを `PKT_UNKNOWN_CODE` と明記。§5.3 Code別処理に、Accounting-Request や未知のCodeもハンドラーに届く旨の注記を追加。§4.6 / §5.10 のログ表に `RADIUS_LIB_ERR`（WARN、Secret不明で破棄したときはDEBUG）を追加し、`PKT_UNKNOWN_CODE` の条件を修正、§5.10 注記の「デコード失敗はログを出力しない」を修正。§2.7 / §4.7 の `server.go` の記述を更新。§1.3 参照版数更新（D-04 r30→r31、D-06 r16→r17） |
 | r18 | 2026-10-04 | §3.4 の main.go の例で、RADIUS サーバーの生成を実装どおり `server.NewServer(cfg.ListenAddr, handler, secretSource)` に訂正（r17 までは `server.New(cfg.ListenAddr, secretSource, handler)` と、関数名と引数の順序が実装と異なっていた） |
 | r19 | 2026-10-05 | Status-Server に正常に応答したときのログを DEBUG に下げた実装修正（D-04 r32）の反映: §4.6 / §5.10 の `PKT_RECV` を Status-Server のときだけ DEBUG、§5.10 の `RADIUS_STATUS_OK` を DEBUG に変更。§5.8 の注意点に、DEBUG とする理由（radsecproxy 等の複数のプロキシが定期的に送る構成で INFO ログが埋まる）と `PKT_SEND_ERR` を追記。検証失敗の `RADIUS_STATUS_AUTH_FAIL`（WARN）は変更なし |
+| r20 | 2026-10-06 | NAS-Identifier を NAS の識別情報としてセッションとログに加えた実装修正（D-04 r33、D-02 r20）の反映（radsecproxy 等のプロキシ経由では送信元IPがプロキシのIPになり NAS を区別できないため）: §4.6 / §5.10 の `PKT_RECV` に `nas_identifier`（Access-Request のとき）、§8.10 の `AUTH_POLICY_NOT_FOUND`・`AUTH_POLICY_DENIED`、§3.5 の `AUTH_SUCCESS` の例に `nas_identifier` を追加。§9.3 / §9.7.3 / §10.4.2 のセッション構造体・初期値・作成処理に `nas_identifier`（ポリシー評価に使った NAS-Identifier）を追加 |

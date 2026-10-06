@@ -118,3 +118,52 @@ func TestSortByStartTimeDesc(t *testing.T) {
 		t.Errorf("order = %v, want %v", got, want)
 	}
 }
+
+func TestSessionListScreen_NASIDColumn(t *testing.T) {
+	s := NewSessionListScreen(ui.NewApp(), nil)
+	s.sessions = []*model.Session{
+		{UUID: "u1", IMSI: "440100000000001", NasIdentifier: "ap-001", NasIP: "172.30.0.10", StartTime: 300},
+		{UUID: "u2", IMSI: "440100000000002", NasIP: "192.168.10.1", StartTime: 200},
+		{UUID: "u3", IMSI: "440100000000003", NasIdentifier: "building-a-floor-3-ap-0001", NasIP: "172.30.0.10", StartTime: 100},
+	}
+	s.render()
+
+	if got := s.table.GetCell(0, 1).Text; got != "NAS-ID" {
+		t.Errorf("header[1] = %q, want NAS-ID", got)
+	}
+	// ソート中の Start Time の表示は列がずれても Start Time の列に付く
+	if got := s.table.GetCell(0, 4).Text; got != "Start Time ▼" {
+		t.Errorf("header[4] = %q, want %q", got, "Start Time ▼")
+	}
+	want := []string{"ap-001", "-", "building-a-floor-3-ap..."}
+	for i, w := range want {
+		if got := s.table.GetCell(i+1, 1).Text; got != w {
+			t.Errorf("row %d NAS-ID = %q, want %q", i+1, got, w)
+		}
+		if got := s.table.GetCell(i+1, 2).Text; got != s.sessions[i].NasIP {
+			t.Errorf("row %d NAS IP = %q, want %q", i+1, got, s.sessions[i].NasIP)
+		}
+	}
+
+	s.ToggleSort() // NAS IP
+	if got := s.table.GetCell(0, 2).Text; got != "NAS IP ▲" {
+		t.Errorf("header[2] = %q, want %q", got, "NAS IP ▲")
+	}
+}
+
+func TestSessionListScreen_FilterByNASIdentifier(t *testing.T) {
+	s := NewSessionListScreen(ui.NewApp(), nil)
+	s.sessions = []*model.Session{
+		{UUID: "u1", IMSI: "440100000000001", NasIdentifier: "ap-001", NasIP: "172.30.0.10"},
+		{UUID: "u2", IMSI: "440100000000002", NasIdentifier: "ap-002", NasIP: "172.30.0.10"},
+		{UUID: "u3", IMSI: "440100000000003", NasIP: "192.168.10.1"},
+	}
+	s.SetFilter("ap-00")
+	if got := uuids(s.getFilteredSessions()); !equal(got, []string{"u1", "u2"}) {
+		t.Errorf("filter ap-00 = %v, want [u1 u2]", got)
+	}
+	s.SetFilter("ap-002")
+	if got := uuids(s.getFilteredSessions()); !equal(got, []string{"u2"}) {
+		t.Errorf("filter ap-002 = %v, want [u2]", got)
+	}
+}

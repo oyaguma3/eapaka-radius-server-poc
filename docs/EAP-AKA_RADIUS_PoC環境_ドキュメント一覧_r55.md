@@ -1,7 +1,7 @@
-# EAP-AKA RADIUS PoC環境 ドキュメント一覧 (r54)
+# EAP-AKA RADIUS PoC環境 ドキュメント一覧 (r55)
 
 **作成日:** 2025-12-30
-**最終更新:** 2026-10-05
+**最終更新:** 2026-10-06
 **ステータス:** 運用準備フェーズ
 
 ---
@@ -13,15 +13,15 @@
 | No. | ドキュメント名 | 版数 | 最終更新 | 内容 |
 |-----|---------------|------|---------|------|
 | D-01 | ミニPC版 EAP-AKA RADIUS PoC環境 設計仕様書 | r17 | 2026-10-04 | システム概要、アーキテクチャ、ノード構成、パッケージマップ、Vector Gateway追加、Valkeyバージョン9.0統一、Fluent Bit統一、環境変数名統一、実装コードとの不整合20件修正（データモデル注記・Valkeyキースキーマ・パッケージマップ・docker-compose.yml完全同期・healthcheck・テストベクターモード）、外部aka-only-server（接続方式01）を構成図・環境変数に追加、テストベクターモードの説明を実装に整合（固定 Ki/OPc/AMF で計算、加入者登録必須）、compose の LOG_LEVEL（auth-server / vector-gateway / vector-api）を実ファイルに同期、compose の LOG_LEVEL を acct-server にも渡す（4サーバー）よう実ファイルに同期、Valkeyキースキーマを実装に整合（存在しない audit:log・acct:{ID} を削除し sess:・idx:user:・acct:seen: を追加、監査ログは Admin TUI の標準出力）、vector-gateway のバックエンド向けタイムアウトの既定値を 3s に（auth-server の5秒より短く。§3.5・compose・環境変数表）、ファイアウォールの記述を訂正（Docker の公開ポートは UFW を素通りする）、インターネット越しに RADIUS を受ける場合の注意、fluent-bit の公開を 127.0.0.1 に、RADIUS_SECRET を任意（空を推奨）に、Acct Server の検証方式（Request Authenticator）を訂正 |
-| D-02 | Valkeyデータ設計仕様書 | r19 | 2026-10-04 | データ構造、キー設計、TTL、Go構造体、CK/IK非保存方針、UUID仕様明記、Acct重複検出キャッシュ、stageフィールド値明記、SQN競合制御（WATCH/MULTI CAS）、idx:userクリーンアップ方針、PolicyRule構造を実装コードに整合（NasID/AllowedSSIDs/VlanID/SessionTimeout）、実装との突き合わせによる修正（SQN競合制御は設計のみで現行未実装、セッション/インデックス/重複検出/EAPコンテキストの実態）、Interimのセッション不在時に作成しない・重複検出のInterim判定（no_start_received / interim_after_stop）を実装に整合、テストベクターモードでも加入者登録必須・既定SQNフォールバック廃止（`sqn` だけの Hash を作らない）を実装に整合、nas_idの`*`単独で任意のNASに一致（部分一致なし、それ以外は完全一致）を実装に整合、Trace ID は初回に生成し以降は State 属性の UUID を引き継ぐ旨を実装に整合、重複Interimの event_id を ACCT_DUPLICATE_INTERIM に分離、SQN競合制御を実装に整合（Lua による `sqn` の比較・置き換え、競合時のやり直し最大3回・409、Admin TUI による `sqn` 上書きの制約）、Admin TUI の加入者編集による `sqn` の書き込みを実装に整合（SQN を変えたときだけ編集開始時の値と比較して書き換え、Hex は大文字に正規化して保存） |
+| D-02 | Valkeyデータ設計仕様書 | r20 | 2026-10-06 | データ構造、キー設計、TTL、Go構造体、CK/IK非保存方針、UUID仕様明記、Acct重複検出キャッシュ、stageフィールド値明記、SQN競合制御（WATCH/MULTI CAS）、idx:userクリーンアップ方針、PolicyRule構造を実装コードに整合（NasID/AllowedSSIDs/VlanID/SessionTimeout）、実装との突き合わせによる修正（SQN競合制御は設計のみで現行未実装、セッション/インデックス/重複検出/EAPコンテキストの実態）、Interimのセッション不在時に作成しない・重複検出のInterim判定（no_start_received / interim_after_stop）を実装に整合、テストベクターモードでも加入者登録必須・既定SQNフォールバック廃止（`sqn` だけの Hash を作らない）を実装に整合、nas_idの`*`単独で任意のNASに一致（部分一致なし、それ以外は完全一致）を実装に整合、Trace ID は初回に生成し以降は State 属性の UUID を引き継ぐ旨を実装に整合、重複Interimの event_id を ACCT_DUPLICATE_INTERIM に分離、SQN競合制御を実装に整合（Lua による `sqn` の比較・置き換え、競合時のやり直し最大3回・409、Admin TUI による `sqn` 上書きの制約）、Admin TUI の加入者編集による `sqn` の書き込みを実装に整合（SQN を変えたときだけ編集開始時の値と比較して書き換え、Hex は大文字に正規化して保存）、`sess:{UUID}` に nas_identifier（NAS-Identifier。プロキシ経由でも NAS を識別するため）を追加 |
 | D-03 | Vector-APIインターフェース定義書およびEAP-AKAステートマシン設計書 | r8 | 2026-10-04 | API仕様、8状態定義、Policy評価Post-Authのみ、接続先をVector Gatewayに変更、接続方式01経由時の403応答、Post-Authのルール評価を実装のPolicyRule（nas_id/allowed_ssids、nas_idの`*`は任意のNASに一致）に整合、409 Conflict を実装に整合（Lua による SQN の比較・置き換えで3回とも競合した場合、detail は固定文、Circuit Breaker 対象外） |
-| D-04 | ログ仕様設計書 | r32 | 2026-10-05 | ログフォーマット、event_id定義、Vector Gateway対応、EAP_INVALID_STATE追加、IMSIマスキング（4コンポーネント対応、Admin TUI除外明記）、Acct Server PKT_RECV追加、SQN_CONFLICT_ERR追加、lnavフォーマット全面改訂（bunyan競合回避・timestamp-format削除・file-pattern・sample追加）、ACCT_ON/ACCT_OFF追加、ヘルスチェックログ分離記述追加、BACKEND_EXTERNAL_CALL/BACKEND_EXTERNAL_ERR実装済み化・causeフィールド追加、IMSIマスク漏れ修正の反映（user_name等のマスク、User-Nameマスク規則追加）・lnavフォーマットのvalue整理（code/subtype/eap_type/acct_status_type/session_time追加、retry_count/downtime_ms削除）、ACCT_SEQUENCE_ERRのInterim側msg変更・interim_after_stop追加、ACCT_SESSION_NOT_FOUNDをStart/Interimに拡大、テストベクターモードのTEST_SQN_FALLBACK/TEST_SQN_PARSE_ERR/TEST_SQN_PERSIST_ERRを削除（エラーログは通常モードと同じ）、auth-server の trace_id を認証単位で引き継ぎ（2回目以降の PKT_RECV 等も同一 trace_id）、EAP_ENGINE_ERR 削除、LOG_LEVEL（§4.6新設、DEBUG で vector api success）、Vector API のログ整理（SQN_RESYNC に trace_id・imsi、SQN_RESYNC_DELTA_ERR とテストモードの CALC_OK を1行化・CALC_OK に test_mode、ProblemError 経路のログに error 属性、Vector Gateway / Vector API も ParseLevel で WARNING を WARN）、Acct Server の重複Interimを ACCT_DUPLICATE_INTERIM に分離・SYS_ERR 削除・LOG_LEVEL 対応（4コンポーネント、起動ログに log_level）、Admin TUI の監査ログに件数（import / export の record_count、search の result_count）を追加し検索IMSIを target_imsi に記録、Vector Gateway の起動時 WARN（バックエンド向けタイムアウトが auth-server の5秒以上）を追加、SQN競合制御の実装で SQN_CONFLICT_RETRY（attempt）/ SQN_CONFLICT_ERR を §3.4.7 に再追加・SQN_RESYNC を書き換え成功後に1回（msg 2種）、lnav フォーマットに attempt、Admin TUI の加入者編集が `sqn` を上書きしなくなったことを §3.4.7 に反映、auth-server / acct-server の起動ログに radius_secret_fallback と RADIUS_SECRET 設定時の WARN、RADIUS_NO_SECRET の条件を明記、RADIUS_LIB_ERR（ライブラリのエラーを JSON で）を追加し、Accounting-Request のシークレット不一致の RADIUS_AUTH_ERR・未知の Code のログを実装に整合、Status-Server に正常に応答したときのログ（Auth Server の PKT_RECV・RADIUS_STATUS_OK、Acct Server の PKT_RECV）を DEBUG に、Acct Server の Status-Server 応答の event_id を PKT_RECV から RADIUS_STATUS_OK に |
+| D-04 | ログ仕様設計書 | r33 | 2026-10-06 | ログフォーマット、event_id定義、Vector Gateway対応、EAP_INVALID_STATE追加、IMSIマスキング（4コンポーネント対応、Admin TUI除外明記）、Acct Server PKT_RECV追加、SQN_CONFLICT_ERR追加、lnavフォーマット全面改訂（bunyan競合回避・timestamp-format削除・file-pattern・sample追加）、ACCT_ON/ACCT_OFF追加、ヘルスチェックログ分離記述追加、BACKEND_EXTERNAL_CALL/BACKEND_EXTERNAL_ERR実装済み化・causeフィールド追加、IMSIマスク漏れ修正の反映（user_name等のマスク、User-Nameマスク規則追加）・lnavフォーマットのvalue整理（code/subtype/eap_type/acct_status_type/session_time追加、retry_count/downtime_ms削除）、ACCT_SEQUENCE_ERRのInterim側msg変更・interim_after_stop追加、ACCT_SESSION_NOT_FOUNDをStart/Interimに拡大、テストベクターモードのTEST_SQN_FALLBACK/TEST_SQN_PARSE_ERR/TEST_SQN_PERSIST_ERRを削除（エラーログは通常モードと同じ）、auth-server の trace_id を認証単位で引き継ぎ（2回目以降の PKT_RECV 等も同一 trace_id）、EAP_ENGINE_ERR 削除、LOG_LEVEL（§4.6新設、DEBUG で vector api success）、Vector API のログ整理（SQN_RESYNC に trace_id・imsi、SQN_RESYNC_DELTA_ERR とテストモードの CALC_OK を1行化・CALC_OK に test_mode、ProblemError 経路のログに error 属性、Vector Gateway / Vector API も ParseLevel で WARNING を WARN）、Acct Server の重複Interimを ACCT_DUPLICATE_INTERIM に分離・SYS_ERR 削除・LOG_LEVEL 対応（4コンポーネント、起動ログに log_level）、Admin TUI の監査ログに件数（import / export の record_count、search の result_count）を追加し検索IMSIを target_imsi に記録、Vector Gateway の起動時 WARN（バックエンド向けタイムアウトが auth-server の5秒以上）を追加、SQN競合制御の実装で SQN_CONFLICT_RETRY（attempt）/ SQN_CONFLICT_ERR を §3.4.7 に再追加・SQN_RESYNC を書き換え成功後に1回（msg 2種）、lnav フォーマットに attempt、Admin TUI の加入者編集が `sqn` を上書きしなくなったことを §3.4.7 に反映、auth-server / acct-server の起動ログに radius_secret_fallback と RADIUS_SECRET 設定時の WARN、RADIUS_NO_SECRET の条件を明記、RADIUS_LIB_ERR（ライブラリのエラーを JSON で）を追加し、Accounting-Request のシークレット不一致の RADIUS_AUTH_ERR・未知の Code のログを実装に整合、Status-Server に正常に応答したときのログ（Auth Server の PKT_RECV・RADIUS_STATUS_OK、Acct Server の PKT_RECV）を DEBUG に、Acct Server の Status-Server 応答の event_id を PKT_RECV から RADIUS_STATUS_OK に、NAS の識別に nas_identifier を Auth Server の PKT_RECV（Access-Request）・AUTH_SUCCESS・AUTH_POLICY_DENIED / NOT_FOUND と Acct Server の課金ログに追加（§4.7）、lnav フォーマットに nas_identifier |
 | D-05 | Admin TUI詳細設計書【前半】 | r12 | 2026-10-04 | 画面設計、バリデーション、インポート/エクスポート、IMSI表示方針（常に生値）、全マスタデータHash形式統一、実装スクリーンショットとのASCIIレイアウト整合性修正（12画面）、バリデーション規則を実装に整合（NAS ID 1〜253文字の印字可能ASCII・`*` ワイルドカード、NAS ID は NAS-Identifier と比較、SQN・Client Name 必須、エラーメッセージ等）、ポリシールールの例を現行構造に修正、監査ログの import / export に record_count、キー配線漏れ修正の反映（一覧の Enter で編集画面、`?` は入力欄では文字入力、一覧の F6 でフィルタ、フィルタ入力ダイアログを Esc で閉じる）、キー操作・ダイアログを実装に整合（終了確認・変更破棄確認・上書き確認ダイアログはない、Default allow 警告は Continue / Cancel、ページ切替は PgUp / PgDn、ポリシーフォームに Ctrl+S はない、接続失敗時は Connection Error の Retry / Exit）、加入者編集の保存処理（SQN を変えていなければ `sqn` を書かない、変えたときは編集開始時の値と比較し変わっていれば保存せずエラー、SQN 変更判定は大文字小文字を区別しない） |
 | D-06 | エラーハンドリング詳細設計書 | r17 | 2026-10-04 | 異常系処理、タイムアウト、リトライ、Circuit Breaker、Vector Gateway追加、SQN競合エラー（409）追加、Vector Gateway経由フロー明記、接続方式01（aka-only-server）のエラー変換、EAP Identity系ログのuser_nameマスク反映、Interimのセッション不在・順序異常の扱いを実装に整合、テストベクターモードのエラー処理を通常モードと同一化、EAPエンジンが error を返さない実装に合わせ EAP_ENGINE_ERR を削除、Vector API の Valkey リトライなし（未使用の GetWithRetry 削除）・SQN_RESYNC_DELTA_ERR の1行化・定義済みエラーのログに error 属性、重複Interimの ACCT_DUPLICATE_INTERIM 分離、Accounting処理が error を返さない実装に合わせ SYS_ERR を削除、Vector Gateway → バックエンドのタイムアウトを 3秒に（auth-server の5秒より短くする理由、バックエンド障害時は VECTOR_API_ERR（502））・起動時 WARN を追加、SQN競合上限超過（409）を実装済みに（待機中の期限切れも 409、409 を 5xx にしない理由）、Valkey 接続断時の動作をフォールバックが空の場合（応答なし）と分けて記載、RADIUS パケットの認証をハンドラーで行う扱い（シークレット不一致は RADIUS_AUTH_ERR、形の壊れたパケットは RADIUS_LIB_ERR） |
-| D-07 | Admin TUI詳細設計書【後半】 | r10 | 2026-10-04 | モニタリング画面、ヘルプダイアログ、IMSI記録方針（監査ログに生値）、idx:userクリーンアップ処理、実装スクリーンショットとのASCIIレイアウト整合性修正（5画面）、event_idを実装に整合、Session Detail 検索の監査ログを実装に整合（検索IMSIを target_imsi、結果件数を result_count、検索失敗時は details に理由）、Session List のソートを現行の s キーによる3項目の切り替えに整合（Start Time ▼ → NAS IP ▲ → IMSI ▲、同値は start_time 降順 → UUID 順）、入力ダイアログを Esc で閉じる・ヘルプは F1 / ?、キー操作・画面遷移を実装に整合（Session Search へは Session List の Enter、ページ切替は PgUp / PgDn、Session Search はページ分割・r キーなしで Esc / q は Session List へ、IMSI 入力は検証しない）、Session Search の検索結果は画面側で start_time 降順に並べ替え、Session List のフィルタ（IMSI・NAS IP・Client IP の部分一致）に合わせて PoC 対象外・将来課題を修正、Statistics Dashboard の統計キャッシュ（件数のみ、要求時更新の1分キャッシュ）を実装に整合、Go構造体定義・フォーマット関数・セッション取得のコード片を実装（model.Session、SessionListScreen / SessionDetailScreen、internal/format の BytesShort 等）に整合 |
-| D-08 | インフラ設定・運用設計書 | r21 | 2026-10-05 | Docker Compose設定、Valkey設定、Fluent Bit設定（fluent/fluent-bit:4.2、YAML形式、rewrite_tagによるヘルスチェックログ分離、キャッチオール廃止による重複出力解消）、UFW設定、運用手順、IMSIマスキング環境変数（4コンポーネント限定）、Valkeyバージョン9.0、ヘルスチェック方針（curl -fsS）、テストベクターモード環境変数、B-02スコープ修正（B-01境界整合）、aka-only-server接続（compose環境変数・証明書マウント・共有ネットワークaka-av用オーバーレイ）、テストベクターモードの.env.example説明を実装に整合（加入者登録必須）、compose / .env.example の LOG_LEVEL（auth-server / vector-gateway / vector-api）を実ファイルに同期、compose / .env.example の LOG_LEVEL を acct-server にも渡す（4サーバー）よう実ファイルに同期、compose / .env.example の vector-gateway のタイムアウト既定値（3s）と説明を実ファイルに同期、compose / .env.example の写しを更新（fluent-bit を 127.0.0.1 に、RADIUS_SECRET を任意）、Docker と UFW の関係、インターネット越しの RADIUS の注意（§5.7）、セキュリティチェックリストを更新、リストア手順を訂正（docker compose run でボリュームの中身を入れ替え）、バックアップスクリプトの改善、「RDB併用なし」を訂正、.env.example の写しを更新（オプション項目の扱いの注記）、Valkey のパスワードを直接書かない接続確認 |
-| D-09 | Auth Server詳細設計書 | r19 | 2026-10-05 | パッケージ構成、RADIUS受信処理、EAP制御フロー、Vector Gateway連携、セッション管理、IMSIマスキング、UUID仕様明記、互換性エイリアス削除、ベースイメージ方針、Vector関連event_id（VECTOR_IMSI_NOT_FOUND等）を実装に整合、user_nameのマスキング（MaskUserName）追加、Acct ServerのInterim時のセッション不在の扱いを修正、認可ポリシー評価（セクション8）を実装のPolicyRule構造とnas_idの`*`（任意のNASに一致）に整合、Trace ID の決定（State 属性の UUID 引き継ぎ）、EAPProcessor の Process(ctx, req) *Result・EAP_ENGINE_ERR 削除、LOG_LEVEL（pkg/logging.ParseLevel）対応、Vector Gateway 側のタイムアウト（3秒）を VectorRequestTimeout（5秒）より短くする理由と定数を合わせる必要の注記、RADIUS_SECRET を任意（空を推奨）に、起動ログの radius_secret_fallback と WARN、PacketServer の設定（InsecureSkipVerify、ErrorLog）とパケット認証をハンドラーで行う方針、main.go の例の NewServer を訂正、Status-Server の正常時ログ（PKT_RECV・RADIUS_STATUS_OK）を DEBUG に |
-| D-10 | Acct Server詳細設計書 | r13 | 2026-10-05 | パッケージ構成、Accounting処理フロー、セッション更新ロジック、重複検出、IMSIマスキング、Status-Server対応、ベースイメージ方針、Accounting-On/Off対応（ProcessOn/ProcessOff、NAS-Identifier処理）、event_idを実装に整合、IMSI抽出不可時のUser-Nameをマスクして出力、Interimのシーケンス判定（CheckInterim、interim_after_stop）とセッション存在確認、重複Interimの ACCT_DUPLICATE_INTERIM 分離、AccountingProcessor の戻り値から error を外し SYS_ERR を削除、LOG_LEVEL 対応（環境変数・設定構造体・main.go のロガー初期化）、RADIUS_SECRET を任意（空を推奨）に、起動ログの radius_secret_fallback と WARN、PacketServer の設定（InsecureSkipVerify、ErrorLog）、Accounting-Request の Request Authenticator 検証をハンドラーで行う、Status-Server の応答ログを DEBUG にし event_id を RADIUS_STATUS_OK に（旧 PKT_RECV） |
+| D-07 | Admin TUI詳細設計書【後半】 | r11 | 2026-10-06 | モニタリング画面、ヘルプダイアログ、IMSI記録方針（監査ログに生値）、idx:userクリーンアップ処理、実装スクリーンショットとのASCIIレイアウト整合性修正（5画面）、event_idを実装に整合、Session Detail 検索の監査ログを実装に整合（検索IMSIを target_imsi、結果件数を result_count、検索失敗時は details に理由）、Session List のソートを現行の s キーによる3項目の切り替えに整合（Start Time ▼ → NAS IP ▲ → IMSI ▲、同値は start_time 降順 → UUID 順）、入力ダイアログを Esc で閉じる・ヘルプは F1 / ?、キー操作・画面遷移を実装に整合（Session Search へは Session List の Enter、ページ切替は PgUp / PgDn、Session Search はページ分割・r キーなしで Esc / q は Session List へ、IMSI 入力は検証しない）、Session Search の検索結果は画面側で start_time 降順に並べ替え、Session List のフィルタ（IMSI・NAS IP・Client IP の部分一致）に合わせて PoC 対象外・将来課題を修正、Statistics Dashboard の統計キャッシュ（件数のみ、要求時更新の1分キャッシュ）を実装に整合、Go構造体定義・フォーマット関数・セッション取得のコード片を実装（model.Session、SessionListScreen / SessionDetailScreen、internal/format の BytesShort 等）に整合、Session List / Session Search に NAS-ID カラム、フィルタの対象に NAS-ID |
+| D-08 | インフラ設定・運用設計書 | r22 | 2026-10-06 | Docker Compose設定、Valkey設定、Fluent Bit設定（fluent/fluent-bit:4.2、YAML形式、rewrite_tagによるヘルスチェックログ分離、キャッチオール廃止による重複出力解消）、UFW設定、運用手順、IMSIマスキング環境変数（4コンポーネント限定）、Valkeyバージョン9.0、ヘルスチェック方針（curl -fsS）、テストベクターモード環境変数、B-02スコープ修正（B-01境界整合）、aka-only-server接続（compose環境変数・証明書マウント・共有ネットワークaka-av用オーバーレイ）、テストベクターモードの.env.example説明を実装に整合（加入者登録必須）、compose / .env.example の LOG_LEVEL（auth-server / vector-gateway / vector-api）を実ファイルに同期、compose / .env.example の LOG_LEVEL を acct-server にも渡す（4サーバー）よう実ファイルに同期、compose / .env.example の vector-gateway のタイムアウト既定値（3s）と説明を実ファイルに同期、compose / .env.example の写しを更新（fluent-bit を 127.0.0.1 に、RADIUS_SECRET を任意）、Docker と UFW の関係、インターネット越しの RADIUS の注意（§5.7）、セキュリティチェックリストを更新、リストア手順を訂正（docker compose run でボリュームの中身を入れ替え）、バックアップスクリプトの改善、「RDB併用なし」を訂正、.env.example の写しを更新（オプション項目の扱いの注記）、Valkey のパスワードを直接書かない接続確認、外部の radsecproxy と接続する場合の注意（§5.8。CN と SAN URI による AP の識別、NAS-Identifier の置き換え、User-Name のない Accounting-On / Off への supplementAttribute） |
+| D-09 | Auth Server詳細設計書 | r20 | 2026-10-06 | パッケージ構成、RADIUS受信処理、EAP制御フロー、Vector Gateway連携、セッション管理、IMSIマスキング、UUID仕様明記、互換性エイリアス削除、ベースイメージ方針、Vector関連event_id（VECTOR_IMSI_NOT_FOUND等）を実装に整合、user_nameのマスキング（MaskUserName）追加、Acct ServerのInterim時のセッション不在の扱いを修正、認可ポリシー評価（セクション8）を実装のPolicyRule構造とnas_idの`*`（任意のNASに一致）に整合、Trace ID の決定（State 属性の UUID 引き継ぎ）、EAPProcessor の Process(ctx, req) *Result・EAP_ENGINE_ERR 削除、LOG_LEVEL（pkg/logging.ParseLevel）対応、Vector Gateway 側のタイムアウト（3秒）を VectorRequestTimeout（5秒）より短くする理由と定数を合わせる必要の注記、RADIUS_SECRET を任意（空を推奨）に、起動ログの radius_secret_fallback と WARN、PacketServer の設定（InsecureSkipVerify、ErrorLog）とパケット認証をハンドラーで行う方針、main.go の例の NewServer を訂正、Status-Server の正常時ログ（PKT_RECV・RADIUS_STATUS_OK）を DEBUG に、セッションとログに nas_identifier を追加 |
+| D-10 | Acct Server詳細設計書 | r14 | 2026-10-06 | パッケージ構成、Accounting処理フロー、セッション更新ロジック、重複検出、IMSIマスキング、Status-Server対応、ベースイメージ方針、Accounting-On/Off対応（ProcessOn/ProcessOff、NAS-Identifier処理）、event_idを実装に整合、IMSI抽出不可時のUser-Nameをマスクして出力、Interimのシーケンス判定（CheckInterim、interim_after_stop）とセッション存在確認、重複Interimの ACCT_DUPLICATE_INTERIM 分離、AccountingProcessor の戻り値から error を外し SYS_ERR を削除、LOG_LEVEL 対応（環境変数・設定構造体・main.go のロガー初期化）、RADIUS_SECRET を任意（空を推奨）に、起動ログの radius_secret_fallback と WARN、PacketServer の設定（InsecureSkipVerify、ErrorLog）、Accounting-Request の Request Authenticator 検証をハンドラーで行う、Status-Server の応答ログを DEBUG にし event_id を RADIUS_STATUS_OK に（旧 PKT_RECV）、セッションと課金ログに nas_identifier を追加 |
 | D-11 | Vector API詳細設計書 | r11 | 2026-10-04 | パッケージ構成、HTTPサーバー設定、Milenage計算、SQN管理、SQN競合制御（WATCH/MULTI CAS）、エラーハンドリング、ベースイメージ方針、テストベクターモード本番無効化注記、event_idを実装に整合、SQN競合制御（CAS）は設計済み・現行未実装と明記、テストベクターモードを実装に整合（Ki/OPc/AMFのみ固定値、加入者登録必須、既定SQNフォールバックとTEST_SQN_*ログ廃止）、ログ整理（ContextWithTraceID で SQN_RESYNC に trace_id・imsi、ユースケース層のデルタ超過・test vector generated ログ削除、CALC_OK に test_mode、ProblemError 経路の error 属性、IsTestMode 追加）、未使用の GetWithRetry / ErrInvalidIMSI を削除、SQN競合制御を実装（方式を WATCH/MULTI から Lua による `sqn` の比較・置き換えに変更、CompareAndSetSQN、最大3回の試行と 1〜10ms の待ち、ErrSQNConflict（409）、再同期のやり直しで同期済みとみなす扱い、SQN の書き換え後にベクター生成）、Admin TUI の `sqn` 上書きの制約を解消済みに（§13.3、§13.6.9） |
 | D-12 | Vector Gateway詳細設計書 | r9 | 2026-10-04 | 外部API連携設計、PLMNルーティング、接続方式管理、トレーサビリティ、IMSIマスキング、ベースイメージ方針（debian:bookworm-slim）、接続方式01（aka-only-server、mTLS/平文HTTP、GenerateAv変換）実装、compose抜粋・環境変数にLOG_LEVELを追加、LOG_LEVEL の変換を pkg/logging.ParseLevel に統一、compose の LOG_LEVEL を acct-server にも渡す旨に修正、バックエンド向けタイムアウトの既定値を 3s に変更（auth-server の5秒より短く）、5秒以上なら起動時 WARN |
 
@@ -49,7 +49,7 @@
 |-----|---------------|------|---------|------|
 | E-01 | 開発環境セットアップガイド | r8 | 2026-10-04 | Go環境構築、Go Workspace設定、依存パッケージ、ローカル開発手順、デバッグ方法、環境変数名統一（RADIUS_SECRET）、Makefileセクション追加、golangci-lint/CIセクション追加、テストベクターモード環境変数追加、event_idを実装に整合、LOG_LEVEL（開発用.env・実行例・環境変数一覧）追加、LOG_LEVEL の対象に acct-server を追加、VECTOR_GATEWAY_INTERNAL_TIMEOUT の例・既定値を 3s に、24224 の公開範囲（127.0.0.1 のみ）と RADIUS_SECRET（任意）の説明を訂正 |
 | E-02 | コーディング規約（簡易版） | r6 | 2026-10-04 | 命名規則、パッケージ構成、エラーハンドリングパターン、構造体タグ（jsonのみ）、ログ出力規約、IMSIマスキングD-04 r17準拠、golangci-lint導入済み反映、ログ出力例のevent_idを実装に整合、Handler層例のEAP_ENGINE_ERRを削除、ログレベルはLOG_LEVEL（pkg/logging.ParseLevel。Auth Server / Vector Gateway / Vector API 共通）で設定、LOG_LEVEL・ParseLevel の対象に Acct Server を追加 |
-| E-03 | 共通ライブラリ(pkg)設計書 | r9 | 2026-10-04 | pkg配置方針、apperr/valkey/logging/model/httputil各パッケージ設計、IMSIマスキングD-04準拠、MaskUserName / Masker.UserName追加、PolicyRuleを実装（NasID/AllowedSSIDs/VlanID/SessionTimeout）に整合、ParseLevel（LOG_LEVEL→slog.Level変換）追加、ParseLevel の利用箇所に Vector Gateway / Vector API を追加、ParseLevel の利用箇所に Acct Server を追加、logging.NewRADIUSLibraryLogger（RADIUS ライブラリのログを slog に流す）を追加 |
+| E-03 | 共通ライブラリ(pkg)設計書 | r10 | 2026-10-06 | pkg配置方針、apperr/valkey/logging/model/httputil各パッケージ設計、IMSIマスキングD-04準拠、MaskUserName / Masker.UserName追加、PolicyRuleを実装（NasID/AllowedSSIDs/VlanID/SessionTimeout）に整合、ParseLevel（LOG_LEVEL→slog.Level変換）追加、ParseLevel の利用箇所に Vector Gateway / Vector API を追加、ParseLevel の利用箇所に Acct Server を追加、logging.NewRADIUSLibraryLogger（RADIUS ライブラリのログを slog に流す）を追加、model.Session に NasIdentifier を追加 |
 
 ### 2.2 未作成
 
@@ -64,7 +64,7 @@
 | No. | ドキュメント名 | 版数 | 最終更新 | 内容 |
 |-----|---------------|------|---------|------|
 | T-01 | テスト戦略書 | r4 | 2026-10-04 | テストレベル定義、テスト範囲、テスト環境、モック戦略、テストデータ戦略、品質ゲート、テストベクターモード運用注記、.env例の環境変数名（RADIUS_SECRET）を実装に整合、テストベクターモードの動作を実装に整合（加入者登録必須） |
-| T-02 | 単体テスト仕様書 | r17 | 2026-10-05 | コンポーネント別テストケース（全1,334件）、モック戦略、テストデータ設計、Vector Gateway接続方式01のテストケース追加、IMSIマスク漏れ修正のテストケース追加、acct-server Interimシーケンス判定修正のテストケース反映、vector-apiテストベクターモードの加入者登録必須化のテストケース反映、auth-serverポリシーnas_idワイルドカード（`*`）のテストケース追加、auth-server trace_id引き継ぎ・LOG_LEVEL対応のテストケース反映（ParseLevel・TraceIDFromState等を追加、EngineErrorを欠番）、vector-apiログ整理のテストケース反映（LogAttributes・LogsTraceIDAndMaskedIMSI等を追加、ErrInvalidIMSIの検証を欠番）、acct-server の重複Interim分離・SYS_ERR削除・LOG_LEVEL対応のテストケース反映（TestLoadLogLevel を追加、ProcessorError を欠番）、admin-tui 監査ログの件数・検索IMSI記録修正のテストケース反映（LogExport_ZeroRecords・LogCreate_NoCounts を追加、LogSearch を4件のテーブル駆動に）、vector-gateway のタイムアウト既定値変更・起動時 WARN のテストケース反映（TestWarnBackendConfig_Timeouts を追加）、admin-tui のキー配線漏れ修正のテストケース追加（`internal/ui` 配下に初のテスト。一覧の Enter / F6、IsTextInput、入力ダイアログの Esc、Session List のソート、Session Search の検索結果の並べ替え。新カテゴリ UT-TUI-UI）、SQN競合制御のテストケース追加（store の CompareAndSetSQN、競合時のやり直し・409・再同期、同一IMSIへの並行リクエスト）、Admin TUI の加入者編集（Update / UpdateWithSQN、編集・新規作成画面）のテストケース追加、auth-server / acct-server の起動時 WARN のテストケース追加、PacketServer の UDP テストと RADIUS ライブラリのログのテストケース追加、Status-Server の正常時ログを DEBUG にしたテストケース追加 |
+| T-02 | 単体テスト仕様書 | r18 | 2026-10-06 | コンポーネント別テストケース（全1,355件）、モック戦略、テストデータ設計、Vector Gateway接続方式01のテストケース追加、IMSIマスク漏れ修正のテストケース追加、acct-server Interimシーケンス判定修正のテストケース反映、vector-apiテストベクターモードの加入者登録必須化のテストケース反映、auth-serverポリシーnas_idワイルドカード（`*`）のテストケース追加、auth-server trace_id引き継ぎ・LOG_LEVEL対応のテストケース反映（ParseLevel・TraceIDFromState等を追加、EngineErrorを欠番）、vector-apiログ整理のテストケース反映（LogAttributes・LogsTraceIDAndMaskedIMSI等を追加、ErrInvalidIMSIの検証を欠番）、acct-server の重複Interim分離・SYS_ERR削除・LOG_LEVEL対応のテストケース反映（TestLoadLogLevel を追加、ProcessorError を欠番）、admin-tui 監査ログの件数・検索IMSI記録修正のテストケース反映（LogExport_ZeroRecords・LogCreate_NoCounts を追加、LogSearch を4件のテーブル駆動に）、vector-gateway のタイムアウト既定値変更・起動時 WARN のテストケース反映（TestWarnBackendConfig_Timeouts を追加）、admin-tui のキー配線漏れ修正のテストケース追加（`internal/ui` 配下に初のテスト。一覧の Enter / F6、IsTextInput、入力ダイアログの Esc、Session List のソート、Session Search の検索結果の並べ替え。新カテゴリ UT-TUI-UI）、SQN競合制御のテストケース追加（store の CompareAndSetSQN、競合時のやり直し・409・再同期、同一IMSIへの並行リクエスト）、Admin TUI の加入者編集（Update / UpdateWithSQN、編集・新規作成画面）のテストケース追加、auth-server / acct-server の起動時 WARN のテストケース追加、PacketServer の UDP テストと RADIUS ライブラリのログのテストケース追加、Status-Server の正常時ログを DEBUG にしたテストケース追加、NAS-Identifier をセッションとログに加えたテストケース追加 |
 | T-03 | 結合テスト仕様書 | r14 | 2026-10-04 | コンポーネント間連携テスト、シナリオテスト、テストベクターモード検証、Valkeyデータ整合性検証、Secret体系明確化、SQN再同期手順改訂、IMSI 003専用config追加、障害系PASS条件修正、identityオーバーライドIMSIのSQNリセット運用補足、Dockerイメージ再ビルド注意事項追加、eapaka_testパス参照をsupplement配下に一般化、INT-ACCT-ON-017/INT-ACCT-OFF-018追加、aka-only-server結合シナリオ追加、INT-GW-PLMN-010の未実装IDを02に変更、テストベクターモードでも加入者登録必須（テストIMSI帯でも未登録は404）・事前準備での登録を明記、INT-006 の期待結果に Auth Server の全パケットの PKT_RECV も同一 trace_id であることを追記、INT-006-03 に Vector API の SQN_RESYNC も同一 trace_id であることを追記、G6 と INT-005 の ACCT_DUPLICATE_INTERIM、INT-FAULT の Acct Server ベストエフォート動作を現行ハンドラー（SYS_ERR なし）に整合、INT-FAULT-001（Vector API停止）の PASS 条件を VECTOR_API_ERR（502）のみに（vector-gateway のタイムアウト 3s）、G3（SQN再同期）の手順を訂正（サーバー側 SQN を IND=7 の `FF9BB4D0B587` にして確実に再同期を起こす、PASS 条件に再同期ログ） |
 | T-04 | E2Eテスト仕様書 | r8 | 2026-10-04 | 実機テスト（SIM/AP）3件、擬似E2E（eapaka_test）5件、実機異常系3件の計11シナリオ、SQN管理注意事項追加、Valkey再起動後データ残存確認追加、eapaka_testパス参照をsupplement配下に一般化、aka-only-server接続E2Eシナリオと実施結果（2026-10-04）追加、テストベクターモードのT-03との差分（加入者登録必須）を実装に整合、認可ポリシーのnas_id `*`（任意のNASに一致）を反映、E2E-002 のログ確認に ACCT_DUPLICATE_INTERIM を追加 |
 
@@ -107,7 +107,7 @@
 | No. | ドキュメント名 | 作成時期 | 必須前提・方針 | 概要 |
 |-----|---------------|---------|---------------|------|
 | O-04 | バックアップ・リストア手順書 | **完了 (r2)** | D-08でバックアップ方針定義後 | Valkeyデータのバックアップ/リストア（自動・手動）、リストア手順、設定ファイルのバックアップと復元、トラブルシューティング、運用チェックリスト、リストア手順を訂正（5ステップ、docker compose run でボリュームの中身を入れ替え、加入者キー sub:*）、バックアップのパーミッションとホスト外への退避 |
-| O-05 | ログ解析ガイド | **完了 (r19)** | D-04の完成後 | lnavの使い方、頻出クエリ集、障害調査パターン。event_idを実装に整合、lnavクエリを実動作に整合（aka_radius_logテーブル）、user_nameマスク反映・SQLカラム（code/subtype/eap_type/acct_status_type/session_time）追加、ACCT_SEQUENCE_ERR（interim_after_stop）・ACCT_SESSION_NOT_FOUND（Interim）の反映、テストベクターモードのTEST_SQN_*を削除、2回目以降の PKT_RECV も同一 trace_id で追跡できる旨に修正、EAP_ENGINE_ERR 削除、LOG_LEVEL=DEBUG の vector api success、Vector API の SQN_RESYNC を trace_id で追跡・SQN_RESYNC_DELTA_ERR の error から SQN 値を取り出すクエリ・CALC_OK の test_mode で抽出するクエリ、ACCT_DUPLICATE_INTERIM の追加と重複検出クエリ（両 event_id）、SYS_ERR 削除、Admin TUI 監査ログの件数（record_count / result_count）と検索IMSI（target_imsi）の反映・jq 例の更新、VECTOR_CONN_ERR の原因特定に vector-gateway のタイムアウト設定（起動時 WARN）の確認を追記、SQN競合制御のログ（SQN_CONFLICT_RETRY / SQN_CONFLICT_ERR、attempt）を実装済みとして記載、Admin TUI の保存で SQN が巻き戻らなくなったことを反映、RADIUS パケットの破棄の調査（RADIUS_AUTH_ERR・RADIUS_LIB_ERR・PKT_UNKNOWN_CODE）を追加、Status-Server の正常時ログを DEBUG に（疎通確認は LOG_LEVEL=DEBUG） |
+| O-05 | ログ解析ガイド | **完了 (r20)** | D-04の完成後 | lnavの使い方、頻出クエリ集、障害調査パターン。event_idを実装に整合、lnavクエリを実動作に整合（aka_radius_logテーブル）、user_nameマスク反映・SQLカラム（code/subtype/eap_type/acct_status_type/session_time）追加、ACCT_SEQUENCE_ERR（interim_after_stop）・ACCT_SESSION_NOT_FOUND（Interim）の反映、テストベクターモードのTEST_SQN_*を削除、2回目以降の PKT_RECV も同一 trace_id で追跡できる旨に修正、EAP_ENGINE_ERR 削除、LOG_LEVEL=DEBUG の vector api success、Vector API の SQN_RESYNC を trace_id で追跡・SQN_RESYNC_DELTA_ERR の error から SQN 値を取り出すクエリ・CALC_OK の test_mode で抽出するクエリ、ACCT_DUPLICATE_INTERIM の追加と重複検出クエリ（両 event_id）、SYS_ERR 削除、Admin TUI 監査ログの件数（record_count / result_count）と検索IMSI（target_imsi）の反映・jq 例の更新、VECTOR_CONN_ERR の原因特定に vector-gateway のタイムアウト設定（起動時 WARN）の確認を追記、SQN競合制御のログ（SQN_CONFLICT_RETRY / SQN_CONFLICT_ERR、attempt）を実装済みとして記載、Admin TUI の保存で SQN が巻き戻らなくなったことを反映、RADIUS パケットの破棄の調査（RADIUS_AUTH_ERR・RADIUS_LIB_ERR・PKT_UNKNOWN_CODE）を追加、Status-Server の正常時ログを DEBUG に（疎通確認は LOG_LEVEL=DEBUG）、プロキシ経由での NAS の特定（§7.5。nas_identifier） |
 
 ---
 
@@ -129,15 +129,15 @@
 [設計ドキュメント] ─────────────────────────────────────────────────────┐
     │                                                                   │
     ├─ D-01: ミニPC版設計仕様書 (r17) ✓                                  │
-    ├─ D-02: Valkeyデータ設計仕様書 (r19) ✓                              │
+    ├─ D-02: Valkeyデータ設計仕様書 (r20) ✓                              │
     ├─ D-03: Vector-API/ステートマシン設計書 (r8) ✓                     │
-    ├─ D-04: ログ仕様設計書 (r32) ✓                                     │
+    ├─ D-04: ログ仕様設計書 (r33) ✓                                     │
     ├─ D-05: Admin TUI詳細設計書【前半】(r12) ✓                         │
     ├─ D-06: エラーハンドリング詳細設計書 (r17) ✓                       │
-    ├─ D-07: Admin TUI詳細設計書【後半】(r10) ✓                         │
-    ├─ D-08: インフラ設定・運用設計書 (r21) ✓                            │
-    ├─ D-09: Auth Server詳細設計書 (r19) ✓                               │
-    ├─ D-10: Acct Server詳細設計書 (r13) ✓                              │
+    ├─ D-07: Admin TUI詳細設計書【後半】(r11) ✓                         │
+    ├─ D-08: インフラ設定・運用設計書 (r22) ✓                            │
+    ├─ D-09: Auth Server詳細設計書 (r20) ✓                               │
+    ├─ D-10: Acct Server詳細設計書 (r14) ✓                              │
     ├─ D-11: Vector API詳細設計書 (r11) ✓                                │
     └─ D-12: Vector Gateway詳細設計書 (r9) ✓                            │
                     │                                                   │
@@ -146,13 +146,13 @@
     │                                                                   │
     ├─ E-01: 開発環境セットアップガイド (r8) ✓                          │
     ├─ E-02: コーディング規約・簡易版 (r6) ✓                            │
-    └─ E-03: 共通ライブラリ設計書 (r9) ✓                                │
+    └─ E-03: 共通ライブラリ設計書 (r10) ✓                                │
                     │                                                   │
                     ▼                                                   │
 [テストドキュメント] ───────────────────────────────────────────────────┤
     │                                                                   │
     ├─ T-01: テスト戦略書 (r4) ✓                                        │
-    ├─ T-02: 単体テスト仕様書 (r17) ✓                                    │
+    ├─ T-02: 単体テスト仕様書 (r18) ✓                                    │
     ├─ T-03: 結合テスト仕様書 (r14) ✓                                   │
     └─ T-04: E2Eテスト仕様書 (r8) ✓                                    │
                     │                                                   │
@@ -170,7 +170,7 @@
     ├─ O-02: ポリシー設定ガイド (r3)✓
     ├─ O-03: 障害対応手順書 (r12) ✓
     ├─ O-04: バックアップ・リストア手順書 (r2) ✓
-    └─ O-05: ログ解析ガイド (r19)✓
+    └─ O-05: ログ解析ガイド (r20)✓
 ```
 
 ---
@@ -181,12 +181,12 @@
 
 | 順序 | ドキュメントID | ドキュメント名 | ステータス |
 |-----|---------------|---------------|-----------|
-| 1 | D-07 | Admin TUI詳細設計書【後半】 | **完了 (r10)** |
+| 1 | D-07 | Admin TUI詳細設計書【後半】 | **完了 (r11)** |
 | 2 | D-12 | Vector Gateway詳細設計書 | **完了 (r9)** |
-| 3 | D-08 | インフラ設定・運用設計書 | **完了 (r21)** |
-| 4 | D-09 | Auth Server詳細設計書 | **完了 (r19)** |
+| 3 | D-08 | インフラ設定・運用設計書 | **完了 (r22)** |
+| 4 | D-09 | Auth Server詳細設計書 | **完了 (r20)** |
 | 5 | D-11 | Vector API詳細設計書 | **完了 (r11)** |
-| 6 | D-10 | Acct Server詳細設計書 | **完了 (r13)** |
+| 6 | D-10 | Acct Server詳細設計書 | **完了 (r14)** |
 
 ### フェーズ2: 開発準備
 
@@ -194,14 +194,14 @@
 |-----|---------------|---------------|-----------|
 | 7 | E-01 | 開発環境セットアップガイド | **完了 (r8)** |
 | 8 | E-02 | コーディング規約（簡易版） | **完了 (r6)** |
-| 9 | E-03 | 共通ライブラリ(pkg)設計書 | **完了 (r9)** |
+| 9 | E-03 | 共通ライブラリ(pkg)設計書 | **完了 (r10)** |
 | 10 | T-01 | テスト戦略書 | **完了 (r4)** |
 
 ### フェーズ3: 開発・テスト
 
 | 順序 | ドキュメントID | ドキュメント名 | ステータス |
 |-----|---------------|---------------|-----------|
-| 11 | T-02 | 単体テスト仕様書 | **完了 (r17)** |
+| 11 | T-02 | 単体テスト仕様書 | **完了 (r18)** |
 | 12 | T-03 | 結合テスト仕様書 | **完了 (r14)** |
 | 13 | T-04 | E2Eテスト仕様書 | **完了 (r8)** |
 
@@ -221,7 +221,7 @@
 | 17 | O-02 | ポリシー設定ガイド | **完了 (r3)** |
 | 18 | O-03 | 障害対応手順書 | **完了 (r12)** |
 | 19 | O-04 | バックアップ・リストア手順書 | **完了 (r2)** |
-| 20 | O-05 | ログ解析ガイド | **完了 (r19)** |
+| 20 | O-05 | ログ解析ガイド | **完了 (r20)** |
 
 ---
 
@@ -299,3 +299,4 @@
 | r52 | 2026-10-04 | VPS 向けのデプロイ手順書 B-03（AWS Lightsail、r1、机上確認）を追加（構築・デプロイドキュメント 2→3件、総数 27→28件）。あわせて B-01 / B-02 の誤りを訂正（Ubuntu 24.04 の SSH はソケット起動のためポート変更は daemon-reload と ssh.socket の再起動で反映し ss で確認、git clone したログディレクトリは 775 で logrotate が処理を飛ばすため 755 に、クローン URL、コンテナ名）、D-01 の Acct Server の検証方式、D-09 の main.go の例の NewServer を訂正: B-01(r4→r5)、B-02(r17→r18)、B-03(r1 新規)、D-01(r16→r17)、D-09(r17→r18) |
 | r53 | 2026-10-04 | B-03 §4.4 の admin ユーザーの作成の訂正（Ubuntu には旧来の sudo 用の admin グループが既にあり、`adduser admin` が失敗することを Lightsail の実機で確認。`--ingroup admin` で既存グループを主グループにする）と、.env のオプション項目の扱いの明記（コメントアウトのままなら compose の `${変数:-既定値}` で既定値になり、明示的に空にする必要はない。コメント内の値には設定例のもの（`VECTOR_GATEWAY_AKAONLY_*`、`COMPOSE_FILE`）があり、コメント記号だけを外すとその値が有効になる。`.env.example` の冒頭にも追記）、Valkey のパスワードをコマンドラインに直接書く手順の廃止（接続確認は `.env` を読み込み `VALKEYCLI_AUTH` を値なしの `-e` で渡す、Admin TUI は `.env` を読み込んでから起動、`echo $VALKEY_PASSWORD` を設定の有無の表示に）、B-02 §9.4 の初回の `crontab -e` のエディタ選択の注記、B-02 §11 のデプロイ後チェックリストの作り直し（作業ディレクトリへの移動と `.env` の読み込みを先頭に置き、1行1コマンドで順に実行するコードブロックと、期待値の表に分けた）に伴う版数更新: B-03(r1→r2)、B-02(r18→r19)、D-08(r20→r21) |
 | r54 | 2026-10-05 | Status-Server に正常に応答したときのログを DEBUG に下げた実装修正（radsecproxy 等の複数のプロキシが Status-Server を定期的に送る構成で INFO ログが埋まらないようにする。auth-server は Status-Server の PKT_RECV と RADIUS_STATUS_OK、acct-server は Status-Server: 応答送信（あわせて event_id を PKT_RECV から auth-server と同じ RADIUS_STATUS_OK に変更）。Message-Authenticator 検証失敗の WARN（RADIUS_STATUS_AUTH_FAIL / RADIUS_AUTH_ERR）と送信失敗の PKT_SEND_ERR（ERROR）は変更なし）に伴う版数更新: D-04(r31→r32)、D-09(r18→r19)、D-10(r12→r13)、O-05(r18→r19)、T-02(r16→r17。テストケース 1,329→1,334件) |
+| r55 | 2026-10-06 | NAS-Identifier を NAS の識別情報としてセッションとログに加えた実装修正（radsecproxy 等のプロキシ経由では送信元IPがプロキシのIPになり NAS を区別できないため。auth-server はポリシー評価に使った NAS-Identifier をセッションに書き、PKT_RECV（Access-Request）・AUTH_SUCCESS・AUTH_POLICY_DENIED・AUTH_POLICY_NOT_FOUND に出す。acct-server は Start / Interim で NAS-Identifier があればセッションを上書きし、src_ip を持つ課金のログに出す。Admin TUI の Session List / Session Search に NAS-ID カラムとフィルタ。lnav フォーマットに nas_identifier）と、外部の radsecproxy と接続する場合の注意（radsecproxy は本PoCに含めず外部に置く方針。2026-10-06 の PoC の結果）に伴う版数更新: D-02(r19→r20)、D-04(r32→r33)、D-07(r10→r11)、D-08(r21→r22)、D-09(r19→r20)、D-10(r13→r14)、E-03(r9→r10)、O-05(r19→r20)、T-02(r17→r18。テストケース 1,334→1,355件) |

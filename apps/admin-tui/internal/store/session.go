@@ -198,6 +198,7 @@ func mapToSession(uuid string, m map[string]string) (*model.Session, error) {
 		UUID:          uuid,
 		IMSI:          m["imsi"],
 		NasIP:         m["nas_ip"],
+		NasIdentifier: m["nas_identifier"],
 		ClientIP:      m["client_ip"],
 		AcctSessionID: m["acct_id"],
 	}

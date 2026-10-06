@@ -28,7 +28,8 @@ const (
 type Session struct {
 	UUID          string `json:"uuid"`            // セッション識別子
 	IMSI          string `json:"imsi"`            // 加入者IMSI
-	NasIP         string `json:"nas_ip"`          // NAS IPアドレス
+	NasIP         string `json:"nas_ip"`          // NAS IPアドレス（パケットの送信元IP。プロキシ経由ではプロキシのIP）
+	NasIdentifier string `json:"nas_identifier"`  // NAS-Identifier（プロキシ経由でもNASを識別できる）
 	ClientIP      string `json:"client_ip"`       // クライアントIPアドレス
 	AcctSessionID string `json:"acct_session_id"` // アカウンティングセッションID
 	StartTime     int64  `json:"start_time"`      // セッション開始時刻（Unix秒）

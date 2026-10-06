@@ -259,3 +259,33 @@ func TestSessionStore_List_WithInvalidEntry(t *testing.T) {
 
 // redisパッケージのインポートを使用していることを保証
 var _ = redis.Nil
+
+func TestSessionStore_Get_NASIdentifier(t *testing.T) {
+	_, client := newTestRedis(t)
+	defer client.Close()
+
+	ss := NewSessionStore(client)
+	ctx := context.Background()
+
+	setSessionHash(ctx, client, "with-nas-id", "001010000000001", "172.30.0.10", "", "", 1700000000, 0, 0)
+	client.HSet(ctx, SessionKey("with-nas-id"), "nas_identifier", "ap-001")
+	// nas_identifier を持たない（追加前に作られた）セッション
+	setSessionHash(ctx, client, "without-nas-id", "001010000000001", "192.168.10.1", "", "", 1700000000, 0, 0)
+
+	tests := []struct {
+		uuid string
+		want string
+	}{
+		{"with-nas-id", "ap-001"},
+		{"without-nas-id", ""},
+	}
+	for _, tt := range tests {
+		got, err := ss.Get(ctx, tt.uuid)
+		if err != nil {
+			t.Fatalf("Get(%s) error = %v", tt.uuid, err)
+		}
+		if got.NasIdentifier != tt.want {
+			t.Errorf("Get(%s).NasIdentifier = %q, want %q", tt.uuid, got.NasIdentifier, tt.want)
+		}
+	}
+}

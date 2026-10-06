@@ -1,4 +1,4 @@
-# D-02 Valkey データ設計仕様書 (r19)
+# D-02 Valkey データ設計仕様書 (r20)
 
 ## 1. 全体方針
 
@@ -293,7 +293,8 @@ RADIUS属性 Class にこのUUIDが格納される。
 | **Field**      | **格納形式** | **説明**           | **書き込みタイミング**   |
 | -------------- | ------------ | ------------------ | -------------------- |
 | `imsi`         | String       | IMSI               | Auth Accept時 |
-| `nas_ip`       | String       | NAS IPアドレス     | Auth Accept時（Access-Requestの送信元IP）。Acct Start/Interim時に Accounting-Request の送信元IPで上書き |
+| `nas_ip`       | String       | NAS IPアドレス     | Auth Accept時（Access-Requestの送信元IP）。Acct Start/Interim時に Accounting-Request の送信元IPで上書き。radsecproxy 等のプロキシ経由ではプロキシのIPになる |
+| `nas_identifier` | String     | NAS-Identifier     | Auth Accept時（ポリシー評価に使った Access-Request の NAS-Identifier。属性がなければ空文字）。Acct Start/Interim時に Accounting-Request の NAS-Identifier があれば上書き（なければ残す） |
 | `start_time`   | 10進数（Unix秒） | 接続開始時刻   | Auth Accept時。Acct Start時に上書き |
 | `client_ip`    | String       | 端末IP (Framed-IP-Address) | Auth Accept時は空文字。Acct Start/Interim時に Framed-IP-Address があれば上書き |
 | `acct_id`      | String       | Acct-Session-Id    | Auth Accept時は空文字。Acct Start時に設定 |
@@ -301,6 +302,8 @@ RADIUS属性 Class にこのUUIDが格納される。
 | `output_octets`| 10進数       | 送信通信量（Acct-Output-Octets） | Auth Accept時は `0`。Acct Interim時に上書き |
 
 > Acct Stop時はセッションを削除するため、Stop の通信量は `sess:{UUID}` には保存しない（`ACCT_STOP` ログに出力する）。
+
+> **`nas_identifier` を持つ理由:** Auth / Acct Server の前段に radsecproxy 等のプロキシを置くと、`nas_ip`（送信元IP）はすべてプロキシのIPになり、NAS を区別できない。NAS-Identifier はプロキシで NAS ごとの値に置き換えられる（D-08 §5.8）ため、NAS の識別に使う。`nas_identifier` は 2026-10-06 の実装修正で追加したフィールドで、それより前に作られたセッションにはない（Admin TUI は `-` と表示する）。
 
 > **Acct Server のセッション処理と不在時の動作:**
 > - **Start:** Class属性が無い・不正、または `sess:{UUID}` が存在しない場合は `ACCT_SESSION_NOT_FOUND`（WARN）を出力し、セッションは更新しない（新規作成もしない）
@@ -397,7 +400,7 @@ Acct Serverが重複パケットおよび順序異常を検出するためのキ
      - RADIUSリクエスト内の `NAS-Identifier` / `Called-Station-Id`(SSID) とルールを照合（セクション2.C）。
      - **拒否:** `Access-Reject` を返却（`AUTH_POLICY_DENIED`）。
      - **許可:** `Access-Accept` を返却。
-       - `sess:{SessionUUID}` を作成（imsi, nas_ip, start_time ほか。TTL 24時間）し、`SADD idx:user:{IMSI} {SessionUUID}`。
+       - `sess:{SessionUUID}` を作成（imsi, nas_ip, nas_identifier, start_time ほか。TTL 24時間）し、`SADD idx:user:{IMSI} {SessionUUID}`。
        - `eap:{UUID}` を削除。
        - 採用ルールの `vlan_id` -> `Tunnel-Type` / `Tunnel-Medium-Type` / `Tunnel-Private-Group-Id` AVPへ。
        - 採用ルールの `session_timeout` -> `Session-Timeout` AVPへ。
@@ -417,10 +420,10 @@ Acct Serverが重複パケットおよび順序異常を検出するためのキ
 2. **Acct-Start 受信時:**
    - `acct:seen:{Acct-Session-Id}` で重複・順序異常を判定（セクション3.G）。
    - Class属性なし・不正、または `sess:{UUID}` 不在 → `ACCT_SESSION_NOT_FOUND`（WARN）、セッション更新なしで処理継続。
-   - 存在すれば start_time, nas_ip, acct_id, client_ip を保存 (HSET)、TTL延長 (EXPIRE 24h)。
+   - 存在すれば start_time, nas_ip, acct_id, client_ip（Framed-IP-Address があるとき）、nas_identifier（NAS-Identifier があるとき）を保存 (HSET)、TTL延長 (EXPIRE 24h)。
 3. **Acct-Interim 受信時:**
    - `acct:seen:{Acct-Session-Id}` で重複・順序異常を判定（セクション3.G）。
-   - Class属性があれば `sess:{UUID}` の存在を確認し、存在すれば nas_ip, input_octets, output_octets, client_ip を保存 (HSET)、TTL延長 (EXPIRE 24h)。不在なら `ACCT_SESSION_NOT_FOUND`（WARN）、セッション更新・作成なしで処理継続。
+   - Class属性があれば `sess:{UUID}` の存在を確認し、存在すれば nas_ip, input_octets, output_octets, client_ip（Framed-IP-Address があるとき）、nas_identifier（NAS-Identifier があるとき）を保存 (HSET)、TTL延長 (EXPIRE 24h)。不在なら `ACCT_SESSION_NOT_FOUND`（WARN）、セッション更新・作成なしで処理継続。
 4. **Acct-Stop 受信時:**
    - `acct:seen:{Acct-Session-Id}` を `stop` に更新。
    - `sess:{UUID}` から imsi を取得したうえで削除 (DEL)。
@@ -524,7 +527,8 @@ func NewEAPContext(traceID, imsi string, eapType uint8) *EAPContext
 type Session struct {
     UUID          string `json:"uuid"`            // セッション識別子（Valkeyではキー sess:{UUID} の一部）
     IMSI          string `json:"imsi"`            // 加入者IMSI
-    NasIP         string `json:"nas_ip"`          // NAS IPアドレス
+    NasIP         string `json:"nas_ip"`          // NAS IPアドレス（パケットの送信元IP。プロキシ経由ではプロキシのIP）
+    NasIdentifier string `json:"nas_identifier"`  // NAS-Identifier（プロキシ経由でもNASを識別できる）
     ClientIP      string `json:"client_ip"`       // クライアントIPアドレス
     AcctSessionID string `json:"acct_session_id"` // Acct-Session-Id（Valkeyのフィールド名は acct_id）
     StartTime     int64  `json:"start_time"`      // セッション開始時刻（Unix秒）
@@ -557,13 +561,14 @@ type EAPContext struct {
 // apps/auth-server/internal/session/session.go — sess:{UUID}
 // apps/acct-server/internal/session/types.go も同じフィールド構成
 type Session struct {
-    IMSI         string `redis:"imsi"`
-    NasIP        string `redis:"nas_ip"`
-    StartTime    int64  `redis:"start_time"`
-    ClientIP     string `redis:"client_ip"`
-    AcctID       string `redis:"acct_id"`
-    InputOctets  int64  `redis:"input_octets"`
-    OutputOctets int64  `redis:"output_octets"`
+    IMSI          string `redis:"imsi"`
+    NasIP         string `redis:"nas_ip"`
+    NasIdentifier string `redis:"nas_identifier"` // ポリシー評価に使ったNAS-Identifier（プロキシ経由でもNASを識別できる）
+    StartTime     int64  `redis:"start_time"`
+    ClientIP      string `redis:"client_ip"`
+    AcctID        string `redis:"acct_id"`
+    InputOctets   int64  `redis:"input_octets"`
+    OutputOctets  int64  `redis:"output_octets"`
 }
 
 // apps/auth-server/internal/store/client.go — client:{IP}（Auth/Acct Serverは secret のみ HGET）
@@ -628,3 +633,4 @@ type Subscriber struct {
 | r17 | 2026-10-04 | acct-server の重複 Interim の event_id 分離の実装修正の反映（3.G）: 重複・順序異常の検出ロジックで、直前と同一の `interim:{input}:{output}` の Interim（重複）に出力する event_id を `ACCT_DUPLICATE_START` から `ACCT_DUPLICATE_INTERIM` に変更（重複 Start は従来どおり `ACCT_DUPLICATE_START`） |
 | r18 | 2026-10-04 | SQN競合制御の実装（Lua による `sqn` の比較・置き換え、競合時のやり直し最大3回、HTTP 409）の反映（2.A、5.2）: `sqn` フィールドの備考と「SQN更新方式（現行実装）」を、単純な HSET による後勝ちから、Lua スクリプト（`CompareAndSetSQN`。EVALSHA）で読んだ値と一致するときだけ書き換える方式に改めた。スクリプト本体、比較は `sqn` フィールドのみ・大文字小文字を正規化しない・キー不在時は作成しないこと、ベクター計算を書き換え成功後に行う順序、競合時のやり直し（1〜10ms待機、最大3回、`SQN_CONFLICT_RETRY`）と上限超過・期限切れ時の 409（`SQN_CONFLICT_ERR`）、再同期のやり直しで同期済みとみなす場合、書き換え後のベクター計算失敗時は SQN が進んだままになること、守る性質（IMSIごとに一意・単調増加）、WATCH/MULTI 設計からの経緯を記載。「WATCH/MULTI による CAS・リトライ・HTTP 409 は実装していない」の記述を削除。残っている制約として Admin TUI の加入者編集が `sqn` を上書きし巻き戻りうること（別PRで対応予定）を追記。5.2 ストア層変換方式の補足の Vector API の書き戻し方法を更新 |
 | r19 | 2026-10-04 | Admin TUI の加入者編集による `sqn` の上書き（巻き戻り）を解消した実装修正の反映（2.A、4、5.2）: r18 で「残っている制約」として記載した Admin TUI による `sqn` の上書きを解消済みとし、「Admin TUI からの書き込み（加入者編集）」に改めた。Lua スクリプト（`updateSubscriberScript`）で存在チェックと更新をまとめて行うこと、SQN を変更していないとき（大文字小文字の違いだけを含む）は `ki` / `opc` / `amf` だけを更新し `sqn` を書き換えないこと、変更したときは編集開始時の値と一致する場合だけ更新し一致しなければ何も更新しないこと、加入者が削除されていればキーを作らないこと、新規作成・CSVインポートは例外であることを記載。`sqn` フィールドの備考を補足。Hex表記の「入力どおりに保存する」を「大文字に正規化して保存する」に訂正。4 の Admin TUI のデータアクセスと 5.2 ストア層変換方式の補足に編集時の Lua スクリプトを追記 |
+| r20 | 2026-10-06 | `sess:{UUID}` に `nas_identifier`（NAS-Identifier）を追加した実装修正の反映: radsecproxy 等のプロキシ経由では `nas_ip`（送信元IP）がプロキシのIPになり NAS を区別できないため。Auth Server が Accept 時にポリシー評価に使った NAS-Identifier を書き、Acct Server が Start / Interim で NAS-Identifier があれば上書きする（なければ残す）。§2 のフィールド表・処理フロー・§5 の構造体を更新し、`nas_ip` がプロキシ経由ではプロキシのIPになる旨を追記 |
