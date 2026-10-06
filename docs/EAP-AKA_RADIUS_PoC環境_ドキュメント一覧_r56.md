@@ -1,7 +1,7 @@
-# EAP-AKA RADIUS PoC環境 ドキュメント一覧 (r55)
+# EAP-AKA RADIUS PoC環境 ドキュメント一覧 (r56)
 
 **作成日:** 2025-12-30
-**最終更新:** 2026-10-06
+**最終更新:** 2026-10-07
 **ステータス:** 運用準備フェーズ
 
 ---
@@ -24,10 +24,11 @@
 | D-10 | Acct Server詳細設計書 | r14 | 2026-10-06 | パッケージ構成、Accounting処理フロー、セッション更新ロジック、重複検出、IMSIマスキング、Status-Server対応、ベースイメージ方針、Accounting-On/Off対応（ProcessOn/ProcessOff、NAS-Identifier処理）、event_idを実装に整合、IMSI抽出不可時のUser-Nameをマスクして出力、Interimのシーケンス判定（CheckInterim、interim_after_stop）とセッション存在確認、重複Interimの ACCT_DUPLICATE_INTERIM 分離、AccountingProcessor の戻り値から error を外し SYS_ERR を削除、LOG_LEVEL 対応（環境変数・設定構造体・main.go のロガー初期化）、RADIUS_SECRET を任意（空を推奨）に、起動ログの radius_secret_fallback と WARN、PacketServer の設定（InsecureSkipVerify、ErrorLog）、Accounting-Request の Request Authenticator 検証をハンドラーで行う、Status-Server の応答ログを DEBUG にし event_id を RADIUS_STATUS_OK に（旧 PKT_RECV）、セッションと課金ログに nas_identifier を追加 |
 | D-11 | Vector API詳細設計書 | r11 | 2026-10-04 | パッケージ構成、HTTPサーバー設定、Milenage計算、SQN管理、SQN競合制御（WATCH/MULTI CAS）、エラーハンドリング、ベースイメージ方針、テストベクターモード本番無効化注記、event_idを実装に整合、SQN競合制御（CAS）は設計済み・現行未実装と明記、テストベクターモードを実装に整合（Ki/OPc/AMFのみ固定値、加入者登録必須、既定SQNフォールバックとTEST_SQN_*ログ廃止）、ログ整理（ContextWithTraceID で SQN_RESYNC に trace_id・imsi、ユースケース層のデルタ超過・test vector generated ログ削除、CALC_OK に test_mode、ProblemError 経路の error 属性、IsTestMode 追加）、未使用の GetWithRetry / ErrInvalidIMSI を削除、SQN競合制御を実装（方式を WATCH/MULTI から Lua による `sqn` の比較・置き換えに変更、CompareAndSetSQN、最大3回の試行と 1〜10ms の待ち、ErrSQNConflict（409）、再同期のやり直しで同期済みとみなす扱い、SQN の書き換え後にベクター生成）、Admin TUI の `sqn` 上書きの制約を解消済みに（§13.3、§13.6.9） |
 | D-12 | Vector Gateway詳細設計書 | r9 | 2026-10-04 | 外部API連携設計、PLMNルーティング、接続方式管理、トレーサビリティ、IMSIマスキング、ベースイメージ方針（debian:bookworm-slim）、接続方式01（aka-only-server、mTLS/平文HTTP、GenerateAv変換）実装、compose抜粋・環境変数にLOG_LEVELを追加、LOG_LEVEL の変換を pkg/logging.ParseLevel に統一、compose の LOG_LEVEL を acct-server にも渡す旨に修正、バックエンド向けタイムアウトの既定値を 3s に変更（auth-server の5秒より短く）、5秒以上なら起動時 WARN |
+| D-13 | Provisioning API詳細設計書 | r1 | 2026-10-07 | **設計中（未実装）**。加入者・RADIUSクライアント・認可ポリシーの CRUD を REST API として本PoCの外の BFF に提供する provisioning-api の設計。aka-only-server の管理API に揃えた作法（`/admin/v1`、camelCase、JSON Merge Patch、ProblemDetails の `cause`）、Ki / OPc・共有シークレットの読み出しを専用の経路に限って監査、mTLS（フィンガープリント固定）と `X-Operator-Id`、Admin TUI の store / validation の `pkg/` への移動、将来の統合API（eapaka-node-provisioner）との関係。OpenAPI 定義は `docs/openapi/provisioning-api.yaml`。拡張案 X-01 を置き換える |
 
 ### 1.2 未作成
 
-なし（設計ドキュメント全12件完了）
+なし（設計ドキュメント全13件作成済み。D-13 は実装前の設計）
 
 ### 1.3 Go実装ノードと設計ドキュメントの対応
 
@@ -38,6 +39,7 @@
 | **Vector API** | `apps/vector-api` | D-02（データ構造）, D-03（API仕様）, **D-11**（詳細設計） |
 | **Vector Gateway** | `apps/vector-gateway` | **D-12**（詳細設計書） |
 | **Admin TUI** | `apps/admin-tui` | D-02（データ構造）, **D-05**（前半）, **D-07**（後半） |
+| **Provisioning API**（未実装） | `apps/provisioning-api` | D-02（データ構造）, D-04（ログ）, **D-13**（詳細設計） |
 
 ---
 
@@ -139,7 +141,8 @@
     ├─ D-09: Auth Server詳細設計書 (r20) ✓                               │
     ├─ D-10: Acct Server詳細設計書 (r14) ✓                              │
     ├─ D-11: Vector API詳細設計書 (r11) ✓                                │
-    └─ D-12: Vector Gateway詳細設計書 (r9) ✓                            │
+    ├─ D-12: Vector Gateway詳細設計書 (r9) ✓                            │
+    └─ D-13: Provisioning API詳細設計書 (r1)（設計中）                  │
                     │                                                   │
                     ▼                                                   │
 [開発ドキュメント] ─────────────────────────────────────────────────────┤
@@ -229,13 +232,13 @@
 
 | カテゴリ | 総数 | 作成済み | 未作成 | 進捗率 |
 |---------|------|---------|-------|-------|
-| 設計ドキュメント | 12 | 12 | 0 | 100% |
+| 設計ドキュメント | 13 | 13 | 0 | 100% |
 | 開発ドキュメント | 3 | 3 | 0 | 100% |
 | テストドキュメント | 4 | 4 | 0 | 100% |
 | 構築・デプロイドキュメント | 3 | 3 | 0 | 100% |
 | 運用ドキュメント | 5 | 5 | 0 | 100% |
 | 補足資料 | 1 | 1 | 0 | 100% |
-| **合計** | **28** | **28** | **0** | **100%** |
+| **合計** | **29** | **29** | **0** | **100%** |
 
 ---
 
@@ -300,3 +303,4 @@
 | r53 | 2026-10-04 | B-03 §4.4 の admin ユーザーの作成の訂正（Ubuntu には旧来の sudo 用の admin グループが既にあり、`adduser admin` が失敗することを Lightsail の実機で確認。`--ingroup admin` で既存グループを主グループにする）と、.env のオプション項目の扱いの明記（コメントアウトのままなら compose の `${変数:-既定値}` で既定値になり、明示的に空にする必要はない。コメント内の値には設定例のもの（`VECTOR_GATEWAY_AKAONLY_*`、`COMPOSE_FILE`）があり、コメント記号だけを外すとその値が有効になる。`.env.example` の冒頭にも追記）、Valkey のパスワードをコマンドラインに直接書く手順の廃止（接続確認は `.env` を読み込み `VALKEYCLI_AUTH` を値なしの `-e` で渡す、Admin TUI は `.env` を読み込んでから起動、`echo $VALKEY_PASSWORD` を設定の有無の表示に）、B-02 §9.4 の初回の `crontab -e` のエディタ選択の注記、B-02 §11 のデプロイ後チェックリストの作り直し（作業ディレクトリへの移動と `.env` の読み込みを先頭に置き、1行1コマンドで順に実行するコードブロックと、期待値の表に分けた）に伴う版数更新: B-03(r1→r2)、B-02(r18→r19)、D-08(r20→r21) |
 | r54 | 2026-10-05 | Status-Server に正常に応答したときのログを DEBUG に下げた実装修正（radsecproxy 等の複数のプロキシが Status-Server を定期的に送る構成で INFO ログが埋まらないようにする。auth-server は Status-Server の PKT_RECV と RADIUS_STATUS_OK、acct-server は Status-Server: 応答送信（あわせて event_id を PKT_RECV から auth-server と同じ RADIUS_STATUS_OK に変更）。Message-Authenticator 検証失敗の WARN（RADIUS_STATUS_AUTH_FAIL / RADIUS_AUTH_ERR）と送信失敗の PKT_SEND_ERR（ERROR）は変更なし）に伴う版数更新: D-04(r31→r32)、D-09(r18→r19)、D-10(r12→r13)、O-05(r18→r19)、T-02(r16→r17。テストケース 1,329→1,334件) |
 | r55 | 2026-10-06 | NAS-Identifier を NAS の識別情報としてセッションとログに加えた実装修正（radsecproxy 等のプロキシ経由では送信元IPがプロキシのIPになり NAS を区別できないため。auth-server はポリシー評価に使った NAS-Identifier をセッションに書き、PKT_RECV（Access-Request）・AUTH_SUCCESS・AUTH_POLICY_DENIED・AUTH_POLICY_NOT_FOUND に出す。acct-server は Start / Interim で NAS-Identifier があればセッションを上書きし、src_ip を持つ課金のログに出す。Admin TUI の Session List / Session Search に NAS-ID カラムとフィルタ。lnav フォーマットに nas_identifier）と、外部の radsecproxy と接続する場合の注意（radsecproxy は本PoCに含めず外部に置く方針。2026-10-06 の PoC の結果）に伴う版数更新: D-02(r19→r20)、D-04(r32→r33)、D-07(r10→r11)、D-08(r21→r22)、D-09(r19→r20)、D-10(r13→r14)、E-03(r9→r10)、O-05(r19→r20)、T-02(r17→r18。テストケース 1,334→1,355件) |
+| r56 | 2026-10-07 | D-13 Provisioning API詳細設計書（r1、設計中・未実装）と OpenAPI 定義 `docs/openapi/provisioning-api.yaml`（0.1.0-draft）を追加（設計ドキュメント 12→13件、総数 28→29件）。Admin TUI の CRUD を REST API として本PoCの外の BFF に提供する provisioning-api の設計で、aka-only-server の管理API に作法を揃え、将来の統合API（eapaka-node-provisioner）から使う前提。§1.3 の実装ノードの表に Provisioning API（未実装）を追加 |
