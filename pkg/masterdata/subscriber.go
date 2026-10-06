@@ -1,4 +1,4 @@
-package store
+package masterdata
 
 import (
 	"context"
@@ -11,6 +11,9 @@ import (
 
 // ErrSubscriberNotFound は加入者が見つからない場合のエラー
 var ErrSubscriberNotFound = errors.New("subscriber not found")
+
+// ErrSubscriberExists は同じIMSIの加入者が既に存在する場合のエラー
+var ErrSubscriberExists = errors.New("subscriber already exists")
 
 // SubscriberStore は加入者データへのアクセスを提供する。
 type SubscriberStore struct {
@@ -41,31 +44,28 @@ func (s *SubscriberStore) Get(ctx context.Context, imsi string) (*model.Subscrib
 
 // Create は新しい加入者を作成する。
 // Vector APIと互換性のあるHash形式で保存する。
+// 存在確認と書き込みを1回の操作で行い、既に存在すれば何も書き込まずに ErrSubscriberExists を返す。
 func (s *SubscriberStore) Create(ctx context.Context, sub *model.Subscriber) error {
-	key := SubscriberKey(sub.IMSI)
-
-	// 既存チェック
-	exists, err := s.client.Exists(ctx, key).Result()
-	if err != nil {
-		return err
-	}
-	if exists > 0 {
-		return errors.New("subscriber already exists")
-	}
-
 	// created_atが未設定の場合は現在時刻を設定
 	createdAt := sub.CreatedAt
 	if createdAt == "" {
 		createdAt = time.Now().UTC().Format(time.RFC3339)
 	}
 
-	return s.client.HSet(ctx, key, map[string]any{
+	created, err := runHashScript(ctx, s.client, createHashScript, SubscriberKey(sub.IMSI), map[string]any{
 		"ki":         sub.Ki,
 		"opc":        sub.OPc,
 		"amf":        sub.AMF,
 		"sqn":        sub.SQN,
 		"created_at": createdAt,
-	}).Err()
+	})
+	if err != nil {
+		return err
+	}
+	if !created {
+		return ErrSubscriberExists
+	}
+	return nil
 }
 
 // updateSubscriberScript は既存の加入者の ki / opc / amf を更新する。
@@ -124,6 +124,51 @@ func (s *SubscriberStore) update(ctx context.Context, sub *model.Subscriber, wit
 	default:
 		return nil
 	}
+}
+
+// SubscriberPatch は加入者の変更内容を表す。nil の項目は変更しない（JSON Merge Patch 用。D-13 §3.1）。
+type SubscriberPatch struct {
+	Ki  *string
+	OPc *string
+	AMF *string
+	SQN *string // nil なら SQN には触れない（認証で進んだ SQN を巻き戻さない）
+}
+
+// IsEmpty は変更する項目がないかを返す。
+func (p *SubscriberPatch) IsEmpty() bool {
+	return p.Ki == nil && p.OPc == nil && p.AMF == nil && p.SQN == nil
+}
+
+// Patch は既存の加入者の、指定した項目だけを書き換える。
+// SQN を指定した場合は比較せずにそのまま書き換える（D-13 §3.1。Admin TUI の UpdateWithSQN とは異なる）。
+// 存在確認と書き込みを1回の操作で行い、加入者が存在しなければ ErrSubscriberNotFound を返す。
+// 変更する項目がなければ、存在だけを確認する。
+func (s *SubscriberStore) Patch(ctx context.Context, imsi string, patch *SubscriberPatch) error {
+	fields := map[string]any{}
+	for name, v := range map[string]*string{"ki": patch.Ki, "opc": patch.OPc, "amf": patch.AMF, "sqn": patch.SQN} {
+		if v != nil {
+			fields[name] = *v
+		}
+	}
+	if len(fields) == 0 {
+		exists, err := s.Exists(ctx, imsi)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return ErrSubscriberNotFound
+		}
+		return nil
+	}
+
+	updated, err := runHashScript(ctx, s.client, updateHashScript, SubscriberKey(imsi), fields)
+	if err != nil {
+		return err
+	}
+	if !updated {
+		return ErrSubscriberNotFound
+	}
+	return nil
 }
 
 // Delete は加入者を削除する。

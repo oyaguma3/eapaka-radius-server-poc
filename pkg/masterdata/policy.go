@@ -1,16 +1,19 @@
-package store
+package masterdata
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
 
-	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/model"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/model"
 	"github.com/redis/go-redis/v9"
 )
 
 // ErrPolicyNotFound はポリシーが見つからない場合のエラー
 var ErrPolicyNotFound = errors.New("policy not found")
+
+// ErrPolicyExists は同じIMSIのポリシーが既に存在する場合のエラー
+var ErrPolicyExists = errors.New("policy already exists")
 
 // PolicyStore は認可ポリシーデータへのアクセスを提供する。
 type PolicyStore struct {
@@ -63,62 +66,72 @@ func (s *PolicyStore) Get(ctx context.Context, imsi string) (*model.Policy, erro
 
 // Create は新しいポリシーを作成する。
 // Auth Serverと互換性のあるHash形式で保存する。
+// 存在確認と書き込みを1回の操作で行い、既に存在すれば何も書き込まずに ErrPolicyExists を返す。
 func (s *PolicyStore) Create(ctx context.Context, policy *model.Policy) error {
-	key := PolicyKey(policy.IMSI)
-
-	// 既存チェック
-	exists, err := s.client.Exists(ctx, key).Result()
+	fields, err := policyFields(policy)
 	if err != nil {
 		return err
 	}
-	if exists > 0 {
-		return errors.New("policy already exists")
+	created, err := runHashScript(ctx, s.client, createHashScript, PolicyKey(policy.IMSI), fields)
+	if err != nil {
+		return err
 	}
-
-	return s.saveAsHash(ctx, key, policy)
+	if !created {
+		return ErrPolicyExists
+	}
+	return nil
 }
 
 // Update は既存のポリシーを更新する。
+// 存在確認と書き込みを1回の操作で行い、存在しなければ何も書き込まずに ErrPolicyNotFound を返す。
 func (s *PolicyStore) Update(ctx context.Context, policy *model.Policy) error {
-	key := PolicyKey(policy.IMSI)
-
-	// 存在チェック
-	exists, err := s.client.Exists(ctx, key).Result()
+	fields, err := policyFields(policy)
 	if err != nil {
 		return err
 	}
-	if exists == 0 {
+	updated, err := runHashScript(ctx, s.client, updateHashScript, PolicyKey(policy.IMSI), fields)
+	if err != nil {
+		return err
+	}
+	if !updated {
 		return ErrPolicyNotFound
 	}
-
-	return s.saveAsHash(ctx, key, policy)
+	return nil
 }
 
 // Upsert はポリシーを作成または更新する。
 func (s *PolicyStore) Upsert(ctx context.Context, policy *model.Policy) error {
-	key := PolicyKey(policy.IMSI)
-	return s.saveAsHash(ctx, key, policy)
+	_, err := s.Put(ctx, policy)
+	return err
 }
 
-// saveAsHash はポリシーをHash形式で保存する内部メソッド。
-func (s *PolicyStore) saveAsHash(ctx context.Context, key string, policy *model.Policy) error {
+// Put はポリシーを作成または置き換え、作成した（存在しなかった）かを返す（D-13 §3.3 の PUT 用）。
+func (s *PolicyStore) Put(ctx context.Context, policy *model.Policy) (created bool, err error) {
+	fields, err := policyFields(policy)
+	if err != nil {
+		return false, err
+	}
+	return runHashScript(ctx, s.client, putHashScript, PolicyKey(policy.IMSI), fields)
+}
+
+// policyFields はポリシーのHashフィールドを返す（Auth Serverと互換性のある形式。D-02）。
+func policyFields(policy *model.Policy) (map[string]any, error) {
 	// RulesをJSONにエンコード
 	rulesJSON := "[]"
 	if len(policy.Rules) > 0 {
 		data, err := json.Marshal(policy.Rules)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		rulesJSON = string(data)
 	} else if policy.RulesJSON != "" {
 		rulesJSON = policy.RulesJSON
 	}
 
-	// Hash形式で保存
-	return s.client.HSet(ctx, key, map[string]interface{}{
+	return map[string]any{
 		"default": policy.Default,
 		"rules":   rulesJSON,
-	}).Err()
+	}, nil
 }
 
 // Delete はポリシーを削除する。
@@ -204,6 +217,21 @@ func (s *PolicyStore) List(ctx context.Context) ([]*model.Policy, error) {
 	}
 
 	return policies, nil
+}
+
+// Count は認可ポリシーの総数を返す。
+func (s *PolicyStore) Count(ctx context.Context) (int64, error) {
+	var count int64
+
+	iter := s.client.Scan(ctx, 0, PrefixPolicy+"*", 100).Iterator()
+	for iter.Next(ctx) {
+		count++
+	}
+	if err := iter.Err(); err != nil {
+		return 0, err
+	}
+
+	return count, nil
 }
 
 // Exists は指定されたIMSIのポリシーが存在するか確認する。

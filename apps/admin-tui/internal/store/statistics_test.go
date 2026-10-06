@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	tuimodel "github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/model"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/masterdata"
 	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/model"
 )
 
@@ -15,9 +15,9 @@ func TestStatisticsStore_Refresh(t *testing.T) {
 
 	ctx := context.Background()
 
-	subStore := NewSubscriberStore(client)
-	clientStore := NewClientStore(client)
-	policyStore := NewPolicyStore(client)
+	subStore := masterdata.NewSubscriberStore(client)
+	clientStore := masterdata.NewClientStore(client)
+	policyStore := masterdata.NewPolicyStore(client)
 	sessionStore := NewSessionStore(client)
 
 	statsStore := NewStatisticsStore(subStore, clientStore, policyStore, sessionStore)
@@ -34,7 +34,7 @@ func TestStatisticsStore_Refresh(t *testing.T) {
 	// データ追加
 	subStore.Create(ctx, &model.Subscriber{IMSI: "001010000000001", Ki: "k", OPc: "o", AMF: "a", SQN: "s"})
 	clientStore.Create(ctx, &model.RadiusClient{IP: "192.168.1.1", Secret: "s", Name: "n", Vendor: "v"})
-	policyStore.Upsert(ctx, &tuimodel.Policy{IMSI: "001010000000001", Default: "allow", Rules: []tuimodel.PolicyRule{}})
+	policyStore.Upsert(ctx, &model.Policy{IMSI: "001010000000001", Default: "allow", Rules: []model.PolicyRule{}})
 
 	sessData, _ := json.Marshal(model.Session{UUID: "uuid-1", IMSI: "001010000000001"})
 	client.Set(ctx, SessionKey("uuid-1"), sessData, 0)
@@ -63,9 +63,9 @@ func TestStatisticsStore_Get_Cache(t *testing.T) {
 
 	ctx := context.Background()
 
-	subStore := NewSubscriberStore(client)
-	clientStore := NewClientStore(client)
-	policyStore := NewPolicyStore(client)
+	subStore := masterdata.NewSubscriberStore(client)
+	clientStore := masterdata.NewClientStore(client)
+	policyStore := masterdata.NewPolicyStore(client)
 	sessionStore := NewSessionStore(client)
 
 	statsStore := NewStatisticsStore(subStore, clientStore, policyStore, sessionStore)
@@ -96,9 +96,9 @@ func TestStatisticsStore_ClearCache(t *testing.T) {
 
 	ctx := context.Background()
 
-	subStore := NewSubscriberStore(client)
-	clientStore := NewClientStore(client)
-	policyStore := NewPolicyStore(client)
+	subStore := masterdata.NewSubscriberStore(client)
+	clientStore := masterdata.NewClientStore(client)
+	policyStore := masterdata.NewPolicyStore(client)
 	sessionStore := NewSessionStore(client)
 
 	statsStore := NewStatisticsStore(subStore, clientStore, policyStore, sessionStore)

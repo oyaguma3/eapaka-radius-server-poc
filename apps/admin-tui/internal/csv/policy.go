@@ -8,8 +8,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/model"
-	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/validation"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/model"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/validation"
 )
 
 // PolicyCSVHeader はポリシーCSVのヘッダー行

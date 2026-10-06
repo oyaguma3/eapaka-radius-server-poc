@@ -9,8 +9,8 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/audit"
 	csvpkg "github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/csv"
-	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/store"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/ui"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/masterdata"
 	"github.com/rivo/tview"
 )
 
@@ -20,9 +20,9 @@ type ExportScreen struct {
 	resultView      *tview.TextView
 	flex            *tview.Flex
 	app             *ui.App
-	subscriberStore *store.SubscriberStore
-	clientStore     *store.ClientStore
-	policyStore     *store.PolicyStore
+	subscriberStore *masterdata.SubscriberStore
+	clientStore     *masterdata.ClientStore
+	policyStore     *masterdata.PolicyStore
 	auditLogger     *audit.Logger
 	onComplete      func()
 	onCancel        func()
@@ -31,9 +31,9 @@ type ExportScreen struct {
 // NewExportScreen は新しいExportScreenを生成する。
 func NewExportScreen(
 	app *ui.App,
-	subscriberStore *store.SubscriberStore,
-	clientStore *store.ClientStore,
-	policyStore *store.PolicyStore,
+	subscriberStore *masterdata.SubscriberStore,
+	clientStore *masterdata.ClientStore,
+	policyStore *masterdata.PolicyStore,
 	auditLogger *audit.Logger,
 ) *ExportScreen {
 	form := tview.NewForm()

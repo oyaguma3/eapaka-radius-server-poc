@@ -10,8 +10,8 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/audit"
 	csvpkg "github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/csv"
-	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/store"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/ui"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/masterdata"
 	"github.com/rivo/tview"
 )
 
@@ -21,9 +21,9 @@ type ImportScreen struct {
 	resultView      *tview.TextView
 	flex            *tview.Flex
 	app             *ui.App
-	subscriberStore *store.SubscriberStore
-	clientStore     *store.ClientStore
-	policyStore     *store.PolicyStore
+	subscriberStore *masterdata.SubscriberStore
+	clientStore     *masterdata.ClientStore
+	policyStore     *masterdata.PolicyStore
 	auditLogger     *audit.Logger
 	onComplete      func()
 	onCancel        func()
@@ -32,9 +32,9 @@ type ImportScreen struct {
 // NewImportScreen は新しいImportScreenを生成する。
 func NewImportScreen(
 	app *ui.App,
-	subscriberStore *store.SubscriberStore,
-	clientStore *store.ClientStore,
-	policyStore *store.PolicyStore,
+	subscriberStore *masterdata.SubscriberStore,
+	clientStore *masterdata.ClientStore,
+	policyStore *masterdata.PolicyStore,
 	auditLogger *audit.Logger,
 ) *ImportScreen {
 	form := tview.NewForm()

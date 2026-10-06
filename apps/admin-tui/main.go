@@ -16,6 +16,7 @@ import (
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/ui/monitoring"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/ui/policy"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/ui/subscriber"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/masterdata"
 	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/valkey"
 	"github.com/redis/go-redis/v9"
 	"github.com/rivo/tview"
@@ -29,9 +30,9 @@ type Application struct {
 	auditLogger *audit.Logger
 
 	// Stores
-	subscriberStore *store.SubscriberStore
-	clientStore     *store.ClientStore
-	policyStore     *store.PolicyStore
+	subscriberStore *masterdata.SubscriberStore
+	clientStore     *masterdata.ClientStore
+	policyStore     *masterdata.PolicyStore
 	sessionStore    *store.SessionStore
 	statisticsStore *store.StatisticsStore
 }
@@ -81,9 +82,9 @@ func (a *Application) connectValkey() error {
 	a.redisClient = client
 
 	// Store初期化
-	a.subscriberStore = store.NewSubscriberStore(client)
-	a.clientStore = store.NewClientStore(client)
-	a.policyStore = store.NewPolicyStore(client)
+	a.subscriberStore = masterdata.NewSubscriberStore(client)
+	a.clientStore = masterdata.NewClientStore(client)
+	a.policyStore = masterdata.NewPolicyStore(client)
 	a.sessionStore = store.NewSessionStore(client)
 	a.statisticsStore = store.NewStatisticsStore(
 		a.subscriberStore,
@@ -199,7 +200,7 @@ func (a *Application) showSubscriberList() {
 				a.app.GetStatusBar().ShowError("Failed to delete: " + err.Error())
 				return
 			}
-			a.auditLogger.LogDelete(audit.TargetSubscriber, store.SubscriberKey(imsi), imsi)
+			a.auditLogger.LogDelete(audit.TargetSubscriber, masterdata.SubscriberKey(imsi), imsi)
 			a.app.GetStatusBar().ShowSuccess("Subscriber deleted: " + imsi)
 			_ = screen.Refresh(ctx)
 		})
@@ -278,7 +279,7 @@ func (a *Application) showClientList() {
 				a.app.GetStatusBar().ShowError("Failed to delete: " + err.Error())
 				return
 			}
-			a.auditLogger.LogDelete(audit.TargetClient, store.ClientKey(ip), "")
+			a.auditLogger.LogDelete(audit.TargetClient, masterdata.ClientKey(ip), "")
 			a.app.GetStatusBar().ShowSuccess("Client deleted: " + ip)
 			_ = screen.Refresh(ctx)
 		})
@@ -356,7 +357,7 @@ func (a *Application) showPolicyList() {
 				a.app.GetStatusBar().ShowError("Failed to delete: " + err.Error())
 				return
 			}
-			a.auditLogger.LogDelete(audit.TargetPolicy, store.PolicyKey(imsi), imsi)
+			a.auditLogger.LogDelete(audit.TargetPolicy, masterdata.PolicyKey(imsi), imsi)
 			a.app.GetStatusBar().ShowSuccess("Policy deleted: " + imsi)
 			_ = screen.Refresh(ctx)
 		})

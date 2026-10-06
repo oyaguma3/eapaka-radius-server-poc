@@ -1,4 +1,4 @@
-# E-03 共通ライブラリ(pkg)設計書 (r10)
+# E-03 共通ライブラリ(pkg)設計書 (r11)
 
 ## 1. 概要
 
@@ -88,7 +88,18 @@ pkg/
 │   ├── subscriber.go         # Subscriber構造体・NewSubscriber
 │   ├── client.go             # RadiusClient構造体・NewRadiusClient
 │   ├── session.go            # Session・EAPContext・Stage型・NewSession・NewEAPContext
-│   └── policy.go             # Policy・PolicyRule構造体・NewPolicy
+│   └── policy.go             # Policy・PolicyRule構造体・NewPolicy・Clone
+├── validation/               # マスタデータの入力検証（§8）
+│   ├── rules.go              # 正規表現・上限値
+│   ├── subscriber.go         # 加入者の検証・正規化
+│   ├── client.go             # RADIUSクライアントの検証・正規化
+│   └── policy.go             # 認可ポリシーの検証・正規化
+├── masterdata/               # マスタデータの Valkey アクセス（§9）
+│   ├── keys.go               # キー定義（sub: / client: / policy:）
+│   ├── hash.go               # 原子的な作成・変更の Lua スクリプト
+│   ├── subscriber.go         # SubscriberStore・SubscriberPatch
+│   ├── client.go             # ClientStore
+│   └── policy.go             # PolicyStore
 └── httputil/                 # HTTPユーティリティ
     ├── problem.go            # ProblemDetail構造体・コンストラクタ・ContentType定数
     └── gin.go                # Ginフレームワーク統合（WriteError, AbortWithError）
@@ -101,7 +112,9 @@ pkg/
 | `apperr` | 共通エラー定義 | センチネルエラー、カスタムエラー型（ValidationError, BackendError, ValkeyError, EAPIdentityError） |
 | `valkey` | Valkeyクライアント初期化 | `NewClient()`, `Options`, `DefaultOptions()`, `TUIOptions()`, `BuildAddr()` |
 | `logging` | ログユーティリティ | `MaskIMSI()`, `MaskUserName()`, `Masker`, `CommonFields`, `AuthLogFields()`, `ParseLevel()`, `NewRADIUSLibraryLogger()`, `EventRADIUSLibError`, フィールド定数8種 |
-| `model` | 共通データ構造体 | `Subscriber`, `RadiusClient`, `Session`, `EAPContext`, `Policy`, `PolicyRule`, `Stage` |
+| `model` | 共通データ構造体 | `Subscriber`, `RadiusClient`, `Session`, `EAPContext`, `Policy`（`Clone` を含む）, `PolicyRule`, `Stage` |
+| `validation` | マスタデータの入力検証・正規化 | `ValidateSubscriber()`, `ValidateClient()`, `ValidatePolicy()`, `Normalize*Input()`, `*ValidationError` |
+| `masterdata` | マスタデータの Valkey アクセス | `SubscriberStore`, `ClientStore`, `PolicyStore`, `SubscriberPatch`, `Err*NotFound` / `Err*Exists`, `SubscriberKey()` 等 |
 | `httputil` | HTTPユーティリティ | `ProblemDetail`, `ContentType`, `WriteError()`, `AbortWithError()` |
 
 ### 2.3 利用コンポーネント対応表
@@ -113,8 +126,12 @@ pkg/
 | `logging` | ◎ | ◎ | ◎ | ◎ | - |
 | `model` | ◎ | ◎ | - | ◎ | ◎ |
 | `httputil` | - | - | ◎ | ◎ | - |
+| `validation` | - | - | - | - | ◎ |
+| `masterdata` | - | - | - | - | ◎ |
 
 **凡例:** ◎=必須, ○=任意, -=不使用
+
+> **注記:** `validation` / `masterdata` は現時点では Admin TUI だけが使うが、Provisioning API（D-13。実装予定）でも使うため、§1.4 の「2つ以上のアプリで使用」を見込んで先に pkg に置いた。
 
 ### 2.4 go.mod 定義
 
@@ -1054,6 +1071,9 @@ func (p *Policy) EncodeRules() error {
 func (p *Policy) IsAllowByDefault() bool {
     return p.Default == "allow"
 }
+
+// Clone はポリシーのディープコピーを作成する（Admin TUI の編集画面で使う）。
+func (p *Policy) Clone() *Policy
 ```
 
 **PolicyRule JSONサンプル:**
@@ -1184,9 +1204,93 @@ func (h *GatewayHandler) handleBackendError(c *gin.Context, err error) {
 
 ---
 
-## 8. パッケージ間依存関係
+## 8. pkg/validation（マスタデータの入力検証）
 
-### 8.1 依存関係図
+### 8.1 責務
+
+- 加入者・RADIUSクライアント・認可ポリシーの入力値の検証と正規化を提供する
+- Admin TUI（画面の保存時と CSV インポート）と Provisioning API（D-13）が同じ規則で検証できるようにする（2026-10-07 に Admin TUI の `internal/validation` から移動）
+- 検証規則の詳細（文字種・長さ・範囲、エラーメッセージ）は D-05 §5 を参照
+
+### 8.2 主要な型・関数
+
+**ファイル: `pkg/validation/rules.go` / `subscriber.go` / `client.go` / `policy.go`**
+
+| 対象 | 検証 | 正規化 | エラー型 |
+|------|------|--------|---------|
+| 加入者 | `ValidateIMSI` / `ValidateKi` / `ValidateOPc` / `ValidateAMF` / `ValidateSQN`、まとめて `ValidateSubscriber(*SubscriberInput) []error` | `NormalizeSubscriberInput`（前後の空白を除去し、16進を大文字に） | `SubscriberValidationError`（`Field`, `Message`） |
+| RADIUSクライアント | `ValidateIPv4` / `ValidateSecret` / `ValidateClientName` / `ValidateVendor`、まとめて `ValidateClient(*ClientInput) []error` | `NormalizeClientInput` | `ClientValidationError` |
+| 認可ポリシー | `ValidateDefaultAction` / `ValidateNasID` / `ValidateSSID` / `ValidateAllowedSSIDs` / `ValidateVlanID` / `ValidateSessionTimeout`、`ValidatePolicyRule(*model.PolicyRule)`、まとめて `ValidatePolicy(*PolicyInput) []error` | `NormalizePolicyInput`（空白の除去、`default` を小文字に） | `PolicyValidationError`（ルールの項目は `Rules[i].NasID` 等） |
+
+- 正規表現（`IMSIPattern` 等）と上限値（`MaxSecretLength` 等）は `rules.go` に定数として公開する
+- `pkg/model` の `PolicyRule` に依存する（§10.2）
+
+### 8.3 使用例
+
+```go
+input := validation.NormalizeSubscriberInput(&validation.SubscriberInput{
+    IMSI: imsi, Ki: ki, OPc: opc, AMF: amf, SQN: sqn,
+})
+if errs := validation.ValidateSubscriber(input); len(errs) > 0 {
+    return errs[0] // Admin TUI は最初の1件を表示する
+}
+```
+
+---
+
+## 9. pkg/masterdata（マスタデータの Valkey アクセス）
+
+### 9.1 責務
+
+- 加入者（`sub:{IMSI}`）・RADIUSクライアント（`client:{IP}`）・認可ポリシー（`policy:{IMSI}`）の Valkey の読み書きを提供する（キーとフィールドの形式は D-02）
+- Admin TUI と Provisioning API（D-13）が同じ処理（Lua スクリプトを含む）で書き込むようにする（2026-10-07 に Admin TUI の `internal/store` から移動）
+- セッション（`sess:`）・統計のストアは Admin TUI の `internal/store` に残す（Admin TUI だけが使うため）
+
+### 9.2 主要な型・関数
+
+| 型 | 主なメソッド | 備考 |
+|----|------------|------|
+| `SubscriberStore` | `Get`, `Create`, `Update`, `UpdateWithSQN`, `Patch`, `Delete`, `List`, `Count`, `Exists`, `BulkCreate` | `Update` は SQN を書き換えない。`UpdateWithSQN` は編集開始時の SQN との比較・置き換え（D-02 §2.A）。`Patch` は `SubscriberPatch` の nil でない項目だけを書き換える（SQN を指定しなければ触れない。D-13 §3.1） |
+| `ClientStore` | `Get`, `Create`, `Update`, `Delete`, `List`, `Count`, `Exists`, `BulkCreate` | |
+| `PolicyStore` | `Get`, `Create`, `Update`, `Upsert`, `Put`, `Delete`, `List`, `Count`, `Exists`, `BulkCreate`, `GetIMSIsWithPolicy` | `Put` は作成したか（存在しなかったか）を返す（D-13 §3.3 の PUT の 201 / 200 用） |
+| キー | `SubscriberKey`, `ClientKey`, `PolicyKey`、`PrefixSubscriber` 等 | |
+
+**センチネルエラー:**
+
+| エラー | 条件 |
+|-------|------|
+| `ErrSubscriberNotFound` / `ErrClientNotFound` / `ErrPolicyNotFound` | 取得・変更・削除の対象が存在しない |
+| `ErrSubscriberExists` / `ErrClientExists` / `ErrPolicyExists` | 作成の対象が既に存在する（メッセージは `subscriber already exists` 等。Admin TUI の表示は従来と同じ） |
+| `ErrSQNChanged` | `UpdateWithSQN` で、SQN が編集開始時の値から変わっていた |
+
+### 9.3 原子的な書き込み
+
+作成（`Create`）と変更（`Update`、`Patch`）は、存在確認と書き込みを1つの Lua スクリプトで行う（`hash.go`）。Admin TUI と Provisioning API を同時に使った場合（D-13 §2.3）にも、次を保証する。
+
+| 操作 | 保証 |
+|------|------|
+| 作成 | 同じキーを同時に作成しても成功するのは1つだけで、後の方は `Err*Exists` になり既存の値を上書きしない |
+| 変更 | 途中で削除されたキーを、一部のフィールドだけで作り直さない（`Err*NotFound`） |
+| 一括作成（`BulkCreate`）・`Upsert` / `Put` | 既存の値を上書きする（CSV インポート、PUT の仕様） |
+
+> **注記:** 2026-10-07 より前の Admin TUI の作成・変更は「存在確認 → 書き込み」の2回の操作で行っており、同時に作成すると後の方が上書きしていた。
+
+### 9.4 使用例
+
+```go
+subs := masterdata.NewSubscriberStore(client)
+if err := subs.Create(ctx, sub); errors.Is(err, masterdata.ErrSubscriberExists) {
+    // 409 等
+}
+amf := "B9B9"
+err := subs.Patch(ctx, imsi, &masterdata.SubscriberPatch{AMF: &amf}) // SQN には触れない
+```
+
+---
+
+## 10. パッケージ間依存関係
+
+### 10.1 依存関係図
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -1214,6 +1318,12 @@ func (h *GatewayHandler) handleBackendError(c *gin.Context, err error) {
 │  │ → go-redis  │     │ → gin (任意)│                                   │
 │  └─────────────┘     └─────────────┘                                   │
 │                                                                         │
+│  ┌─────────────┐     ┌─────────────┐                                   │
+│  │ masterdata  │     │ validation  │                                   │
+│  │ → go-redis  │     │             │                                   │
+│  │ → model     │     │ → model     │                                   │
+│  └─────────────┘     └─────────────┘                                   │
+│                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
               │
               │ pkg は apps から参照される
@@ -1233,7 +1343,7 @@ func (h *GatewayHandler) handleBackendError(c *gin.Context, err error) {
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 8.2 依存ルール
+### 10.2 依存ルール
 
 #### 許可される依存
 
@@ -1242,18 +1352,20 @@ func (h *GatewayHandler) handleBackendError(c *gin.Context, err error) {
 | apps/* | pkg/* | 全パッケージへの依存を許可 |
 | pkg/valkey | go-redis/v9 | 外部パッケージへの依存（必須） |
 | pkg/httputil | gin | Ginヘルパー関数使用時のみ |
+| pkg/masterdata | go-redis/v9 | Valkey の読み書き |
+| pkg/masterdata, pkg/validation | pkg/model | 共通データ構造体（`pkg/model` は依存なしの最下層のため、循環しない） |
 
 #### 禁止される依存
 
 | From | To | 理由 |
 |------|-----|------|
-| pkg/* | pkg/* | pkg内の相互依存禁止 |
+| pkg/* | pkg/*（`pkg/model` を除く） | pkg内の相互依存禁止。例外として、依存を持たない `pkg/model` への依存だけを許可する |
 | pkg/* | apps/* | 上位層への依存禁止 |
 | pkg/apperr | 外部パッケージ | 最下層として依存なしを維持 |
 | pkg/logging | 外部パッケージ | 標準ライブラリのみ使用 |
 | pkg/model | 外部パッケージ | 標準ライブラリのみ使用 |
 
-### 8.3 外部パッケージ依存一覧
+### 10.3 外部パッケージ依存一覧
 
 | パッケージ | 外部依存 | 必要理由 |
 |-----------|---------|---------|
@@ -1262,14 +1374,16 @@ func (h *GatewayHandler) handleBackendError(c *gin.Context, err error) {
 | `pkg/logging` | なし | 標準ライブラリ（`log/slog`、`log` 等）のみ使用（`NewRADIUSLibraryLogger` も `*log.Logger` を返すだけで `layeh.com/radius` には依存しない） |
 | `pkg/model` | なし | 構造体定義のみ（encoding/jsonは標準ライブラリ） |
 | `pkg/httputil` | `github.com/gin-gonic/gin`（任意） | Ginヘルパー関数 |
+| `pkg/validation` | なし | 標準ライブラリ（`regexp` 等）と `pkg/model` |
+| `pkg/masterdata` | `github.com/redis/go-redis/v9` | Valkey の読み書き（Lua スクリプト）。`pkg/model` |
 
 > **注記:** `pkg/httputil` のGin依存は、Ginヘルパー関数（`WriteError`, `AbortWithError`）を使用する場合のみ必要。`ProblemDetail` 構造体自体はGinに依存しない。
 
 ---
 
-## 9. 将来拡張
+## 11. 将来拡張
 
-### 9.1 pkg配置検討中の機能
+### 11.1 pkg配置検討中の機能
 
 以下の機能はPoC期間中の状況に応じてpkg配置を検討する。
 
@@ -1279,22 +1393,21 @@ func (h *GatewayHandler) handleBackendError(c *gin.Context, err error) {
 | Trace ID伝搬 | 各アプリで個別実装 | コンテキスト操作の標準化 | 実装時 |
 | HTTPクライアント | Auth, Gatewayで個別実装 | Circuit Breaker設定が異なる | PoC完了後 |
 
-### 9.2 PoC完了後の検討事項
+### 11.2 PoC完了後の検討事項
 
 | 項目 | 内容 | 優先度 |
 |------|------|--------|
 | テスト用モック | モック生成の共通化（mockgen連携） | 中 |
 | メトリクス収集 | Prometheus対応の共通化 | 低 |
 | 設定ローダー | envconfig共通ラッパー | 低 |
-| バリデーション | IMSI/Hex形式検証の共通化 | 中 |
 
-### 9.3 pkg拡張時の注意事項
+### 11.3 pkg拡張時の注意事項
 
 新しいパッケージをpkgに追加する際は、以下を確認する。
 
 1. **配置基準の確認:** セクション1.4の基準を満たすか
-2. **依存関係の確認:** セクション8.2の禁止ルールに違反しないか
-3. **ドキュメント更新:** 本ドキュメントのセクション2, 8を更新
+2. **依存関係の確認:** セクション10.2の禁止ルールに違反しないか
+3. **ドキュメント更新:** 本ドキュメントのセクション2, 10を更新
 4. **go.mod更新:** 外部依存が増える場合はgo.modを更新
 
 ---
@@ -1313,3 +1426,4 @@ func (h *GatewayHandler) handleBackendError(c *gin.Context, err error) {
 | r8 | 2026-10-04 | acct-server の LOG_LEVEL 対応の実装修正の反映: §5.6 の `ParseLevel` の利用箇所に Acct Server（`apps/acct-server/main.go` のロガー初期化）を追加して4コンポーネントとし、「Acct Server は LOG_LEVEL に対応しておらず使っていない」を削除。§1.3 関連ドキュメントの D-04 の版数を r25 に更新 |
 | r9 | 2026-10-04 | RADIUSライブラリのログをJSONにした実装修正（`pkg/logging/radiuslib.go` 新設）の反映: §5.8 RADIUSライブラリのログを新設し、`NewRADIUSLibraryLogger()`（`layeh.com/radius` の `PacketServer.ErrorLog` に設定する `*log.Logger`。ライブラリの1行を msg `RADIUSライブラリのエラー`・`event_id`=`RADIUS_LIB_ERR`・`error` で slog に出力、WARN（`empty secret returned from secret source` を含む行は DEBUG）、`src_ip` なし）と定数 `EventRADIUSLibError` の目的・動作・使い方を記載。§2.1 / §2.2 / §5.1 に追加し、§8.3 に `layeh.com/radius` に依存しない旨を追記。§1.3 参照版数更新（D-04 r25→r31、D-06 r6→r17） |
 | r10 | 2026-10-06 | `model.Session` に `NasIdentifier`（`json:"nas_identifier"`。Valkey の `sess:{UUID}` の `nas_identifier`。D-02 r20）を追加。radsecproxy 等のプロキシ経由では `NasIP` がプロキシのIPになり NAS を区別できないため。`NewSession` の引数は変えない |
+| r11 | 2026-10-07 | Admin TUI の加入者・RADIUSクライアント・認可ポリシーの store と validation を pkg に移した実装修正（Provisioning API（D-13）と共通で使うため）の反映: §8 `pkg/validation`、§9 `pkg/masterdata`（センチネルエラー `Err*Exists` の追加、作成・変更を Lua スクリプトで原子的に、`SubscriberStore.Patch`、`PolicyStore.Put` / `Count`）を新設し、旧 §8 / §9 を §10 / §11 に繰り下げ。§2.1 / §2.2 / §2.3、§6.4（`Policy.Clone`。Admin TUI の `internal/model` を廃止して `pkg/model` に統合）、§10.1〜§10.3 を更新し、§10.2 の依存ルールに `pkg/model` への依存だけを許可する例外を追加。§11.2 から実施済みの「バリデーションの共通化」を削除 |

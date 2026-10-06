@@ -6,8 +6,8 @@ import (
 	"sort"
 
 	"github.com/gdamore/tcell/v2"
-	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/store"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/ui"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/masterdata"
 	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/model"
 	"github.com/rivo/tview"
 )
@@ -16,7 +16,7 @@ import (
 type ListScreen struct {
 	table       *tview.Table
 	app         *ui.App
-	clientStore *store.ClientStore
+	clientStore *masterdata.ClientStore
 	clients     []*model.RadiusClient
 	filter      *ui.Filter
 	pagination  *ui.Pagination
@@ -28,7 +28,7 @@ type ListScreen struct {
 }
 
 // NewListScreen は新しいListScreenを生成する。
-func NewListScreen(app *ui.App, clientStore *store.ClientStore) *ListScreen {
+func NewListScreen(app *ui.App, clientStore *masterdata.ClientStore) *ListScreen {
 	table := tview.NewTable().
 		SetBorders(false).
 		SetSelectable(true, false).

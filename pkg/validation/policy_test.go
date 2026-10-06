@@ -3,7 +3,7 @@ package validation
 import (
 	"testing"
 
-	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/model"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/model"
 )
 
 func TestValidateDefaultAction(t *testing.T) {
