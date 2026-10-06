@@ -1,11 +1,11 @@
-package store
+package masterdata
 
 import (
 	"context"
 	"errors"
 	"testing"
 
-	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/model"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/model"
 )
 
 func TestPolicyStore_CRUD(t *testing.T) {

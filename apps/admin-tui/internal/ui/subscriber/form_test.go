@@ -9,9 +9,9 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gdamore/tcell/v2"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/audit"
-	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/store"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/ui"
-	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/validation"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/masterdata"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/validation"
 	"github.com/redis/go-redis/v9"
 	"github.com/rivo/tview"
 )
@@ -27,7 +27,7 @@ func newTestEditForm(t *testing.T) (*FormScreen, *ui.App, *miniredis.Miniredis) 
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
 
-	mr.HSet(store.SubscriberKey(formTestIMSI),
+	mr.HSet(masterdata.SubscriberKey(formTestIMSI),
 		"ki", "465B5CE8B199B49FAA5F0A2EE238A6BC",
 		"opc", "CD63CB71954A9F4E48A5994E37A02BAF",
 		"amf", "8000",
@@ -36,7 +36,7 @@ func newTestEditForm(t *testing.T) (*FormScreen, *ui.App, *miniredis.Miniredis) 
 	)
 
 	app := ui.NewApp()
-	s := NewFormScreen(app, store.NewSubscriberStore(client), audit.NewLoggerWithWriter(&bytes.Buffer{}, "test"))
+	s := NewFormScreen(app, masterdata.NewSubscriberStore(client), audit.NewLoggerWithWriter(&bytes.Buffer{}, "test"))
 	if err := s.SetupEdit(context.Background(), formTestIMSI); err != nil {
 		t.Fatalf("SetupEdit failed: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestFormScreen_EditWithoutSQNChange_KeepsSQN(t *testing.T) {
 	s.SetOnSave(func() { saved = true })
 
 	// 編集画面を開いている間に、認証で Vector API が SQN を進めた
-	key := store.SubscriberKey(formTestIMSI)
+	key := masterdata.SubscriberKey(formTestIMSI)
 	mr.HSet(key, "sqn", "00000000006a")
 
 	// SQN 以外（AMF）だけを変えて保存する
@@ -116,7 +116,7 @@ func TestFormScreen_EditWithSQNChange_UpdatesSQN(t *testing.T) {
 	if !saved {
 		t.Fatalf("onSave not called: %s", statusText(app))
 	}
-	if got := mr.HGet(store.SubscriberKey(formTestIMSI), "sqn"); got != "000000000100" {
+	if got := mr.HGet(masterdata.SubscriberKey(formTestIMSI), "sqn"); got != "000000000100" {
 		t.Errorf("sqn = %s, want 000000000100", got)
 	}
 }
@@ -131,7 +131,7 @@ func TestFormScreen_EditWithSQNChange_ConflictWithAuthentication(t *testing.T) {
 	s.handleSave()
 
 	// 警告ダイアログを確認している間に、認証で Vector API が SQN を進めた
-	key := store.SubscriberKey(formTestIMSI)
+	key := masterdata.SubscriberKey(formTestIMSI)
 	mr.HSet(key, "sqn", "00000000006a")
 	pressContinue(t, app)
 
@@ -156,7 +156,7 @@ func TestFormScreen_EditSubscriberDeleted(t *testing.T) {
 	s.SetOnSave(func() { saved = true })
 
 	// 編集画面を開いている間に加入者が削除された
-	key := store.SubscriberKey(formTestIMSI)
+	key := masterdata.SubscriberKey(formTestIMSI)
 	mr.Del(key)
 	s.handleSave()
 
@@ -225,7 +225,7 @@ func TestFormScreen_EditWithSQNChange_Cancel(t *testing.T) {
 	if app.GetPages().HasPage("sqn-warning") {
 		t.Error("SQN warning dialog should be closed")
 	}
-	if got := mr.HGet(store.SubscriberKey(formTestIMSI), "sqn"); got != "00000000004a" {
+	if got := mr.HGet(masterdata.SubscriberKey(formTestIMSI), "sqn"); got != "00000000004a" {
 		t.Errorf("sqn = %s, want 00000000004a", got)
 	}
 }
@@ -244,7 +244,7 @@ func TestFormScreen_EditValidationError(t *testing.T) {
 	if got := statusText(app); !strings.Contains(got, "Validation error") {
 		t.Errorf("status = %q", got)
 	}
-	if got := mr.HGet(store.SubscriberKey(formTestIMSI), "sqn"); got != "00000000004a" {
+	if got := mr.HGet(masterdata.SubscriberKey(formTestIMSI), "sqn"); got != "00000000004a" {
 		t.Errorf("sqn = %s, want 00000000004a", got)
 	}
 }
@@ -271,7 +271,7 @@ func TestFormScreen_Create(t *testing.T) {
 	if !saved {
 		t.Fatalf("onSave not called: %s", statusText(app))
 	}
-	key := store.SubscriberKey(imsi)
+	key := masterdata.SubscriberKey(imsi)
 	if got := mr.HGet(key, "sqn"); got != "000000000000" {
 		t.Errorf("sqn = %s, want 000000000000", got)
 	}
@@ -317,7 +317,7 @@ func TestFormScreen_EscCancels(t *testing.T) {
 
 func TestFormScreen_SetupEdit_NotFound(t *testing.T) {
 	s, _, mr := newTestEditForm(t)
-	mr.Del(store.SubscriberKey(formTestIMSI))
+	mr.Del(masterdata.SubscriberKey(formTestIMSI))
 
 	if err := s.SetupEdit(context.Background(), formTestIMSI); err == nil {
 		t.Error("SetupEdit should fail for unknown IMSI")
