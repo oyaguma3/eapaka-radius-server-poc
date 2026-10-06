@@ -1,4 +1,4 @@
-# D-11 Vector API詳細設計書 (r11)
+# D-11 Vector API詳細設計書 (r12)
 
 ## ■セクション1: 概要
 
@@ -2285,7 +2285,7 @@ Valkey は Lua スクリプトを原子的に実行するため、HGET と HSET 
 
 #### 13.6.9 Admin TUI の書き込みとの関係
 
-Admin TUI の加入者編集（`apps/admin-tui/internal/store/subscriber.go`）は、Lua スクリプトで存在チェックと更新をまとめて行い、`sqn` を次のように扱う（D-02 §2.A、D-05 §4.2.2）。
+Admin TUI の加入者編集（`pkg/masterdata/subscriber.go`。Provisioning API と共通。E-03 §9）は、Lua スクリプトで存在チェックと更新をまとめて行い、`sqn` を次のように扱う（D-02 §2.A、D-05 §4.2.2）。
 
 - SQN を変えていない（大文字小文字の違いだけを含む）ときは `ki` / `opc` / `amf` だけを更新し、`sqn` は書かない（`Update`）。Vector API の CAS は `sqn` だけを比較するため、競合にならない
 - SQN を変えたときは、現在の `sqn` が編集開始時に読んだ値と一致するときだけ `ki` / `opc` / `amf` と `sqn` を更新する（`UpdateWithSQN`）。編集中に Vector API が `sqn` を進めていれば Admin TUI 側が何も更新せずにエラーとし、Admin TUI の書き込みが Vector API の読み出しから書き換えまでの間に行われれば Vector API 側が競合として検出してやり直す
@@ -2309,3 +2309,4 @@ Admin TUI の加入者編集（`apps/admin-tui/internal/store/subscriber.go`）�
 | r9 | 2026-10-04 | vector-api のログ整理・未使用コード削除の実装修正の反映: §5.1 ハンドラーのコードを実装に合わせ更新（`usecase.ContextWithTraceID` で Trace ID を context に載せる、`CALC_OK` に `test_mode`、ProblemError 経路のログに `error` 属性（原因を含むエラー文。応答の detail は従来どおり）、IMSIマスクは `logging.MaskIMSI`、依存インターフェースは `usecase.VectorUseCaseInterface`）。§10.1 `processResync` に `ctx` / `imsi` 引数を追加し `SQN_RESYNC` に `trace_id`・マスク済み `imsi` を出力、SQNデルタ超過時のユースケース層のログを削除しSQN値をエラー文に含める形に、テストモードの `test vector generated` ログを削除、`IsTestMode()` / `maskIMSI()` と `internal/usecase/trace.go`（`ContextWithTraceID`）を追記。§8.3 から未使用で削除した `GetWithRetry`（リトライ・`isConnectionError`）のコードを削除しアプリ独自のリトライなし（go-redis の既定の自動リトライのみ）の説明に変更、§9.3 から削除した `ErrInvalidIMSI` を削除しエラー文の扱いを注記、§9.4 に `error` 属性を追記。§11.1・§11.2 のログ（`CALC_OK` の `test_mode`、`SQN_RESYNC` の `trace_id` / `imsi`、`SQN_RESYNC_DELTA_ERR` の1行化、`error` 属性）を更新。§2.1・§2.5・§2.7・§12.3 に `trace.go` と `VectorUseCaseInterface`（`IsTestMode` を追加）を反映。§3.1・§3.3 に `LOG_LEVEL` を `pkg/logging.ParseLevel` で変換する旨を追記。§1.3 の D-04 / D-06 / E-03 の参照版数を更新 |
 | r10 | 2026-10-04 | SQN競合制御（CAS）の実装の反映: 方式を WATCH/MULTI から Lua スクリプトによる `sqn` フィールドの比較・置き換えに変更して実装した。§7.5 を「SQN競合制御の検討」から「SQN競合制御」に改め、検討した方式の採否と理由・守る性質（SQN は IMSI ごとに一意で単調増加、飛ぶのは許容）を記載。§8.2 の `UpdateSQN`（単純な HSET、後勝ち）を `CompareAndSetSQN`（Lua、期待値は読んだ生の文字列、キーが無ければ作らない）に置き換え、§8.3 を合わせて修正。§8.4 のデータアクセスフローを1回の試行（CAS → 成功後に Milenage 計算）と競合時のやり直しに更新（r9 までは計算後に書き戻していた）。§9.1 / §9.3 に `ErrSQNConflict`（409、`SQN_CONFLICT_ERR`、WARN、detail に IMSI・原因を含めない）を追加。§10.1 のコードを実装（`GenerateVector` の最大3回の試行、`generateOnce`、`processResync` の戻り値 `resyncResult` と再同期のやり直しで SQN_HE >= SQN_MS なら同期済みとみなして +32、`logResync` で CAS 成功後に `SQN_RESYNC` を1回、`waitRandom` で 1〜10ms 待つ）に更新し、SQN競合制御の注記を追加。§11.1 / §11.2 に `SQN_CONFLICT_RETRY`（WARN、`attempt`）・`SQN_CONFLICT_ERR` と出力例を追加し、`SQN_RESYNC` の出力タイミングと msg（2種類）を明記。§13.6 を実装済みとして全面的に書き直し（方式詳細、処理フロー、再同期のやり直しの扱いと理由、409 応答、Lua スクリプト、ハンドラー・呼び出し側の扱い、409 を 5xx にしない理由、残っている制約）。§13.3 の SQN競合制御の行を Admin TUI の `sqn` 上書きの制約に、§13.4 に store・並行性のテストを追記。§2.1 のディレクトリ構造（テストファイル追加）、§2.5 / §2.7 / §12.3 のインターフェース・ファイル責務を更新。§1.3 参照版数更新（D-02 r18、D-03 r8、D-04 r28、D-06 r15） |
 | r11 | 2026-10-04 | Admin TUI の加入者編集による `sqn` の上書き（巻き戻り）を解消した実装修正の反映: §13.6.9 を「残っている制約」から「Admin TUI の書き込みとの関係」に改め、Admin TUI は SQN を変えていなければ `sqn` を書かず、変えたときは編集開始時の値と一致するときだけ書き込むこと（Vector API の CAS との関係）、比較せずに書き込むのは新規作成と CSV インポートだけであることを記載。§13.3 の SQN競合制御の行を合わせて修正し、将来対応を削除。§1.3 参照版数更新（D-02 r19、D-04 r29） |
+| r12 | 2026-10-07 | Admin TUI の加入者・RADIUSクライアント・認可ポリシーの store と validation を pkg に移した実装修正（Provisioning API（D-13）と共通で使うため。E-03 r11）の反映: §13.6.9 の Admin TUI の加入者編集の実装箇所を `pkg/masterdata/subscriber.go` に修正 |

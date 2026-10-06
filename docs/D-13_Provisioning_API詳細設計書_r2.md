@@ -1,7 +1,7 @@
-# D-13 Provisioning API 詳細設計書 (r1)
+# D-13 Provisioning API 詳細設計書 (r2)
 
 **作成日:** 2026-10-07
-**ステータス:** 設計中（実装前）
+**ステータス:** 設計中（共通ライブラリへの移動（§7.2）は実装済み。provisioning-api は実装前）
 
 ## 1. 概要
 
@@ -101,7 +101,7 @@ Admin TUI と provisioning-api は、原則として同時に使わない（運�
 | 変更・削除 | 後勝ち。変更は存在確認と書き込みを1回の操作で行うため、削除済みのキーを途中まで作り直すことはない |
 | SQN | 加入者の変更で `sqn` を指定しなければ、SQN には触れない。Admin TUI の SQN の書き換えは、編集開始時の値との比較・置き換えで行う（D-02 §2.A） |
 
-> **注記:** 現行の Admin TUI の作成処理は「存在確認→書き込み」の2回の操作で行っており、同時に作成すると後の方が上書きする。共通ライブラリに移すときに、Lua スクリプトによる1回の操作に改める（§7.2）。
+> **注記:** 2026-10-07 より前の Admin TUI の作成・変更は「存在確認→書き込み」の2回の操作で行っており、同時に作成すると後の方が上書きしていた。共通ライブラリに移すときに、Lua スクリプトによる1回の操作に改めた（§7.2、E-03 §9.3）。
 
 ---
 
@@ -334,7 +334,7 @@ apps/provisioning-api/
 
 ### 7.2 共通ライブラリへの移動
 
-Admin TUI と provisioning-api が同じ検証規則と同じ Valkey 操作を使うよう、Admin TUI の次の実装を `pkg/` に移す（CLAUDE.md の「各 app で重複実装せず pkg を使う」方針）。
+Admin TUI と provisioning-api が同じ検証規則と同じ Valkey 操作を使うよう、Admin TUI の次の実装を `pkg/` に移した（2026-10-07 実装済み。詳細は E-03 §8、§9）（CLAUDE.md の「各 app で重複実装せず pkg を使う」方針）。
 
 | 移動元（Admin TUI） | 移動先 | 内容 |
 |-------------------|-------|------|
@@ -342,8 +342,12 @@ Admin TUI と provisioning-api が同じ検証規則と同じ Valkey 操作を�
 | `internal/store` の加入者・クライアント・ポリシー（`subscriber.go`、`client.go`、`policy.go`、`keys.go` の該当部分） | `pkg/masterdata` | Valkey の読み書き（Lua スクリプトを含む） |
 
 - セッション・統計のストア（`session.go`、`statistics.go`）と CSV は Admin TUI に残す。
-- 移すときに、作成（加入者・クライアント・ポリシー）と変更（クライアント）を Lua スクリプトによる1回の操作に改める（§2.3）。加入者の変更は、指定した項目だけを書き換える操作（PATCH 用）を追加する。
-- Admin TUI の動作は変えない（既存のテストで確認する）。移動は provisioning-api の実装より前に、単独の変更として行う。
+| `internal/model`（`Policy`。`pkg/model` と同じ構造） | `pkg/model` | Admin TUI 専用の `Clone` を `pkg/model.Policy` に移し、`internal/model` は廃止した |
+
+- 移すときに、作成（加入者・クライアント・ポリシー）と変更（クライアント・ポリシー）を Lua スクリプトによる1回の操作に改めた（§2.3）。あわせて、provisioning-api 用に、加入者の指定した項目だけを書き換える操作（`SubscriberStore.Patch`。PATCH 用）、作成したかを返すポリシーの書き込み（`PolicyStore.Put`。PUT の 201 / 200 用）、ポリシーの件数（`PolicyStore.Count`。`/status` 用）を追加した。
+- 「既に存在する」エラーは、判別できるセンチネルエラー（`ErrSubscriberExists` 等）にした（メッセージは従来と同じ）。
+- Admin TUI の動作は変えていない（既存のテストと、simwifi での Admin TUI の操作で確認した）。
+- `pkg/masterdata` / `pkg/validation` は `pkg/model` に依存する。E-03 の依存ルール（pkg 内の相互依存禁止）に、`pkg/model` への依存だけを許可する例外を加えた（E-03 §10.2）。
 
 ---
 
@@ -418,7 +422,7 @@ compose では、`PROVISIONING_API_LISTEN_ADDR` は既定値（`:9444`）のま�
 ## 11. 実装ステップ
 
 1. 本書と OpenAPI 定義の作成（本書 r1）
-2. 共通ライブラリへの移動（§7.2。`pkg/validation`、`pkg/masterdata`。Admin TUI の動作は変えない）
+2. 共通ライブラリへの移動（§7.2。`pkg/validation`、`pkg/masterdata`。Admin TUI の動作は変えない）… 実装済み（本書 r2）
 3. provisioning-api の実装（§4〜§8）、D-01 / D-02 / D-04 / D-08 / T-02 等の更新、simwifi での結合確認
 4. 将来拡張（§10）は別途検討
 
@@ -429,3 +433,4 @@ compose では、`PROVISIONING_API_LISTEN_ADDR` は既定値（`:9444`）のま�
 | 版数 | 日付 | 内容 |
 |------|------|------|
 | r1 | 2026-10-07 | 初版作成。Admin TUI の加入者・RADIUSクライアント・認可ポリシーの CRUD を REST API として提供する provisioning-api の設計（位置づけ、リソースモデル、aka-only-server の管理API に揃えた作法、秘密の値の読み出しと監査、mTLS 認証、ログ・監査、共通ライブラリへの移動、設定、テスト方針、将来拡張）。拡張案 X-01 を置き換える |
+| r2 | 2026-10-07 | 共通ライブラリへの移動（§7.2）の実装の反映: §7.2 を実装済みとし、`internal/model` の `pkg/model` への統合、ポリシーの変更も原子的にしたこと、`SubscriberStore.Patch` / `PolicyStore.Put` / `PolicyStore.Count` の追加、センチネルエラー、E-03 の依存ルールの例外を追記。§2.3 の注記を過去形に、§11 の手順2を実装済みに |

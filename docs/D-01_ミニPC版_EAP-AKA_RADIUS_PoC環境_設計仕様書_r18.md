@@ -1,4 +1,4 @@
-# D-01 ミニPC版 EAP-AKA RADIUS PoC環境 設計仕様書 (r17)
+# D-01 ミニPC版 EAP-AKA RADIUS PoC環境 設計仕様書 (r18)
 
 ## 1. システム概要
 
@@ -227,7 +227,9 @@ my-radius-project/
 │   ├── valkey/                   # Valkeyクライアントラッパー
 │   ├── logging/                  # 構造化ログユーティリティ
 │   ├── apperr/                   # アプリケーションエラー型定義
-│   └── httputil/                 # HTTPユーティリティ（レスポンスヘルパー等）
+│   ├── httputil/                 # HTTPユーティリティ（レスポンスヘルパー等）
+│   ├── validation/               # マスタデータの入力検証（Admin TUI / Provisioning API 共通）
+│   └── masterdata/               # マスタデータ（sub: / client: / policy:）の Valkey アクセス（同上）
 │
 ├── configs/                      # 設定ファイル
 │   └── fluent-bit/
@@ -576,3 +578,4 @@ VECTOR_GATEWAY_PLMN_MAP=""
 | r15 | 2026-10-04 | vector-gateway のバックエンド向けタイムアウトを auth-server より短くした実装修正の反映: §3.5 Vector Gateway接続設定の Vector Gateway → Vector API / aka-only-server のタイムアウトを 5秒 → 3秒に修正し、Auth Server（5秒）より短くする理由の注記を追加。§7 docker-compose.yml の `VECTOR_GATEWAY_INTERNAL_TIMEOUT` / `VECTOR_GATEWAY_AKAONLY_TIMEOUT` の既定値を `3s` に修正（実ファイルと一致）、§8 環境変数表の既定値を `3s` に修正 |
 | r16 | 2026-10-04 | インターネット公開（VPS 等）に向けた安全面の実装修正の反映: §4 ファイアウォールの「Block: 上記以外全て」を、UFW の受信規則としての記載であり Docker の公開ポートには及ばない旨に訂正し、Docker と UFW の関係の注記（公開ポートは UFW を素通りする、内部向けは 127.0.0.1 にバインド、RADIUS の送信元はクラウド側のファイアウォールまたは `DOCKER-USER` で絞る）を追加。§4 に「インターネット越しに RADIUS を受ける場合（VPS 等）」を新設（共有シークレットの強度、RadSec はスコープ外、`RADIUS_SECRET` を空にしてクライアント登録、NAT 配下の AP と送信元IP、クラウド側のファイアウォール、同一ホストからの試験の送信元IP）。§4 シークレット管理の `RADIUS_SECRET` を任意（空を推奨）とし、空の場合の動作（`RADIUS_NO_SECRET` で破棄）、Valkey エラー時等のフォールバック、compose の `${RADIUS_SECRET:-}`、起動ログの `radius_secret_fallback` と WARN を追記。§5 の fluent-bit の公開ポートを `127.0.0.1:24224/tcp, 127.0.0.1:24224/udp` に修正し、公開ポートの注記を追加。§7 docker-compose.yml を実ファイルと一致させた（auth-server / acct-server の `RADIUS_SECRET: ${RADIUS_SECRET:-}`、fluent-bit の `127.0.0.1:24224` バインドとコメント）。§9 の FW設定・デプロイに注記を追加 |
 | r17 | 2026-10-04 | §2 の Acct Server の検証を「Message-Authenticator検証」から実装どおり「Request Authenticator の検証（Accounting-Request。Status-Server は Message-Authenticator）」に訂正。§6 のディレクトリ構成のセットアップ手引書群を B-01〜B-03 に（VPS 向けのデプロイ手順書 B-03 を追加） |
+| r18 | 2026-10-07 | Admin TUI の加入者・RADIUSクライアント・認可ポリシーの store と validation を pkg に移した実装修正（Provisioning API（D-13）と共通で使うため。E-03 r11）の反映: §6 開発リポジトリ構成の pkg に `validation/`・`masterdata/` を追加 |
