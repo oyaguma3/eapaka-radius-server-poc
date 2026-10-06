@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/masterdata"
 )
 
 // Statistics は統計情報を表す。
@@ -17,9 +19,9 @@ type Statistics struct {
 
 // StatisticsStore は統計情報へのアクセスを提供する。
 type StatisticsStore struct {
-	subscriberStore *SubscriberStore
-	clientStore     *ClientStore
-	policyStore     *PolicyStore
+	subscriberStore *masterdata.SubscriberStore
+	clientStore     *masterdata.ClientStore
+	policyStore     *masterdata.PolicyStore
 	sessionStore    *SessionStore
 
 	mu       sync.RWMutex
@@ -29,9 +31,9 @@ type StatisticsStore struct {
 
 // NewStatisticsStore は新しいStatisticsStoreを生成する。
 func NewStatisticsStore(
-	subscriberStore *SubscriberStore,
-	clientStore *ClientStore,
-	policyStore *PolicyStore,
+	subscriberStore *masterdata.SubscriberStore,
+	clientStore *masterdata.ClientStore,
+	policyStore *masterdata.PolicyStore,
 	sessionStore *SessionStore,
 ) *StatisticsStore {
 	return &StatisticsStore{
@@ -90,12 +92,8 @@ func (s *StatisticsStore) Refresh(ctx context.Context) (*Statistics, error) {
 
 	go func() {
 		defer wg.Done()
-		var count int64
-		iter := s.policyStore.client.Scan(ctx, 0, PrefixPolicy+"*", 100).Iterator()
-		for iter.Next(ctx) {
-			count++
-		}
-		if err := iter.Err(); err != nil {
+		count, err := s.policyStore.Count(ctx)
+		if err != nil {
 			policyErr = err
 			return
 		}

@@ -1,4 +1,4 @@
-# D-02 Valkey データ設計仕様書 (r20)
+# D-02 Valkey データ設計仕様書 (r21)
 
 ## 1. 全体方針
 
@@ -73,7 +73,7 @@ Vector APIがEAP-AKA認証ベクターを計算するための鍵情報。
 > - 経緯: D-11 r9 までは WATCH/MULTI による CAS で設計していたが、r10 で Lua による `sqn` フィールドの比較・置き換えに変更して実装した（本書 r17 までは、単純な HSET による後勝ちの書き戻しと記載していた）。詳細は D-11「Vector API詳細設計書」セクション7.5・13.6 を参照
 >
 > **Admin TUI からの書き込み（加入者編集）:**
-> - Admin TUI の加入者編集（`apps/admin-tui/internal/store/subscriber.go`）は、1つの Lua スクリプト（`updateSubscriberScript`。`EVALSHA` で実行）で、`sub:{IMSI}` の存在チェックと更新をまとめて行う
+> - Admin TUI の加入者編集（`pkg/masterdata/subscriber.go`。Provisioning API と共通。E-03 §9）は、1つの Lua スクリプト（`updateSubscriberScript`。`EVALSHA` で実行）で、`sub:{IMSI}` の存在チェックと更新をまとめて行う
 >
 >   ```lua
 >   if redis.call('EXISTS', KEYS[1]) == 0 then
@@ -604,7 +604,7 @@ type Subscriber struct {
 
 > **ストア層変換方式の補足:**
 > - Auth Server / Acct Server: `internal/store/convert.go` の `StructToMap` / `MapToStruct` が、上記のアプリ内構造体の `redis` タグをリフレクションで読み、`map[string]any` ⇔ 構造体を変換する（対応型: string, int/int64, uint8, bool）。bool は `1` / `0` として保存される。Acct Server の Start/Interim 更新は、更新対象フィールドだけの map を直接 HSET する
-> - Admin TUI: `pkg/model` の構造体（Policy は Admin TUI の `internal/model`、構造は `pkg/model` と同一）を使い、`internal/store` の関数（`subscriberFromHash`, `clientFromHash`, `mapToSession` 等）で Hash フィールドと手動で対応付ける。`model.Session.AcctSessionID` は Valkey の `acct_id` に対応する。`sub:{IMSI}` の編集（`Update` / `UpdateWithSQN`）は Lua スクリプト（`updateSubscriberScript`）で行う（セクション2.A）
+> - Admin TUI: `pkg/model` の構造体を使い、`pkg/masterdata` の関数（`subscriberFromHash`, `clientFromHash`。E-03 §9）と Admin TUI の `internal/store` の関数（`mapToSession` 等）で Hash フィールドと手動で対応付ける。`sub:` / `client:` / `policy:` の作成と変更は、存在確認と書き込みを1つの Lua スクリプトで行う（同じキーを同時に作成しても上書きしない）。`model.Session.AcctSessionID` は Valkey の `acct_id` に対応する。`sub:{IMSI}` の編集（`Update` / `UpdateWithSQN`）は Lua スクリプト（`updateSubscriberScript`）で行う（セクション2.A）
 > - Vector API: `sub:{IMSI}` を HGETALL して手動で詰め替え、`sqn` のみ Lua スクリプト（`CompareAndSetSQN`）で比較・置き換えする（セクション2.A）
 > - `pkg/model` の構造体には redis タグを付与しない設計とし、Valkey 実装に依存させない
 
@@ -634,3 +634,4 @@ type Subscriber struct {
 | r18 | 2026-10-04 | SQN競合制御の実装（Lua による `sqn` の比較・置き換え、競合時のやり直し最大3回、HTTP 409）の反映（2.A、5.2）: `sqn` フィールドの備考と「SQN更新方式（現行実装）」を、単純な HSET による後勝ちから、Lua スクリプト（`CompareAndSetSQN`。EVALSHA）で読んだ値と一致するときだけ書き換える方式に改めた。スクリプト本体、比較は `sqn` フィールドのみ・大文字小文字を正規化しない・キー不在時は作成しないこと、ベクター計算を書き換え成功後に行う順序、競合時のやり直し（1〜10ms待機、最大3回、`SQN_CONFLICT_RETRY`）と上限超過・期限切れ時の 409（`SQN_CONFLICT_ERR`）、再同期のやり直しで同期済みとみなす場合、書き換え後のベクター計算失敗時は SQN が進んだままになること、守る性質（IMSIごとに一意・単調増加）、WATCH/MULTI 設計からの経緯を記載。「WATCH/MULTI による CAS・リトライ・HTTP 409 は実装していない」の記述を削除。残っている制約として Admin TUI の加入者編集が `sqn` を上書きし巻き戻りうること（別PRで対応予定）を追記。5.2 ストア層変換方式の補足の Vector API の書き戻し方法を更新 |
 | r19 | 2026-10-04 | Admin TUI の加入者編集による `sqn` の上書き（巻き戻り）を解消した実装修正の反映（2.A、4、5.2）: r18 で「残っている制約」として記載した Admin TUI による `sqn` の上書きを解消済みとし、「Admin TUI からの書き込み（加入者編集）」に改めた。Lua スクリプト（`updateSubscriberScript`）で存在チェックと更新をまとめて行うこと、SQN を変更していないとき（大文字小文字の違いだけを含む）は `ki` / `opc` / `amf` だけを更新し `sqn` を書き換えないこと、変更したときは編集開始時の値と一致する場合だけ更新し一致しなければ何も更新しないこと、加入者が削除されていればキーを作らないこと、新規作成・CSVインポートは例外であることを記載。`sqn` フィールドの備考を補足。Hex表記の「入力どおりに保存する」を「大文字に正規化して保存する」に訂正。4 の Admin TUI のデータアクセスと 5.2 ストア層変換方式の補足に編集時の Lua スクリプトを追記 |
 | r20 | 2026-10-06 | `sess:{UUID}` に `nas_identifier`（NAS-Identifier）を追加した実装修正の反映: radsecproxy 等のプロキシ経由では `nas_ip`（送信元IP）がプロキシのIPになり NAS を区別できないため。Auth Server が Accept 時にポリシー評価に使った NAS-Identifier を書き、Acct Server が Start / Interim で NAS-Identifier があれば上書きする（なければ残す）。§2 のフィールド表・処理フロー・§5 の構造体を更新し、`nas_ip` がプロキシ経由ではプロキシのIPになる旨を追記 |
+| r21 | 2026-10-07 | Admin TUI の加入者・RADIUSクライアント・認可ポリシーの store と validation を pkg に移した実装修正（Provisioning API（D-13）と共通で使うため。E-03 r11）の反映: §2.A の Admin TUI の加入者編集の実装箇所を `pkg/masterdata/subscriber.go` に、§5.2 のストア層変換方式の補足を `pkg/masterdata` に修正し、作成・変更を Lua スクリプトで原子的に行う旨を追記。Admin TUI の `internal/model` は廃止して `pkg/model` に統合 |

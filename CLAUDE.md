@@ -73,4 +73,7 @@ RADIUS認証機能・課金機能と、AKA認証ベクター生成機能と、�
 ## 共有パッケージ（pkg/）
 - `pkg/logging.MaskIMSI` — IMSIマスキング（D-04仕様: 先頭6桁+末尾1桁）
 - `pkg/httputil.ProblemDetail` — RFC 7807準拠エラーレスポンス
+- `pkg/masterdata` — 加入者・RADIUSクライアント・認可ポリシー（`sub:` / `client:` / `policy:`）の Valkey 読み書き（作成・変更は Lua で原子的。E-03 §9）
+- `pkg/validation` — 上記マスタデータの入力検証・正規化（E-03 §8）
 - 各appで重複実装せず、pkgをimportして利用すること
+- pkg 内の相互依存は禁止。例外として、依存を持たない `pkg/model` への依存だけ許可する（E-03 §10.2）

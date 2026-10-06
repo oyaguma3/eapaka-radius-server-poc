@@ -1,14 +1,8 @@
 // Package store はValkeyアクセス層を提供する。
 package store
 
-// キープレフィックス定義
+// キープレフィックス定義（加入者・RADIUSクライアント・認可ポリシーのキーは pkg/masterdata）
 const (
-	// PrefixSubscriber は加入者キーのプレフィックス
-	PrefixSubscriber = "sub:"
-	// PrefixClient はRADIUSクライアントキーのプレフィックス
-	PrefixClient = "client:"
-	// PrefixPolicy は認可ポリシーキーのプレフィックス
-	PrefixPolicy = "policy:"
 	// PrefixSession はセッションキーのプレフィックス
 	PrefixSession = "sess:"
 	// PrefixEAPContext はEAPコンテキストキーのプレフィックス
@@ -18,21 +12,6 @@ const (
 	// KeyStatistics は統計情報キー
 	KeyStatistics = "stats:global"
 )
-
-// SubscriberKey は加入者のValkeyキーを生成する。
-func SubscriberKey(imsi string) string {
-	return PrefixSubscriber + imsi
-}
-
-// ClientKey はRADIUSクライアントのValkeyキーを生成する。
-func ClientKey(ip string) string {
-	return PrefixClient + ip
-}
-
-// PolicyKey は認可ポリシーのValkeyキーを生成する。
-func PolicyKey(imsi string) string {
-	return PrefixPolicy + imsi
-}
 
 // SessionKey はセッションのValkeyキーを生成する。
 func SessionKey(uuid string) string {

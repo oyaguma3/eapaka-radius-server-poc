@@ -1,4 +1,4 @@
-package store
+package masterdata
 
 import (
 	"context"
@@ -10,6 +10,9 @@ import (
 
 // ErrClientNotFound はRADIUSクライアントが見つからない場合のエラー
 var ErrClientNotFound = errors.New("client not found")
+
+// ErrClientExists は同じIPのRADIUSクライアントが既に存在する場合のエラー
+var ErrClientExists = errors.New("client already exists")
 
 // ClientStore はRADIUSクライアントデータへのアクセスを提供する。
 type ClientStore struct {
@@ -40,43 +43,38 @@ func (s *ClientStore) Get(ctx context.Context, ip string) (*model.RadiusClient, 
 
 // Create は新しいRADIUSクライアントを作成する。
 // Auth Server/Acct Serverと互換性のあるHash形式で保存する。
+// 存在確認と書き込みを1回の操作で行い、既に存在すれば何も書き込まずに ErrClientExists を返す。
 func (s *ClientStore) Create(ctx context.Context, c *model.RadiusClient) error {
-	key := ClientKey(c.IP)
-
-	// 既存チェック
-	exists, err := s.client.Exists(ctx, key).Result()
+	created, err := runHashScript(ctx, s.client, createHashScript, ClientKey(c.IP), clientFields(c))
 	if err != nil {
 		return err
 	}
-	if exists > 0 {
-		return errors.New("client already exists")
+	if !created {
+		return ErrClientExists
 	}
-
-	return s.client.HSet(ctx, key, map[string]any{
-		"secret": c.Secret,
-		"name":   c.Name,
-		"vendor": c.Vendor,
-	}).Err()
+	return nil
 }
 
 // Update は既存のRADIUSクライアントを更新する。
+// 存在確認と書き込みを1回の操作で行い、存在しなければ何も書き込まずに ErrClientNotFound を返す。
 func (s *ClientStore) Update(ctx context.Context, c *model.RadiusClient) error {
-	key := ClientKey(c.IP)
-
-	// 存在チェック
-	exists, err := s.client.Exists(ctx, key).Result()
+	updated, err := runHashScript(ctx, s.client, updateHashScript, ClientKey(c.IP), clientFields(c))
 	if err != nil {
 		return err
 	}
-	if exists == 0 {
+	if !updated {
 		return ErrClientNotFound
 	}
+	return nil
+}
 
-	return s.client.HSet(ctx, key, map[string]any{
+// clientFields はRADIUSクライアントのHashフィールドを返す。
+func clientFields(c *model.RadiusClient) map[string]any {
+	return map[string]any{
 		"secret": c.Secret,
 		"name":   c.Name,
 		"vendor": c.Vendor,
-	}).Err()
+	}
 }
 
 // Delete はRADIUSクライアントを削除する。

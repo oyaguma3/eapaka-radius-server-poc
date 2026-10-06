@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/model"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/model"
 )
 
 func TestParsePolicyCSV_ValidData(t *testing.T) {

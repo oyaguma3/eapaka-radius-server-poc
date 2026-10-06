@@ -5,10 +5,10 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/audit"
-	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/store"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/ui"
-	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/validation"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/masterdata"
 	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/model"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/validation"
 	"github.com/rivo/tview"
 )
 
@@ -16,7 +16,7 @@ import (
 type FormScreen struct {
 	form        *tview.Form
 	app         *ui.App
-	clientStore *store.ClientStore
+	clientStore *masterdata.ClientStore
 	auditLogger *audit.Logger
 	editMode    bool
 	originalIP  string
@@ -25,7 +25,7 @@ type FormScreen struct {
 }
 
 // NewFormScreen は新しいFormScreenを生成する。
-func NewFormScreen(app *ui.App, clientStore *store.ClientStore, auditLogger *audit.Logger) *FormScreen {
+func NewFormScreen(app *ui.App, clientStore *masterdata.ClientStore, auditLogger *audit.Logger) *FormScreen {
 	form := tview.NewForm()
 
 	form.SetBorder(true).
@@ -143,7 +143,7 @@ func (s *FormScreen) save(input *validation.ClientInput) {
 			s.app.GetStatusBar().ShowError("Failed to update: " + err.Error())
 			return
 		}
-		s.auditLogger.LogUpdate(audit.TargetClient, store.ClientKey(client.IP), "")
+		s.auditLogger.LogUpdate(audit.TargetClient, masterdata.ClientKey(client.IP), "")
 		s.app.GetStatusBar().ShowSuccess("Client updated: " + client.IP)
 	} else {
 		// 新規作成
@@ -151,7 +151,7 @@ func (s *FormScreen) save(input *validation.ClientInput) {
 			s.app.GetStatusBar().ShowError("Failed to create: " + err.Error())
 			return
 		}
-		s.auditLogger.LogCreate(audit.TargetClient, store.ClientKey(client.IP), "")
+		s.auditLogger.LogCreate(audit.TargetClient, masterdata.ClientKey(client.IP), "")
 		s.app.GetStatusBar().ShowSuccess("Client created: " + client.IP)
 	}
 

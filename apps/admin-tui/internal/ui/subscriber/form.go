@@ -8,10 +8,10 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/audit"
-	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/store"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/ui"
-	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/validation"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/masterdata"
 	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/model"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/validation"
 	"github.com/rivo/tview"
 )
 
@@ -19,7 +19,7 @@ import (
 type FormScreen struct {
 	form            *tview.Form
 	app             *ui.App
-	subscriberStore *store.SubscriberStore
+	subscriberStore *masterdata.SubscriberStore
 	auditLogger     *audit.Logger
 	editMode        bool
 	originalIMSI    string
@@ -29,7 +29,7 @@ type FormScreen struct {
 }
 
 // NewFormScreen は新しいFormScreenを生成する。
-func NewFormScreen(app *ui.App, subscriberStore *store.SubscriberStore, auditLogger *audit.Logger) *FormScreen {
+func NewFormScreen(app *ui.App, subscriberStore *masterdata.SubscriberStore, auditLogger *audit.Logger) *FormScreen {
 	form := tview.NewForm()
 
 	form.SetBorder(true).
@@ -183,7 +183,7 @@ func (s *FormScreen) save(input *validation.SubscriberInput) {
 		} else {
 			err = s.subscriberStore.Update(ctx, sub)
 		}
-		if errors.Is(err, store.ErrSQNChanged) {
+		if errors.Is(err, masterdata.ErrSQNChanged) {
 			s.app.GetStatusBar().ShowError("Failed to update: SQN was changed by authentication while editing. Reopen the subscriber and try again")
 			return
 		}
@@ -191,7 +191,7 @@ func (s *FormScreen) save(input *validation.SubscriberInput) {
 			s.app.GetStatusBar().ShowError("Failed to update: " + err.Error())
 			return
 		}
-		s.auditLogger.LogUpdate(audit.TargetSubscriber, store.SubscriberKey(sub.IMSI), sub.IMSI)
+		s.auditLogger.LogUpdate(audit.TargetSubscriber, masterdata.SubscriberKey(sub.IMSI), sub.IMSI)
 		s.app.GetStatusBar().ShowSuccess("Subscriber updated: " + sub.IMSI)
 	} else {
 		// 新規作成
@@ -200,7 +200,7 @@ func (s *FormScreen) save(input *validation.SubscriberInput) {
 			s.app.GetStatusBar().ShowError("Failed to create: " + err.Error())
 			return
 		}
-		s.auditLogger.LogCreate(audit.TargetSubscriber, store.SubscriberKey(sub.IMSI), sub.IMSI)
+		s.auditLogger.LogCreate(audit.TargetSubscriber, masterdata.SubscriberKey(sub.IMSI), sub.IMSI)
 		s.app.GetStatusBar().ShowSuccess("Subscriber created: " + sub.IMSI)
 	}
 

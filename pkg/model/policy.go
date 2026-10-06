@@ -52,3 +52,22 @@ func (p *Policy) EncodeRules() error {
 func (p *Policy) IsAllowByDefault() bool {
 	return p.Default == "allow"
 }
+
+// Clone はポリシーのディープコピーを作成する。
+func (p *Policy) Clone() *Policy {
+	clone := &Policy{
+		IMSI:      p.IMSI,
+		Default:   p.Default,
+		RulesJSON: p.RulesJSON,
+		Rules:     make([]PolicyRule, len(p.Rules)),
+	}
+	for i, rule := range p.Rules {
+		clone.Rules[i] = PolicyRule{
+			NasID:          rule.NasID,
+			AllowedSSIDs:   append([]string{}, rule.AllowedSSIDs...),
+			VlanID:         rule.VlanID,
+			SessionTimeout: rule.SessionTimeout,
+		}
+	}
+	return clone
+}

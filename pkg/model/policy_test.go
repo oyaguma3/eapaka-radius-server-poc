@@ -188,3 +188,31 @@ func TestPolicyRule(t *testing.T) {
 		t.Errorf("SessionTimeout = %d, want %d", rule.SessionTimeout, 3600)
 	}
 }
+
+func TestPolicyClone(t *testing.T) {
+	original := &Policy{
+		IMSI:      "440101234567890",
+		Default:   "allow",
+		RulesJSON: `[{"nas_id":"*","allowed_ssids":["ssid1","ssid2"]}]`,
+		Rules: []PolicyRule{
+			{
+				NasID:        "*",
+				AllowedSSIDs: []string{"ssid1", "ssid2"},
+			},
+		},
+	}
+
+	clone := original.Clone()
+
+	// Modify clone
+	clone.IMSI = "999999999999999"
+	clone.Rules[0].AllowedSSIDs[0] = "modified"
+
+	// Original should be unchanged
+	if original.IMSI != "440101234567890" {
+		t.Errorf("original IMSI was modified")
+	}
+	if original.Rules[0].AllowedSSIDs[0] != "ssid1" {
+		t.Errorf("original AllowedSSIDs was modified")
+	}
+}
