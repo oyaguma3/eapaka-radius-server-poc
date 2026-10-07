@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: EAP-AKA RADIUS PoC Provisioning API
-  version: 0.1.0-draft
+  version: 0.1.0
   description: |
     EAP-AKA RADIUS PoC環境の加入者、RADIUSクライアント、認可ポリシーを操作する API（D-13）。
     本PoCの外に置く BFF や、将来の統合API（eapaka-node-provisioner）から使う。
@@ -21,6 +21,12 @@ info:
     - 16進文字列は大文字・小文字のどちらも受け付け、小文字で返す。
     - 日時は RFC 3339 形式の UTC。
     - エラーは ProblemDetails（`application/problem+json`）で返す。
+
+    要求の解釈:
+    - 要求の本文は `application/json`。PATCH は `application/merge-patch+json`（`application/json` も受け付ける）。
+      それ以外の Content-Type は 400（`INVALID_MSG_FORMAT`）。本文の上限は 256KiB。
+    - 未知の項目、型の違う値、JSON の後ろに続くデータは 400（`INVALID_MSG_FORMAT`）。
+    - 該当しないパスは 404、メソッドは 405 を ProblemDetails（`cause` なし）で返す。
 
     Admin TUI との関係:
     - Admin TUI と同じ Valkey のキー・形式を読み書きする。原則として Admin TUI と同時には使わない。
@@ -516,10 +522,12 @@ components:
       name: X-Trace-ID
       in: header
       required: false
-      description: トレースID。ログの `trace_id` に使う。省略時はサーバーが採番し、応答の `X-Trace-ID` ヘッダーで返す。
+      description: |
+        トレースID。ログと監査ログの `trace_id` に使う。省略時、または形式が違う（印字可能ASCII 1〜64文字でない）場合は
+        サーバーが採番する（16進32桁）。使った値を応答の `X-Trace-ID` ヘッダーで返す。
       schema:
         type: string
-        maxLength: 64
+        pattern: '^[\x21-\x7E]{1,64}$'
 
   responses:
     BadRequest:
@@ -529,7 +537,7 @@ components:
         - `INVALID_QUERY_PARAM`: クエリパラメーターの値が不正
         - `MANDATORY_IE_MISSING`: 必須項目がない
         - `MANDATORY_IE_INCORRECT`: 必須項目の値が不正（パスの IMSI / IP を含む）
-        - `OPTIONAL_IE_INCORRECT`: 任意項目の値が不正
+        - `OPTIONAL_IE_INCORRECT`: 任意項目の値が不正（PATCH の項目の `null`、`X-Operator-Id` の形式を含む）
       content:
         application/problem+json:
           schema:
@@ -568,6 +576,7 @@ components:
     Ipv4:
       type: string
       format: ipv4
+      description: IPv4 アドレス（ドット区切りの10進。各オクテットの先頭に 0 を付けない）。
       example: 192.168.10.1
 
     Hex128:
@@ -768,7 +777,7 @@ components:
             maxLength: 32
         vlanId:
           type: string
-          description: 割り当てる VLAN ID（0〜4094）。省略・空文字は未設定。
+          description: 割り当てる VLAN ID（0〜4094。数字だけ）。省略・空文字は未設定。
           pattern: '^[0-9]{0,4}$'
         sessionTimeout:
           type: integer

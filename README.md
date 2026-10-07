@@ -21,6 +21,7 @@ Wi-Fi 認証 (WPA2/WPA3-Enterprise) 向けの RADIUS 認証・課金機能、AKA
 | **vector-gateway** | 認証ベクター生成リクエストのルーティング（PLMN 単位で接続方式 00: vector-api / 01: aka-only-server に振り分け） | HTTP 8080（コンテナ内のみ） |
 | **vector-api** | Milenage アルゴリズム計算 + SQN 管理 | HTTP 8080（コンテナ内のみ） |
 | **admin-tui** | 加入者・セッション管理用ターミナル UI | - |
+| **provisioning-api**（任意） | 加入者・RADIUSクライアント・認可ポリシーの REST API（`/admin/v1`）。本PoCの外の BFF から mTLS で操作する。compose の profile `provisioning` で起動 | HTTPS 9444（既定 127.0.0.1 のみ） |
 | **valkey** | データストア (加入者情報・セッション等) | 6379（127.0.0.1 のみ） |
 | **fluent-bit** | ログ収集・転送 | 24224（127.0.0.1 のみ） |
 | **aka-only-server**（外部・任意） | 接続方式01。指定 PLMN の AKA 認証ベクターを払い出す外部サーバー（3GPP TS 29.503 Nudm_UEAU GenerateAv ベース、[aka-only-server](https://github.com/oyaguma3/aka-only-server)）。mTLS で接続 | HTTPS 8443（平文 HTTP 8080） |
@@ -45,12 +46,15 @@ eapaka-radius-server-poc/
 │   ├── acct-server/        # RADIUS 課金サーバー
 │   ├── vector-gateway/     # ベクター生成ルーティング
 │   ├── vector-api/         # Milenage 計算 + SQN 管理
+│   ├── provisioning-api/   # マスタデータの REST API（任意）
 │   └── admin-tui/          # 管理用 TUI アプリケーション
 ├── pkg/                    # 共通ライブラリ
 │   ├── apperr/             # エラー定義
 │   ├── httputil/           # HTTP ユーティリティ
 │   ├── logging/            # ログ設定
 │   ├── model/              # 共通モデル
+│   ├── validation/         # マスタデータの入力検証（Admin TUI / Provisioning API 共通）
+│   ├── masterdata/         # マスタデータの Valkey アクセス（同上）
 │   └── valkey/             # Valkey クライアント
 ├── configs/
 │   └── fluent-bit/         # Fluent Bit 設定 (YAML)
@@ -104,8 +108,11 @@ docker compose up -d
 | `VECTOR_GATEWAY_AKAONLY_SERVER_CERT` | No | aka-only-server の AV 用サーバー証明書 (例: `/certs/av-server.pem`) |
 | `VECTOR_GATEWAY_AKAONLY_TIMEOUT` | No | aka-only-server 呼び出しタイムアウト (デフォルト: `3s`。auth-server のタイムアウト 5 秒より短くすること) |
 | `LOG_MASK_IMSI` | No | IMSI マスキング有効化 (デフォルト: `true`) |
-| `LOG_LEVEL` | No | ログレベル (`DEBUG` / `INFO` / `WARN` / `ERROR`、デフォルト: `INFO`。対象: auth-server / acct-server / vector-gateway / vector-api) |
+| `LOG_LEVEL` | No | ログレベル (`DEBUG` / `INFO` / `WARN` / `ERROR`、デフォルト: `INFO`。対象: auth-server / acct-server / vector-gateway / vector-api / provisioning-api) |
 | `TEST_VECTOR_ENABLED` | No | テストベクターモード (デフォルト: `false`、本番では無効のこと) |
+| `PROVISIONING_API_ADMIN_CLIENTS` | No | Provisioning API の管理クライアント（`識別名=クライアント証明書のSHA-256フィンガープリント` のカンマ区切り。provisioning-api を使う場合は必須） |
+| `PROVISIONING_API_BIND` | No | Provisioning API の 9444/tcp を公開するアドレス (デフォルト: `127.0.0.1`) |
+| `PROVISIONING_API_NODE_NAME` | No | Provisioning API の `/status` が返すノード名 |
 
 詳細は `deployments/.env.example` を参照してください。
 
@@ -118,6 +125,16 @@ docker compose -f docker-compose.yml -f docker-compose.aka-av.yml up -d
 ```
 
 手順の詳細は B-02 アプリケーションデプロイ手順書 §14 を参照してください。
+
+### Provisioning API（任意）
+
+本PoCの外の BFF から加入者・RADIUSクライアント・認可ポリシーを操作する場合は、サーバー証明書を `deployments/certs/provisioning/`（`server.pem` / `server.key`）に置き、BFF のクライアント証明書のフィンガープリントを `.env` の `PROVISIONING_API_ADMIN_CLIENTS` に登録して、profile を指定して起動します。
+
+```bash
+docker compose --profile provisioning up -d
+```
+
+API 仕様は `docs/openapi/provisioning-api.yaml`、設計は D-13、手順の詳細は B-02 §15 を参照してください。
 
 ## テスト実行
 
@@ -132,7 +149,7 @@ go test -cover ./...
 go test ./apps/auth-server/...
 ```
 
-テスト規模: 111 テストファイル、1,329 テストケース (T-02 単体テスト仕様書準拠)
+テスト規模: 126 テストファイル、1,461 テストケース (T-02 単体テスト仕様書準拠)
 
 ## 実装状況
 
@@ -145,13 +162,14 @@ go test ./apps/auth-server/...
 | vector-gateway | 完了 |
 | vector-api | 完了 |
 | admin-tui | 完了 |
+| provisioning-api | 完了 |
 | インフラ (Docker Compose / Fluent Bit / Valkey) | 完了 |
 
 ## ドキュメント
 
-`docs/` 配下に各種設計・運用ドキュメントがあります（全27件作成済み）。
+`docs/` 配下に各種設計・運用ドキュメントがあります（全29件作成済み）。
 
-### 設計ドキュメント (12件)
+### 設計ドキュメント (13件)
 
 | No. | ドキュメント名 | 内容 |
 |---|---|---|
@@ -167,6 +185,7 @@ go test ./apps/auth-server/...
 | D-10 | Acct Server 詳細設計書 | 課金サーバー詳細設計 |
 | D-11 | Vector API 詳細設計書 | Milenage 計算・SQN 管理 |
 | D-12 | Vector Gateway 詳細設計書 | PLMN ルーティング・外部 API 連携 |
+| D-13 | Provisioning API 詳細設計書 | マスタデータの REST API・mTLS・監査ログ |
 
 ### 開発ドキュメント (3件)
 
@@ -181,7 +200,7 @@ go test ./apps/auth-server/...
 | No. | ドキュメント名 | 内容 |
 |---|---|---|
 | T-01 | テスト戦略書 | テスト方針・カバレッジ目標 |
-| T-02 | 単体テスト仕様書 | 全 1,329 テストケース定義 |
+| T-02 | 単体テスト仕様書 | 全 1,461 テストケース定義 |
 | T-03 | 結合テスト仕様書 | コンポーネント間連携テスト |
 | T-04 | E2E テスト仕様書 | 実機テスト・擬似 E2E (計 11 シナリオ) |
 
@@ -209,7 +228,7 @@ go test ./apps/auth-server/...
 |---|---|---|
 | S-01 | eapaka_test 利用ノウハウ | eapaka_test の設定・テストケース解説・トラブルシューティング |
 
-詳細は [ドキュメント一覧](docs/EAP-AKA_RADIUS_PoC環境_ドキュメント一覧_r57.md) を参照してください。
+詳細は [ドキュメント一覧](docs/EAP-AKA_RADIUS_PoC環境_ドキュメント一覧_r58.md) を参照してください。
 
 ## ライセンス
 

@@ -1,7 +1,8 @@
-# D-13 Provisioning API 詳細設計書 (r2)
+# D-13 Provisioning API 詳細設計書 (r3)
 
 **作成日:** 2026-10-07
-**ステータス:** 設計中（共通ライブラリへの移動（§7.2）は実装済み。provisioning-api は実装前）
+**更新日:** 2026-10-08
+**ステータス:** 実装済み（`apps/provisioning-api`。simwifi 実機での結合確認済み。§9）
 
 ## 1. 概要
 
@@ -142,6 +143,7 @@ API のリソースと Valkey のキーの対応は次のとおり。
 | `vendor` | `vendor` | 英数字・空白・`-` 0〜64文字 | 任意（既定は空文字） | 含む |
 
 - IP アドレスがそのまま識別子になる（aka-only-server の AVクライアントのような、サーバーが採番する ID は持たない）。IP アドレスの変更は「削除して作成」で行う。
+- IP アドレスは、`pkg/validation` の規則（Admin TUI と同じ）に加え、表記が一意であること（各オクテットの先頭に `0` を付けない）を求める。Auth Server は送信元IPの文字列表記で `client:{IP}` を引くため、`192.168.010.1` のような表記で登録すると一致しない（パスの IP も同じ規則。不正なら `MANDATORY_IE_INCORRECT`）。
 - **変更（PATCH）:** `secret` / `name` / `vendor` のうち指定した項目だけを書き換える。
 - **応答に含めない値:** 共有シークレットは、読み出しを `GET /clients/{ip}/secret` だけで行い、監査ログに記録する。
 
@@ -159,12 +161,14 @@ API のリソースと Valkey のキーの対応は次のとおり。
 |-----------|---------------------|---------|------|
 | `nasId` | `nas_id` | 印字可能ASCII 1〜253文字。`*` 単独は任意の NAS に一致 | 必須 |
 | `allowedSsids` | `allowed_ssids` | 1〜32バイトの文字列の配列（`*` は任意の SSID。比較は大文字小文字を区別しない） | 必須（1件以上） |
-| `vlanId` | `vlan_id` | 0〜4094 の数字の文字列（省略・空文字は未設定） | 任意 |
+| `vlanId` | `vlan_id` | 0〜4094 の数字だけの文字列（省略・空文字は未設定。`+5` 等は不可） | 任意 |
 | `sessionTimeout` | `session_timeout` | 0〜86400（秒。省略・0 は未設定） | 任意 |
 
 - 認可ポリシーは、加入者の下ではなく独立したリソースとする。接続方式01では `sub:{IMSI}` がなく `policy:{IMSI}` だけが存在するため（§3.1）。
 - **作成・変更（PUT）:** ポリシー全体を置き換える（`default` と `rules` を1回の HSET で書き込む）。存在しなければ作成する（201）、存在すれば置き換える（200）。加入者（`sub:{IMSI}`）の有無は確認しない。
 - API では `rules` を JSON の配列として扱い、Valkey へは D-02 の形式（snake_case のキーを持つ JSON 文字列）で保存する。
+- 正規化は Admin TUI と同じ（`pkg/validation.NormalizePolicyInput`）: `default` は小文字にし（`ALLOW` も受け付ける）、`nasId` と各 SSID は前後の空白を除く。
+- `rules` の要素のうち、`nasId` / `allowedSsids` の欠落は `MANDATORY_IE_MISSING`、値の不正（`allowedSsids` が空の配列を含む）は `MANDATORY_IE_INCORRECT`、`vlanId` / `sessionTimeout` の不正は `OPTIONAL_IE_INCORRECT` とする。`invalidParams` の `param` は `rules[0].allowedSsids[1]` のように位置を示す。
 
 ### 3.4 秘密の値の読み出し
 
@@ -195,13 +199,15 @@ API のリソースと Valkey のキーの対応は次のとおり。
 |------|------|
 | ベースURL | `https://{host}:9444/admin/v1` |
 | 通信 | HTTPS（TLS 1.2 以上）、mTLS 必須（§5） |
-| 要求の形式 | `application/json`。PATCH は `application/merge-patch+json`（RFC 7396。`null` は指定できず、1項目以上を指定する。配列は全体を置き換える） |
+| 要求の形式 | `application/json`。PATCH は `application/merge-patch+json`（RFC 7396。`null` は指定できず、1項目以上を指定する。配列は全体を置き換える）。PATCH は `application/json` も受け付ける。`charset` 等のパラメーターは無視する。本文の上限は 256KiB |
+| 要求の解釈 | 未知の項目、型の違う値、JSON の後ろに続くデータは、要求全体を `INVALID_MSG_FORMAT` とする（aka-only-server の作成の要求と同じ）。PATCH の `null` と値の不正は `OPTIONAL_IE_INCORRECT`、空のオブジェクトは `MANDATORY_IE_MISSING`（`detail` に `at least one field is required`） |
 | 応答の形式 | `application/json`。エラーは `application/problem+json`（§4.3） |
 | 作成 | `201 Created` と `Location` ヘッダー（相対パス）。既に存在すれば `409` |
 | 削除 | `204 No Content`。存在しなければ `404` |
 | 操作者 | 任意のヘッダー `X-Operator-Id`（`^[A-Za-z0-9._@-]{1,64}$`）を監査ログに記録する |
-| トレース | 任意のヘッダー `X-Trace-ID` を受け取り、ログの `trace_id` に使う（ない場合は採番する）。応答の `X-Trace-ID` ヘッダーで返す |
-| ページング | 加入者・認可ポリシーの一覧は `cursor` / `limit`（1〜500、既定50）/ `prefix`（IMSI の前方一致）。応答は `items`、`total`、次のページがあるときだけ `nextCursor`。IMSI の昇順 |
+| トレース | 任意のヘッダー `X-Trace-ID`（印字可能ASCII 1〜64文字）を受け取り、ログの `trace_id` に使う。ない場合・形式が違う場合は採番する（16バイトの乱数の16進32桁）。使った値を応答の `X-Trace-ID` ヘッダーで返す |
+| ページング | 加入者・認可ポリシーの一覧は `cursor` / `limit`（1〜500、既定50）/ `prefix`（IMSI の前方一致。数字1〜15桁）。応答は `items`、`total`（`prefix` に一致する件数）、次のページがあるときだけ `nextCursor`（そのページの最後の IMSI）。IMSI の昇順。Valkey に一覧用のインデックスはないため、`SCAN` でキーを集めて並べ、そのページの分だけ読む（`pkg/masterdata` の `ListPage`。PoC の件数を前提とする） |
+| 該当しないパス・メソッド | `404` / `405` の ProblemDetails（`cause` なし） |
 
 ### 4.2 エンドポイント一覧
 
@@ -225,7 +231,9 @@ API のリソースと Valkey のキーの対応は次のとおり。
 | PUT | `/policies/{imsi}` | 認可ポリシーの作成・置き換え | 201 / 200 | create / update |
 | DELETE | `/policies/{imsi}` | 認可ポリシーの削除 | 204 | delete |
 
-RADIUSクライアントの一覧は件数が少ないため、ページングせず全件を IP アドレスの順（数値として比較）で返す（aka-only-server の AVクライアントの一覧と同じ）。
+RADIUSクライアントの一覧は件数が少ないため、ページングせず全件を IP アドレスの順（数値として比較）で返す（aka-only-server の AVクライアントの一覧と同じ）。IP アドレスとして解釈できないキーは後ろに置く。
+
+PATCH・PUT・DELETE は、監査ログに変更前の値を残すため、書き込みの前に対象を読む（変更は「存在確認と書き込み」を1回の操作で行うため、読んだ後に削除されていれば `404` になる。§2.3）。PATCH の応答は、書き込んだ後に読み直した値を返す（加入者では、認証で進んだ最新の SQN が入る）。
 
 ### 4.3 エラー
 
@@ -237,7 +245,7 @@ ProblemDetails（RFC 7807）の `title` / `status` / `detail` に、aka-only-ser
 | 400 | `INVALID_QUERY_PARAM` | クエリパラメーターの値が不正 |
 | 400 | `MANDATORY_IE_MISSING` | 必須項目がない |
 | 400 | `MANDATORY_IE_INCORRECT` | 必須項目の値が不正（パスの IMSI / IP を含む） |
-| 400 | `OPTIONAL_IE_INCORRECT` | 任意項目の値が不正 |
+| 400 | `OPTIONAL_IE_INCORRECT` | 任意項目の値が不正（PATCH の項目、`X-Operator-Id` の形式を含む） |
 | 404 | `USER_NOT_FOUND` | 加入者が存在しない |
 | 404 | `CLIENT_NOT_FOUND` | RADIUSクライアントが存在しない |
 | 404 | `POLICY_NOT_FOUND` | 認可ポリシーが存在しない |
@@ -246,6 +254,8 @@ ProblemDetails（RFC 7807）の `title` / `status` / `detail` に、aka-only-ser
 | 500 | `SYSTEM_FAILURE` | Valkey のエラー等、サーバー内部のエラー |
 
 - `POLICY_NOT_FOUND`、`CLIENT_ALREADY_EXISTS` は aka-only-server にはない、本APIで追加する値である。
+- 400 の `cause` は、`INVALID_QUERY_PARAM`、`MANDATORY_IE_MISSING`、`MANDATORY_IE_INCORRECT`、`OPTIONAL_IE_INCORRECT` の順に優先し、`invalidParams` には該当したすべての項目を同じ順で並べる（aka-only-server と同じ）。`reason` は `pkg/validation` の理由（例 `must be 15 digits`）、または `is required` / `must not be null` 等。
+- 500 は `detail` を返さず、エラーの内容は `PROV_REQUEST_ERR` としてログに残す（§6.1）。
 - 既存の `pkg/httputil.ProblemDetail`（Vector API が使用）は変えず、本API用の型を別に用意する（`type` は出力しない。aka-only-server と同じ）。
 
 ### 4.4 状態（`/status`）
@@ -267,11 +277,18 @@ Valkey に接続できない場合は `500`（`SYSTEM_FAILURE`）を返す。
 |------|------|
 | サーバー証明書 | ファイルで指定する（`PROVISIONING_API_TLS_CERT` / `PROVISIONING_API_TLS_KEY`）。自己署名でもよい（クライアント側で証明書を固定する） |
 | クライアント認証 | mTLS 必須。クライアント証明書の SHA-256 フィンガープリント（DER のハッシュ）を、環境変数 `PROVISIONING_API_ADMIN_CLIENTS`（`name=fingerprint` のカンマ区切り）で固定する。CA による検証は行わない（aka-only-server と同じ） |
-| 未登録の証明書 | 証明書なし、または登録されていない証明書の接続は、TLS ハンドシェイクで拒否する（HTTP の応答は返さない） |
+| 未登録の証明書 | 証明書なし、登録されていない証明書、有効期間外の証明書の接続は、TLS ハンドシェイクで拒否する（HTTP の応答は返さない）。拒否したことを WARN（`PROV_CLIENT_REJECTED`）で記録する（§6.1） |
 | 権限 | 登録されたクライアントはすべて全権限とする。利用者・権限の管理は BFF が行う |
 | 操作者 | BFF はログインした利用者の ID を `X-Operator-Id` で渡す。監査ログには、操作者 ID と、クライアント証明書に対応する識別名（`name`）の両方を記録する |
 
 > **注記:** web-gui-for-aka-only-server の aka-only-server 管理API 用クライアント（mTLS、サーバー証明書の固定）と同じ方式で接続できる。
+
+**実装（`internal/auth`）:**
+
+- `PROVISIONING_API_ADMIN_CLIENTS` のフィンガープリントは、大文字・コロン区切り（`openssl x509 -noout -fingerprint -sha256` の出力形式）も受け付ける。識別名は英数字・`.`・`_`・`-` の1〜64文字。同じフィンガープリントの重複、形式の誤り、0件はいずれも起動時のエラーにする（aka-only-server の `AKA_ADMIN_CLIENTS` と同じ規則）。
+- TLS 設定は TLS 1.2 以上、`ClientAuth` は `RequestClientCert` とし、証明書の有無・登録・有効期間を `VerifyConnection` で確認する（`RequireAnyClientCert` では証明書なしの接続が `VerifyConnection` の前に拒否され、ログに残らないため）。提示された証明書の秘密鍵の所持（CertificateVerify）は `ClientAuth` によらず検証される。
+- 拒否のログに送信元IPを残すため、`GetConfigForClient` で接続ごとに `VerifyConnection` を差し替える。
+- HTTP/2 も使える（Go の標準の動作）。
 
 ---
 
@@ -279,13 +296,19 @@ Valkey に接続できない場合は `500`（`SYSTEM_FAILURE`）を返す。
 
 ### 6.1 アプリケーションログ
 
-他のコンポーネントと同じく `log/slog` の JSON を標準出力に出し、fluent-bit で収集する（`app` は `provisioning-api`）。
+他のコンポーネントと同じく `log/slog` の JSON を標準出力に出し、fluent-bit で収集する（`app` は `provisioning-api`、出力先は `provisioning-api.log`）。
 
-| ログ | 内容 |
-|------|------|
-| 起動・停止 | 起動時に `listen_addr`、`log_level`、`node_name`、登録クライアント数を出す（フィンガープリントは出さない） |
-| `request completed` | メソッド、パス、`http_status`、`latency_ms`、`trace_id`、クライアントの識別名。パスに含まれる IMSI は `LOG_MASK_IMSI` に従ってマスクする |
-| エラー | Valkey のエラー等（500 を返す場合） |
+| ログ | Level | event_id | 内容 |
+|------|-------|----------|------|
+| `starting provisioning-api` | INFO | - | 起動時に `version`、`listen_addr`、`log_level`、`node_name`、`admin_clients`（登録クライアントの件数）を出す（フィンガープリントは出さない）。続いて `connected to Valkey`（`addr`）、`starting server`（`addr`） |
+| `request completed` | INFO | - | `trace_id`、`method`、`path`、`http_status`、`latency_ms`、`mgmt_client`（クライアントの識別名）、`src_ip`。パスのうち7桁を超える数字だけのセグメント（IMSI。15桁でない誤った IMSI も含む）は `LOG_MASK_IMSI` に従ってマスクする。クエリパラメーター（`prefix` 等）は出さない |
+| `request failed` | ERROR | `PROV_REQUEST_ERR` | 500 を返したとき（Valkey のエラー等）。`trace_id`、`method`、`path`（マスク済み）、`error` |
+| `panic recovered` | ERROR | `PROV_REQUEST_ERR` | ハンドラーのパニックから復旧して 500 を返したとき |
+| `admin client certificate rejected` | WARN | `PROV_CLIENT_REJECTED` | TLS ハンドシェイクでクライアント証明書を拒否したとき。`reason`（`no client certificate` / `not configured` / `outside validity period`）、`fingerprint`（証明書なしでは空文字。未登録の証明書を登録するときに確かめられる）、`src_ip` |
+| `http: TLS handshake error ...` | DEBUG | - | `http.Server` の `ErrorLog`（TLS ハンドシェイクの失敗等）。拒否の記録は上の WARN で足りるため DEBUG にする |
+| 設定エラー等 | ERROR | - | `failed to load config`、`failed to load server certificate`、`failed to connect to Valkey`（いずれも終了する） |
+
+> **注記（`src_ip`）:** `src_ip` はコンテナから見た送信元で、Docker のポート公開を経由するため、compose ネットワークのゲートウェイ（例 `172.18.0.1`）になることがある。simwifi では、同じホストからの接続でも、別ノードから Tailscale 経由で接続した場合でもゲートウェイIPになった（2026-10-08）。`src_ip` で BFF を区別できることを前提にせず、正常な接続は `mgmt_client`、拒否した接続は `fingerprint` で見分ける（運用上の確認方法は O-05 §11.6）。
 
 ### 6.2 監査ログ
 
@@ -300,13 +323,28 @@ Valkey に接続できない場合は `500`（`SYSTEM_FAILURE`）を返す。
 | `admin_user` | `X-Operator-Id` の値（省略時は空文字） |
 | `mgmt_client` | クライアント証明書に対応する識別名（本APIで追加する項目） |
 | `details` | 変更した項目（加入者の SQN / AMF、ポリシーの `default` 等は変更前後の値。Ki / OPc / 共有シークレットは「変更あり」だけで値は含めない）。読み出しでは読み出した項目名（`ki,opc` / `secret`） |
+| `trace_id` | リクエストのトレースID（`request completed` と突き合わせる。本APIで追加する項目） |
+
+`msg` は `{target_type} created` / `updated` / `deleted` / `secret read`（例 `subscriber created`、`client secret read`）。`details` の形式は次のとおり（16進は小文字、RADIUSクライアントの名前・ベンダーは引用符付き）。
+
+| 操作 | `details` の例 |
+|------|---------------|
+| 加入者の作成・削除 | `amf=8000, sqn=000000000000`（削除は削除時点の値） |
+| 加入者の変更 | `ki: changed, opc: unchanged, amf: 8000 -> b9b9, sqn: ff9bb4d0b627 -> 000000000020`（指定した項目だけ。Ki / OPc は値が変わったかだけ） |
+| RADIUSクライアントの作成・削除 | `name="AP-01", vendor="generic"` |
+| RADIUSクライアントの変更 | `secret: changed, name: "AP-01" -> "AP-02"` |
+| 認可ポリシーの作成・削除 | `default=deny, rules=2` |
+| 認可ポリシーの置き換え | `default: allow -> deny, rules: changed (1 -> 2)`（`rules` は内容が変わったかと件数） |
+| 秘密の値の読み出し | `ki,opc` / `secret` |
 
 - 失敗した操作（400 / 404 / 409 / 500）は監査ログに記録しない（`request completed` には記録する）。
+- 監査ログは `LOG_LEVEL` によらず出力する（アプリケーションログとは別のロガーで、同じ標準出力に1行ずつ書く）。`time` の形式は他のコンポーネントの `log/slog` と同じ（Admin TUI の監査ログの秒精度・UTC とは異なる）。
+- 変更前の値が読めない場合（認可ポリシーの `rules` が壊れている等）でも書き込みは行い、`details` は作成と同じ形式にする。
 - 監査ログの参照 API は本書の対象外とする（ホストOSのログファイルを参照する）。
 
 ### 6.3 D-04 への反映
 
-実装時に、D-04 に Provisioning API のログ（§3.x を新設）と監査ログの項目（`mgmt_client`、`operation` の `read`）を追加し、lnav フォーマットの対象ファイルに `provisioning-api.log` を加える。
+D-04 に Provisioning API のログ（§3.6 を新設）と監査ログの項目（`mgmt_client`、`trace_id`、`operation` の `read`）を追加し、lnav フォーマット（`deployments/lnav_formats/eap_aka_log.json`）の対象ファイルに `provisioning-api.log` を、値に `mgmt_client`・`admin_user`・`operation`・`target_type` を加えた（2026-10-08）。
 
 ---
 
@@ -316,21 +354,31 @@ Valkey に接続できない場合は `500`（`SYSTEM_FAILURE`）を返す。
 
 ```
 apps/provisioning-api/
-├── main.go                 # 起動、設定読み込み、TLS サーバー
+├── main.go                 # 起動、設定読み込み、TLS サーバー、Graceful Shutdown
 ├── Dockerfile
 ├── go.mod
 └── internal/
     ├── config/             # 環境変数（envconfig）
-    ├── auth/               # mTLS のフィンガープリント照合、識別名の取得
-    ├── server/             # ルーター（Gin）、ミドルウェア（トレース、ログ、Content-Type）
-    ├── handler/            # HTTP ハンドラー
-    ├── dto/                # 要求・応答の JSON（camelCase）、ProblemDetails
+    ├── auth/               # mTLS のフィンガープリント照合（Verifier / TLSConfig）、識別名の取得
+    ├── server/             # ルーター（Gin）、ミドルウェア（トレース、ログ、復旧、管理クライアント、X-Operator-Id）、HTTPS サーバー
+    ├── handler/            # HTTP ハンドラー（要求の読み込み、エラーの対応付け、応答）
+    ├── dto/                # 要求・応答の JSON（camelCase）、ProblemDetails、JSON Merge Patch の項目（Optional）
     ├── service/            # 検証・正規化、ストア呼び出し、監査ログ
     └── audit/              # 監査ログの出力
 ```
 
-- Vector API と同じく Gin と envconfig を使う（D-11）。新しい外部パッケージは追加しない。
-- ハンドラーは DTO と HTTP の変換だけを行い、検証・正規化・監査ログは service 層で行う。
+- Vector API と同じく Gin と envconfig を使う（D-11）。新しい外部パッケージは追加していない。
+- ハンドラーは DTO と HTTP の変換だけを行い、検証・正規化・監査ログは service 層で行う。service は検証エラーを `ValidationError`（`cause` と `invalidParams` を持つ）で、存在しない・既に存在するを `pkg/masterdata` のセンチネルエラーで返し、handler が HTTP のステータスに対応付ける。
+- アプリケーションログと監査ログは、同じ標準出力に排他して書き込む（1行が混ざらないようにする）。
+- `version` は `main.version`（既定 `0.1.0`。`-ldflags "-X main.version=..."` で上書きできる）。
+- Go Workspace（`go.work`）にモジュールを加えたため、他のアプリの Dockerfile も `apps/provisioning-api/go.mod` / `go.sum` をコピーする（`go.work` の `use` の解決に全モジュールの go.mod が要る）。Makefile と CI の対象にも加えた。
+
+**共通ライブラリに追加したもの（2026-10-08）:**
+
+| 追加 | 内容 |
+|------|------|
+| `SubscriberStore.ListPage` / `PolicyStore.ListPage`（`pkg/masterdata/page.go`） | IMSI の前方一致・cursor・件数で1ページを返す（§4.1 のページング）。`rules` を解釈できないポリシーは `List` と同じく結果に含めない（`total` には数える） |
+| `ClientStore.Patch` | 指定した項目だけを書き換える（PATCH 用。存在確認と書き込みを1回の操作で行う） |
 
 ### 7.2 共通ライブラリへの移動
 
@@ -366,6 +414,7 @@ provisioning-api のプロセスが読む環境変数。
 | `PROVISIONING_API_TLS_KEY` | - | ○ | サーバー証明書の秘密鍵（PEM）のパス |
 | `PROVISIONING_API_ADMIN_CLIENTS` | - | ○ | 管理クライアントの `name=fingerprint`（SHA-256、16進）のカンマ区切り。空なら起動しない |
 | `PROVISIONING_API_NODE_NAME` | ホスト名 | - | `/status` の `nodeName`。コンテナでは既定のホスト名がコンテナIDになるため、§8.1.2 の `.env` で指定することを推奨する |
+| `GIN_MODE` | `release` | - | Gin の動作モード（Vector API と同じ） |
 | `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASS` | `valkey` / `6379` / - | - | Valkey の接続先（他のコンポーネントと同じ） |
 | `LOG_LEVEL` | `INFO` | - | ログレベル（`pkg/logging.ParseLevel`） |
 | `LOG_MASK_IMSI` | `true` | - | アプリケーションログの IMSI マスク（監査ログは生値） |
@@ -389,7 +438,10 @@ compose では、`PROVISIONING_API_LISTEN_ADDR` は既定値（`:9444`）のま�
 - `provisioning-api` サービスを追加する。証明書の準備が要るため、compose の profile（`provisioning`）に入れ、既定の `docker compose up` では起動しない。
 - 公開は `${PROVISIONING_API_BIND:-127.0.0.1}:9444:9444/tcp`。別ノードの BFF から使う場合だけ `.env` の `PROVISIONING_API_BIND` を変える（§8.1.2）。
 - 証明書は `deployments/certs/provisioning/` をコンテナの `/certs` に読み取り専用でマウントする。
-- ヘルスチェックはプロセスの確認（`pgrep`）とする（`/status` は mTLS が要るため）。
+- ヘルスチェックはプロセスの確認（`pgrep -f /usr/local/bin/provisioning-api`）とする（`/status` は mTLS が要るため）。Linux のプロセス名（comm）は15文字までに切り詰められ、16文字の `provisioning-api` は `pgrep -x` で一致しないため、`-f` でコマンドラインと照合する。
+- `depends_on` は Valkey（healthy）だけ。サーバー証明書・秘密鍵が読めない、`PROVISIONING_API_ADMIN_CLIENTS` が空・不正、Valkey に接続できない場合は、エラーを出して終了する（`restart: always` により再起動を繰り返す）。
+- 秘密鍵のファイルはパーミッション 600 でよい（コンテナのプロセスは root で動く）。
+- 手順は B-02 を参照。
 - ログは他のサービスと同じく fluent-bit に送り、`provisioning-api.log` に出力する。
 
 ---
@@ -403,6 +455,11 @@ compose では、`PROVISIONING_API_LISTEN_ADDR` は既定値（`:9444`）のま�
 | 結合（simwifi 実機） | compose で起動し、curl とクライアント証明書で全エンドポイントを操作する。provisioning-api で登録した加入者・ポリシー・RADIUSクライアントで eapaka_test の認証が通ること、Admin TUI で同じデータが見えること、Admin TUI で登録したデータを API で読めることを確認する |
 
 カバレッジは他のアプリと同じく 80% 以上を目標とする（T-01）。
+
+**実施結果（2026-10-08）:**
+
+- 単体: パッケージごとのカバレッジは audit 100%、auth 98.4%、config 100%、dto 100%、handler 98.6%、server 95.6%、service 97.6%（`main.go` は対象外。他のアプリと同じ）。ケースは T-02 を参照。
+- 結合: simwifi で compose（profile `provisioning`）を起動し、curl とクライアント証明書で全エンドポイントを操作した。provisioning-api で登録した加入者・ポリシー・RADIUSクライアントで eapaka_test の EAP-AKA / AKA' が Access-Accept になること、ポリシーの置き換え・共有シークレットの変更が認証に反映されること、PATCH で SQN が巻き戻らないこと、未登録・証明書なしの接続が拒否されること、`PROVISIONING_API_BIND` を Tailscale のアドレスにして別ノード（WSL）から使えること、Admin TUI との相互参照（双方向）、監査ログの内容と、ログに秘密の値が出ないことを確認した。手順と結果は T-03 を参照。
 
 ---
 
@@ -423,7 +480,7 @@ compose では、`PROVISIONING_API_LISTEN_ADDR` は既定値（`:9444`）のま�
 
 1. 本書と OpenAPI 定義の作成（本書 r1）
 2. 共通ライブラリへの移動（§7.2。`pkg/validation`、`pkg/masterdata`。Admin TUI の動作は変えない）… 実装済み（本書 r2）
-3. provisioning-api の実装（§4〜§8）、D-01 / D-02 / D-04 / D-08 / T-02 等の更新、simwifi での結合確認
+3. provisioning-api の実装（§4〜§8）、D-01 / D-04 / D-08 / E-03 / T-02 / T-03 / B-02 等の更新、simwifi での結合確認 … 実装済み（本書 r3）
 4. 将来拡張（§10）は別途検討
 
 ---
@@ -434,3 +491,4 @@ compose では、`PROVISIONING_API_LISTEN_ADDR` は既定値（`:9444`）のま�
 |------|------|------|
 | r1 | 2026-10-07 | 初版作成。Admin TUI の加入者・RADIUSクライアント・認可ポリシーの CRUD を REST API として提供する provisioning-api の設計（位置づけ、リソースモデル、aka-only-server の管理API に揃えた作法、秘密の値の読み出しと監査、mTLS 認証、ログ・監査、共通ライブラリへの移動、設定、テスト方針、将来拡張）。拡張案 X-01 を置き換える |
 | r2 | 2026-10-07 | 共通ライブラリへの移動（§7.2）の実装の反映: §7.2 を実装済みとし、`internal/model` の `pkg/model` への統合、ポリシーの変更も原子的にしたこと、`SubscriberStore.Patch` / `PolicyStore.Put` / `PolicyStore.Count` の追加、センチネルエラー、E-03 の依存ルールの例外を追記。§2.3 の注記を過去形に、§11 の手順2を実装済みに |
+| r3 | 2026-10-08 | provisioning-api の実装の反映: ステータスを実装済みに。§3.2 に IP アドレスの表記の規則（先頭の 0 を不可）、§3.3 に `vlanId` は数字だけ・正規化・`rules` の検証エラーの区分、§4.1 に PATCH の `application/json`・本文の上限・要求の解釈（未知の項目等は `INVALID_MSG_FORMAT`）・トレースIDの形式・ページングの実装（SCAN）・404/405、§4.2 に書き込み前の読み出しと PATCH の応答、§4.3 に `cause` の優先順・`X-Operator-Id`・500 の扱い、§5 に有効期間外の拒否と実装（`RequestClientCert` + `VerifyConnection`、`GetConfigForClient`）、§6.1 をログの表に（`PROV_REQUEST_ERR`、`PROV_CLIENT_REJECTED`、`src_ip` がゲートウェイIPになる注記と O-05 §11.6 への参照）、§6.2 に `trace_id`・`msg`・`details` の形式・ログレベルによらない出力、§6.3 を反映済みに、§7.1 を実装の構成に（`pkg/masterdata` の `ListPage`・`ClientStore.Patch` の追加、Dockerfile・Makefile・CI）、§8.1.1 に `GIN_MODE`、§8.2 にヘルスチェック（`pgrep -f`）・終了条件・鍵のパーミッション、§9 に実施結果、§11 の手順3を実装済みに |

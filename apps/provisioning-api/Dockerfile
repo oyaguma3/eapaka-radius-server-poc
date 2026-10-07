@@ -14,28 +14,26 @@ COPY apps/vector-gateway/go.mod apps/vector-gateway/go.sum ./apps/vector-gateway
 COPY pkg/go.mod pkg/go.sum ./pkg/
 
 # 依存関係のダウンロード（対象アプリ + pkg）
-RUN cd apps/vector-api && go mod download && \
+RUN cd apps/provisioning-api && go mod download && \
     cd /workspace/pkg && go mod download
 
 # ソースコードのコピー（対象アプリ + pkg のみ）
-COPY apps/vector-api/ ./apps/vector-api/
+COPY apps/provisioning-api/ ./apps/provisioning-api/
 COPY pkg/ ./pkg/
 
-RUN cd apps/vector-api && CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/vector-api .
+RUN cd apps/provisioning-api && CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/provisioning-api .
 
 # ランタイムステージ
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
-    curl \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /out/vector-api /usr/local/bin/vector-api
+COPY --from=builder /out/provisioning-api /usr/local/bin/provisioning-api
 
-EXPOSE 8080
+EXPOSE 9444
+# /status は mTLS が必要なため HTTP ヘルスチェックなし（compose で pgrep -f を使う。D-13 §8.2）
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -fsS http://localhost:8080/health || exit 1
-
-ENTRYPOINT ["/usr/local/bin/vector-api"]
+ENTRYPOINT ["/usr/local/bin/provisioning-api"]

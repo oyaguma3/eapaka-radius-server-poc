@@ -1,4 +1,4 @@
-# D-02 Valkey データ設計仕様書 (r21)
+# D-02 Valkey データ設計仕様書 (r22)
 
 ## 1. 全体方針
 
@@ -23,7 +23,7 @@
 
 ## 2. マスタデータ / 設定データ (永続)
 
-Admin TUI等で管理者が事前に設定するデータ群です。
+Admin TUI等で管理者が事前に設定するデータ群です。Provisioning API（D-13。任意）も、Admin TUI と同じ `pkg/masterdata`・`pkg/validation` を使って同じキー・同じ形式で読み書きします（16進は大文字に正規化して保存）。
 
 ### A. 加入者情報 (Subscriber)
 
@@ -97,6 +97,10 @@ Vector APIがEAP-AKA認証ベクターを計算するための鍵情報。
 > - SQN を変更した場合は `UpdateWithSQN` で、現在の `sqn` が編集開始時に読んだ値と**一致するときだけ** `ki` / `opc` / `amf` と `sqn` を更新する。一致しない（編集中に認証で `sqn` が進んだ）ときは何も更新せず、Admin TUI はエラーを表示する（D-05 セクション4.2.2）
 > - これにより、Admin TUI の保存で `sqn` が巻き戻ることはない。Vector API 側から見ると、Admin TUI が `ki` / `opc` / `amf` だけを更新した場合は `sqn` が変わらないので競合にならず、Admin TUI が `sqn` を変更した場合は競合として検出してやり直す
 > - 例外として、Admin TUI の新規作成と CSV インポート（既存キーを上書きする）は、比較せずに `sqn` を入力値・CSV の値で書き込む
+>
+> **Provisioning API からの書き込み（加入者の変更。D-13 §3.1）:**
+> - `PATCH /admin/v1/subscribers/{imsi}` は `SubscriberStore.Patch` で、指定した項目（`ki` / `opc` / `amf` / `sqn`）だけを、存在確認と書き込みを1つの Lua スクリプト（`updateHashScript`）で書き換える。`sqn` を指定しなければ `sqn` には触れないので、認証で進んだ `sqn` は巻き戻らない（2026-10-08 に simwifi で確認）
+> - `sqn` を指定した場合は、比較せずにそのまま書き換える（aka-only-server の管理API と同じ。Admin TUI の `UpdateWithSQN` とは異なる）。Vector API の読み出しから書き戻しまでの間に書き換えた場合は、Vector API 側の Lua スクリプトが競合として検出してやり直す
 > - 経緯: 本書 r18 までの Admin TUI は、SQN を変更していなくても `sqn` をフォームの値（編集開始時の値）で上書きしていた（`EXISTS` の後に `HSET`）ため、編集中に認証が進むと保存時に `sqn` が巻き戻る可能性があった。また `EXISTS` と `HSET` の間に加入者が削除されると、一部のフィールドだけの Hash が作られる可能性があった。r19 でいずれも解消した
 >
 > **テストベクターモード（`TEST_VECTOR_ENABLED=true`）時:**
@@ -442,6 +446,15 @@ Acct Serverが重複パケットおよび順序異常を検出するためのキ
    - セッション一覧: `sess:*` を SCAN して表示。
    - IMSI指定: `idx:user:{IMSI}` から `sess:{UUID}` を取得して表示（セクション3.F のクリーンアップを実施）。
 
+### Provisioning API（任意。D-13）
+
+1. **管理機能:**
+   - `sub:{IMSI}`, `client:{IP}`, `policy:{IMSI}` の CRUD 操作を、Admin TUI と同じ `pkg/masterdata` で行う（作成・変更は Lua スクリプトで存在確認と書き込みをまとめる。E-03 §9.3）。
+   - 加入者・RADIUSクライアントの変更（PATCH）は、指定した項目だけを書き換える（`SubscriberStore.Patch` / `ClientStore.Patch`）。認可ポリシーの PUT は `default` と `rules` を1回の HSET で置き換える（`PolicyStore.Put`）。
+   - 加入者・認可ポリシーの一覧は、`SCAN` で `sub:{prefix}*` / `policy:{prefix}*` のキーを集めて IMSI の昇順に並べ、そのページの分だけパイプライン HGETALL で読む（`ListPage`）。RADIUSクライアントの一覧は全件（SCAN + パイプライン HGETALL）。
+   - `/status` の件数は `sub:*` / `client:*` / `policy:*` の SCAN で数える。
+2. **連動しない操作:** 加入者を削除しても `policy:{IMSI}`・`sess:`・`idx:user:` は削除しない（D-13 §3.1）。セッション・統計は参照しない。
+
 ------
 
 ## 5. Go 構造体定義
@@ -635,3 +648,4 @@ type Subscriber struct {
 | r19 | 2026-10-04 | Admin TUI の加入者編集による `sqn` の上書き（巻き戻り）を解消した実装修正の反映（2.A、4、5.2）: r18 で「残っている制約」として記載した Admin TUI による `sqn` の上書きを解消済みとし、「Admin TUI からの書き込み（加入者編集）」に改めた。Lua スクリプト（`updateSubscriberScript`）で存在チェックと更新をまとめて行うこと、SQN を変更していないとき（大文字小文字の違いだけを含む）は `ki` / `opc` / `amf` だけを更新し `sqn` を書き換えないこと、変更したときは編集開始時の値と一致する場合だけ更新し一致しなければ何も更新しないこと、加入者が削除されていればキーを作らないこと、新規作成・CSVインポートは例外であることを記載。`sqn` フィールドの備考を補足。Hex表記の「入力どおりに保存する」を「大文字に正規化して保存する」に訂正。4 の Admin TUI のデータアクセスと 5.2 ストア層変換方式の補足に編集時の Lua スクリプトを追記 |
 | r20 | 2026-10-06 | `sess:{UUID}` に `nas_identifier`（NAS-Identifier）を追加した実装修正の反映: radsecproxy 等のプロキシ経由では `nas_ip`（送信元IP）がプロキシのIPになり NAS を区別できないため。Auth Server が Accept 時にポリシー評価に使った NAS-Identifier を書き、Acct Server が Start / Interim で NAS-Identifier があれば上書きする（なければ残す）。§2 のフィールド表・処理フロー・§5 の構造体を更新し、`nas_ip` がプロキシ経由ではプロキシのIPになる旨を追記 |
 | r21 | 2026-10-07 | Admin TUI の加入者・RADIUSクライアント・認可ポリシーの store と validation を pkg に移した実装修正（Provisioning API（D-13）と共通で使うため。E-03 r11）の反映: §2.A の Admin TUI の加入者編集の実装箇所を `pkg/masterdata/subscriber.go` に、§5.2 のストア層変換方式の補足を `pkg/masterdata` に修正し、作成・変更を Lua スクリプトで原子的に行う旨を追記。Admin TUI の `internal/model` は廃止して `pkg/model` に統合 |
+| r22 | 2026-10-08 | Provisioning API（D-13）の実装の反映: §2 の冒頭に Provisioning API も同じキー・形式で読み書きすること、§2.A に Provisioning API からの加入者の変更（`SubscriberStore.Patch`。`sqn` を指定しなければ触れない、指定した場合は比較せずに書き換える）、§4 に「Provisioning API」のアクセスパターン（CRUD、PATCH・PUT、`ListPage` による一覧、`/status` の件数、連動しない操作）を追加 |

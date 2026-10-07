@@ -1,4 +1,4 @@
-# D-01 ミニPC版 EAP-AKA RADIUS PoC環境 設計仕様書 (r18)
+# D-01 ミニPC版 EAP-AKA RADIUS PoC環境 設計仕様書 (r19)
 
 ## 1. システム概要
 
@@ -50,14 +50,20 @@
 |  |  - Valkeyデータ操作 (IMSI/Ki/OPc等)                       |          |
 |  +-----------------------------------------------------------+          |
 |                                                                         |
+|  [8. provisioning-api] (Go / REST API) ※任意（profile `provisioning`）  |
+|     <--- HTTPS + mTLS 9444/tcp（既定 127.0.0.1）--- [ BFF（本PoCの外）]   |
+|     ---> valkey（sub: / client: / policy: の CRUD）                     |
+|                                                                         |
 +-------------------------------------------------------------------------+
 ```
 
 > **注記（aka-only-server、任意）:** aka-only-server（https://github.com/oyaguma3/aka-only-server ）は、3GPP TS 29.503 Nudm_UEAU GenerateAv ベースの API で AKA 認証ベクターを払い出す外部サーバーであり、本リポジトリの構成要素ではない。Vector Gateway の接続方式ID `01` として、`VECTOR_GATEWAY_PLMN_MAP` で `01` を指定した PLMN の加入者についてだけ利用する（`VECTOR_GATEWAY_AKAONLY_URL` を設定した場合のみ有効）。接続は mTLS（証明書ピン留め）が既定で、平文HTTP は同一ホスト内に限る。同一ホストで動かす場合は `deployments/docker-compose.aka-av.yml` を重ね、vector-gateway を aka-only-server 側の共有ネットワーク（既定名 `aka-av`）に参加させる。詳細は D-12「Vector Gateway 詳細設計書」4.5節・5章を参照。
 
+> **注記（provisioning-api、任意）:** Admin TUI の加入者・RADIUSクライアント・認可ポリシーの CRUD を、本PoCの外の BFF から REST API（`/admin/v1`、HTTPS + mTLS、9444/tcp）で使えるようにするコンテナ。証明書の準備が要るため compose の profile `provisioning` に入れており、既定の起動には含まれない。公開は既定で `127.0.0.1` だけで、別ノードの BFF から使う場合は `.env` の `PROVISIONING_API_BIND` で公開するアドレスを指定する。詳細は D-13「Provisioning API 詳細設計書」を参照。
+
 ## 3. Go実装ノード詳細と採用パッケージ
 
-本システムを構成する5つのGoアプリケーションの役割と、使用するライブラリのマッピングです。
+本システムを構成する6つのGoアプリケーションの役割と、使用するライブラリのマッピングです。
 
 ### 3.1 実装ノード一覧
 
@@ -68,6 +74,7 @@
 | **3. Vector Gateway**  | `apps/vector-gateway`  | **[ルーティング]** ベクター取得先振分け | 1. **設定読込:** `envconfig` でロード。 2. **API提供:** REST API (`POST /api/v1/vector`)。Auth Serverとの互換性維持。`GET /health` エンドポイントでヘルスチェック応答を提供。 3. **ルーティング:** PLMNベースでバックエンド選択。接続方式ID `00`: 内部Vector API（PLMN未一致・passthroughモードの既定先）、`01`: 外部の aka-only-server（`VECTOR_GATEWAY_AKAONLY_URL` 設定時のみ。mTLSまたは平文HTTP、GenerateAv形式との変換を行う）、`02`〜`99`: 将来実装（501）。 4. **Trace ID:** Header `X-Trace-ID` を読み取り、内部APIへ伝搬（aka-only-serverへはベストエフォート）。 5. **ログ:** `slog` で構造化出力。 |
 | **4. Vector API**      | `apps/vector-api`      | **[暗号計算サービス]** AKAベクター生成  | 1. **設定読込:** `envconfig` でロード。`TEST_VECTOR_ENABLED` 環境変数（デフォルト: false）を有効にすると、テストベクターモードが有効化され、特定IMSIプレフィックス（`TEST_VECTOR_IMSI_PREFIX`、デフォルト: "00101"）に対しては Ki/OPc/AMF をテスト用固定値（3GPP TS 35.208 Test Set 1）に置き換えてベクターを計算する（加入者の登録・SQN管理は通常どおり必要）。 2. **API提供:** REST API (`POST /api/v1/vector`)。`GET /health` エンドポイントでヘルスチェック応答を提供。 3. **Trace ID:** Header `X-Trace-ID` を読み取りログコンテキストに設定。 4. **DB取得:** ValkeyからSIM鍵情報取得。 5. **計算:** `milenage` 実行。 6. **更新:** SQNインクリメントとValkey更新。 |
 | **5. Admin TUI**       | `apps/admin-tui`       | **[管理コンソール]** データ操作UI       | 1. **設定読込:** `os.Getenv("VALKEY_PASSWORD")` でDB PASS取得。 2. **UI表示:** `tview` + `tcell` 利用。 3. **DB操作:** 加入者CRUD、RADIUSクライアント管理、ポリシー管理、CSV I/O。 4. **監視:** Valkey接続確認およびセッション閲覧。 5. **監査ログ:** 操作履歴を標準出力にJSONで1行ずつ記録（`event_id`=`AUDIT_LOG`。Valkeyには保存しない）。 |
+| **6. Provisioning API** | `apps/provisioning-api` | **[管理API]** マスタデータの REST API（任意） | 1. **設定読込:** `envconfig` でロード。 2. **API提供:** `/admin/v1` の REST API（Gin）。加入者・RADIUSクライアント・認可ポリシーの CRUD、Ki / OPc・共有シークレットの読み出し（専用の経路だけ）、`/status`。 3. **認証:** mTLS（クライアント証明書の SHA-256 フィンガープリントを `PROVISIONING_API_ADMIN_CLIENTS` で固定）。 4. **DB操作:** Admin TUI と同じ `pkg/validation`・`pkg/masterdata` を使う。 5. **監査ログ:** 変更操作と秘密の値の読み出しを標準出力に JSON で記録（`event_id`=`AUDIT_LOG`）。 6. **ログ:** `slog` で構造化出力。 |
 
 > **データモデル注記:**
 > - **RadiusClient** (`client:{IP}`): `ip`, `secret`, `name`, `vendor` の4フィールド構成（`enabled` フィールドは廃止済み、`vendor` フィールドを追加）。
@@ -76,22 +83,22 @@
 
 ### 3.2 パッケージ利用マップ
 
-| **カテゴリ** | **パッケージ**              | **Auth** | **Acct** | **Gateway** | **Vector** | **TUI** | **Test** | **用途概要**                          |
-| ------------ | --------------------------- | -------- | -------- | ----------- | ---------- | ------- | -------- | ------------------------------------- |
-| **Core**     | `layeh/radius`              | ◎        | ◎        | -           | -          | -       | -        | RADIUSプロトコル処理                  |
-|              | `oyaguma3/go-eapaka`        | ◎        | -        | -           | -          | -       | -        | EAP-AKAパケット処理                   |
-|              | `wmnsk/milenage`            | -        | -        | -           | ◎          | -       | -        | AKA認証ベクター計算                   |
-|              | `gin-gonic/gin`             | -        | -        | ◎           | ◎          | -       | -        | Web APIサーバー                       |
-|              | `rivo/tview`                | -        | -        | -           | -          | ◎       | -        | ターミナルUI構築                      |
-|              | `gdamore/tcell/v2`          | -        | -        | -           | -          | ◎       | -        | ターミナル制御（tview依存）           |
-|              | `redis/go-redis`            | ◎        | ○        | -           | ◎          | ◎       | -        | Valkey(Redis)クライアント             |
-| **Util**     | `kelseyhightower/envconfig` | ◎        | ◎        | ◎           | ◎          | -       | -        | 環境変数の一括ロード・型変換          |
-|              | `google/uuid`               | ◎        | ◎        | -           | -          | -       | -        | UUID生成(Auth)・パース検証(Acct)      |
-|              | `go-resty/resty`            | ◎        | -        | -           | -          | -       | -        | HTTPクライアント(Auth→GW)             |
-|              | `sony/gobreaker`            | ◎        | -        | -           | -          | -       | -        | サーキットブレーカー                  |
-| **Std**      | `log/slog`                  | ◎        | ◎        | ◎           | ◎          | -       | -        | 構造化ログ (JSON形式推奨)             |
-| **Test**     | `go.uber.org/mock`          | -        | -        | -           | -          | -       | ◎        | モック生成・テスト用                  |
-|              | `alicebob/miniredis/v2`     | -        | -        | -           | -          | -       | ◎        | Valkeyインメモリモック（テスト用）    |
+| **カテゴリ** | **パッケージ**              | **Auth** | **Acct** | **Gateway** | **Vector** | **TUI** | **Prov** | **Test** | **用途概要**                          |
+| ------------ | --------------------------- | -------- | -------- | ----------- | ---------- | ------- | -------- | -------- | ------------------------------------- |
+| **Core**     | `layeh/radius`              | ◎        | ◎        | -           | -          | -       | -        | -        | RADIUSプロトコル処理                  |
+|              | `oyaguma3/go-eapaka`        | ◎        | -        | -           | -          | -       | -        | -        | EAP-AKAパケット処理                   |
+|              | `wmnsk/milenage`            | -        | -        | -           | ◎          | -       | -        | -        | AKA認証ベクター計算                   |
+|              | `gin-gonic/gin`             | -        | -        | ◎           | ◎          | -       | ◎        | -        | Web APIサーバー                       |
+|              | `rivo/tview`                | -        | -        | -           | -          | ◎       | -        | -        | ターミナルUI構築                      |
+|              | `gdamore/tcell/v2`          | -        | -        | -           | -          | ◎       | -        | -        | ターミナル制御（tview依存）           |
+|              | `redis/go-redis`            | ◎        | ○        | -           | ◎          | ◎       | ◎        | -        | Valkey(Redis)クライアント             |
+| **Util**     | `kelseyhightower/envconfig` | ◎        | ◎        | ◎           | ◎          | -       | ◎        | -        | 環境変数の一括ロード・型変換          |
+|              | `google/uuid`               | ◎        | ◎        | -           | -          | -       | -        | -        | UUID生成(Auth)・パース検証(Acct)      |
+|              | `go-resty/resty`            | ◎        | -        | -           | -          | -       | -        | -        | HTTPクライアント(Auth→GW)             |
+|              | `sony/gobreaker`            | ◎        | -        | -           | -          | -       | -        | -        | サーキットブレーカー                  |
+| **Std**      | `log/slog`                  | ◎        | ◎        | ◎           | ◎          | -       | ◎        | -        | 構造化ログ (JSON形式推奨)             |
+| **Test**     | `go.uber.org/mock`          | -        | -        | -           | -          | -       | -        | ◎        | モック生成・テスト用                  |
+|              | `alicebob/miniredis/v2`     | -        | -        | -           | -          | -       | -        | ◎        | Valkeyインメモリモック（テスト用）    |
 
 ### 3.3 Valkeyキースキーマ概要
 
@@ -99,9 +106,9 @@
 
 | **キープレフィックス** | **用途**                  | **使用コンポーネント**           |
 | ---------------------- | ------------------------- | -------------------------------- |
-| `sub:{IMSI}`           | 加入者情報（SIM鍵・SQN）  | Vector API（参照・SQN更新）, Admin TUI |
-| `client:{IP}`          | RADIUSクライアント情報    | Auth Server, Acct Server, Admin TUI |
-| `policy:{IMSI}`        | 認可ポリシー              | Auth Server, Admin TUI           |
+| `sub:{IMSI}`           | 加入者情報（SIM鍵・SQN）  | Vector API（参照・SQN更新）, Admin TUI, Provisioning API |
+| `client:{IP}`          | RADIUSクライアント情報    | Auth Server, Acct Server, Admin TUI, Provisioning API |
+| `policy:{IMSI}`        | 認可ポリシー              | Auth Server, Admin TUI, Provisioning API |
 | `eap:{UUID}`           | EAP認証コンテキスト（認証中。TTL 60秒） | Auth Server                      |
 | `sess:{UUID}`          | アクティブセッション（認証後。TTL 24時間） | Auth Server（作成）, Acct Server（更新・削除）, Admin TUI（参照） |
 | `idx:user:{IMSI}`      | IMSIからセッションを引くインデックス（Set） | Auth Server（追加）, Acct Server（削除）, Admin TUI（参照・掃除） |
@@ -166,6 +173,7 @@ Auth ServerからVector Gateway、Vector GatewayからVector API（および aka
 > - 外部（0.0.0.0 / [::]）に公開するのは auth-server の 1812/udp と acct-server の 1813/udp だけとする。
 > - ホストからだけ使う内部向けのポートは 127.0.0.1 にバインドする（valkey の 6379、fluent-bit の 24224/tcp・24224/udp。Docker のログドライバーはホストの `localhost:24224` に接続するので、外部に公開する必要はない）。
 > - vector-gateway・vector-api の 8080 は `expose:` のみでホストに公開しない（Docker ネットワーク内部からのみ到達可能）。
+> - provisioning-api（任意）の 9444/tcp は既定で 127.0.0.1 にバインドする。別ノードの BFF から使う場合は、`.env` の `PROVISIONING_API_BIND` を WireGuard / Tailscale 等のアドレスにする（0.0.0.0 にする場合はクラウド側のファイアウォール等で送信元を絞る）。
 > - RADIUS（1812/1813/udp）の送信元を絞りたい場合は、UFW ではなく、クラウド側のファイアウォール（VPS のネットワーク設定のファイアウォール、セキュリティグループ等）で AP の送信元IPだけを許可するのが確実である。ホスト側で絞る場合は iptables の `DOCKER-USER` チェーンに規則を置く。
 >
 > 上記の UFW の Allow のうち 1812/udp・1813/udp は、Docker の公開ポートには UFW が及ばないため、実際には許可の有無にかかわらず届く（ホスト側の意図を明示する記載として残す）。
@@ -205,8 +213,9 @@ Auth ServerからVector Gateway、Vector GatewayからVector API（および aka
 | **4**   | **vector-api**      | なし                 | 内部API。外部公開なし。`TEST_VECTOR_ENABLED` 環境変数でテストベクターモードを有効化可能（compose が `.env` の `TEST_VECTOR_ENABLED`／`TEST_VECTOR_IMSI_PREFIX` を渡す。既定は無効）。`GET /health` でヘルスチェック応答。 |
 | **5**   | **valkey**          | 127.0.0.1:6379       | DB。ホスト(TUI)用にlocalhostのみバインド。`--requirepass` 有効化。 |
 | **6**   | **fluent-bit**      | 127.0.0.1:24224/tcp, 127.0.0.1:24224/udp | ログ収集。設定は `configs/fluent-bit/fluent-bit.yaml`（YAML形式）。出力先は `/output_logs` 固定。Docker のログドライバーがホストの `localhost:24224` に接続するため、localhostのみバインド（外部には公開しない）。 |
+| **7**   | **provisioning-api**（任意） | 127.0.0.1:9444/tcp（`PROVISIONING_API_BIND` で変更可） | 管理API（D-13）。profile `provisioning` で起動する。HTTPS + mTLS。`./certs/provisioning` を `/certs` に読み取り専用マウント（サーバー証明書）。ヘルスチェックは `pgrep -f`。 |
 
-> **注記（公開ポート）:** 外部（0.0.0.0 / [::]）に公開するのは auth-server の 1812/udp と acct-server の 1813/udp だけである。valkey の 6379 と fluent-bit の 24224 は 127.0.0.1 のみで待ち受け、vector-gateway・vector-api はホストに公開しない。Docker の公開ポートは UFW を通らないため、内部向けのポートを 0.0.0.0 で公開しないこと（4章の注記）。
+> **注記（公開ポート）:** 外部（0.0.0.0 / [::]）に公開するのは auth-server の 1812/udp と acct-server の 1813/udp だけである。valkey の 6379 と fluent-bit の 24224 は 127.0.0.1 のみで待ち受け、vector-gateway・vector-api はホストに公開しない。provisioning-api（任意）の 9444/tcp も既定は 127.0.0.1 のみである。Docker の公開ポートは UFW を通らないため、内部向けのポートを 0.0.0.0 で公開しないこと（4章の注記）。
 
 > **注記（オーバーレイ）:** aka-only-server を同一ホストで動かす場合は、`deployments/docker-compose.aka-av.yml` を重ねて起動する（`docker compose -f docker-compose.yml -f docker-compose.aka-av.yml up -d`）。このオーバーレイは vector-gateway だけを aka-only-server の compose が作る共有ネットワーク（external、名前 `${AKA_SHARED_NETWORK:-aka-av}`）に参加させる。共有ネットワークは aka-only-server 側が作るため、先に aka-only-server を起動しておく。別ホストの aka-only-server に接続する場合はオーバーレイを重ねない。
 
@@ -220,6 +229,7 @@ my-radius-project/
 │   ├── acct-server/              # Dockerfile (Multi-stage) 含む
 │   ├── vector-gateway/           # Dockerfile (Multi-stage) 含む
 │   ├── vector-api/               # Dockerfile (Multi-stage) 含む
+│   ├── provisioning-api/         # Dockerfile (Multi-stage) 含む（任意。compose の profile provisioning）
 │   └── admin-tui/                # Host実行用 (ビルドしてscpで転送)
 │
 ├── pkg/                          # 共通ライブラリ (Go Modules)
@@ -239,13 +249,14 @@ my-radius-project/
 │   ├── docker-compose.yml        # 構成定義
 │   ├── docker-compose.aka-av.yml # aka-only-server 同一ホスト接続用オーバーレイ（任意）
 │   ├── .env.example              # 環境変数テンプレート
-│   ├── certs/                    # aka-only-server 接続用証明書（中身はGit管理外、.gitkeepのみ）
+│   ├── certs/                    # aka-only-server 接続用証明書、provisioning/ に Provisioning API のサーバー証明書（中身はGit管理外、.gitkeepのみ）
 │   ├── lnav_formats/             # lnav用ログ定義ファイル
 │   │   └── eap_aka_log.json      # ホストの ~/.lnav/formats/ に配置
 │   └── logs_on_host/             # ログ保存先 (実行時に生成)
 │
 ├── docs/                         # ドキュメント
-│   ├── D-01〜D-12                # 設計仕様書群
+│   ├── D-01〜D-13                # 設計仕様書群
+│   ├── openapi/                  # OpenAPI 定義（provisioning-api.yaml）
 │   ├── B-01〜B-03                # セットアップ手引書群（B-03 は VPS 向け）
 │   ├── E-01〜E-03                # 開発環境・規約ドキュメント群
 │   ├── T-01〜T-04                # テスト戦略・仕様書群
@@ -417,6 +428,56 @@ services:
         tag: "app.vector-api"
 
   # ==========================================================================
+  # Management Layer
+  # ==========================================================================
+  # Provisioning API（D-13）。本PoCの外の BFF から、加入者・RADIUSクライアント・
+  # 認可ポリシーを操作する REST API（HTTPS + mTLS）。証明書の準備が要るため
+  # profile に入れており、既定の `docker compose up` では起動しない。
+  #   docker compose --profile provisioning up -d
+  provisioning-api:
+    build:
+      context: ..
+      dockerfile: apps/provisioning-api/Dockerfile
+    profiles: ["provisioning"]
+    ports:
+      # 既定はループバックだけ。別ノードの BFF から使う場合は .env の PROVISIONING_API_BIND を変える
+      - "${PROVISIONING_API_BIND:-127.0.0.1}:9444:9444/tcp"
+    environment:
+      <<: *timezone
+      REDIS_HOST: valkey
+      REDIS_PORT: "6379"
+      REDIS_PASS: ${VALKEY_PASSWORD}
+      PROVISIONING_API_TLS_CERT: /certs/server.pem
+      PROVISIONING_API_TLS_KEY: /certs/server.key
+      # 管理クライアントの「識別名=フィンガープリント」。空なら起動しない
+      PROVISIONING_API_ADMIN_CLIENTS: ${PROVISIONING_API_ADMIN_CLIENTS:-}
+      PROVISIONING_API_NODE_NAME: ${PROVISIONING_API_NODE_NAME:-}
+      LOG_MASK_IMSI: ${LOG_MASK_IMSI:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      # サーバー証明書（server.pem / server.key）
+      - ./certs/provisioning:/certs:ro
+    depends_on:
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      # /status は mTLS が要るため、プロセスの確認にする。
+      # プロセス名（comm）は15文字までに切り詰められ "provisioning-api" と一致しないため、-x ではなく -f で照合する
+      test: ["CMD", "pgrep", "-f", "/usr/local/bin/provisioning-api"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: always
+    logging:
+      <<: *fluent-bit-logging
+      options:
+        fluentd-address: localhost:24224
+        fluentd-async: "true"
+        fluentd-buffer-limit: "1048576"
+        tag: "app.provisioning-api"
+
+  # ==========================================================================
   # Data Layer
   # ==========================================================================
   valkey:
@@ -470,7 +531,7 @@ volumes:
   valkey_data:
 ```
 
-> **注記（ログレベル）:** auth-server / acct-server / vector-gateway / vector-api の `LOG_LEVEL`（既定 `INFO`。`DEBUG` / `INFO` / `WARN` / `ERROR`）は、compose が `.env` の値を渡す（D-04 §4.6）。
+> **注記（ログレベル）:** auth-server / acct-server / vector-gateway / vector-api / provisioning-api の `LOG_LEVEL`（既定 `INFO`。`DEBUG` / `INFO` / `WARN` / `ERROR`）は、compose が `.env` の値を渡す（D-04 §4.6）。
 
 > **注記（テストベクターモード）:** vector-api の `TEST_VECTOR_ENABLED`（既定 `false`）と `TEST_VECTOR_IMSI_PREFIX`（既定 `00101`）は、compose が `.env` の値を渡す。開発・テスト環境でのみ `.env` に `TEST_VECTOR_ENABLED=true` を設定して有効化し、本番環境では有効にしないこと。
 
@@ -579,3 +640,4 @@ VECTOR_GATEWAY_PLMN_MAP=""
 | r16 | 2026-10-04 | インターネット公開（VPS 等）に向けた安全面の実装修正の反映: §4 ファイアウォールの「Block: 上記以外全て」を、UFW の受信規則としての記載であり Docker の公開ポートには及ばない旨に訂正し、Docker と UFW の関係の注記（公開ポートは UFW を素通りする、内部向けは 127.0.0.1 にバインド、RADIUS の送信元はクラウド側のファイアウォールまたは `DOCKER-USER` で絞る）を追加。§4 に「インターネット越しに RADIUS を受ける場合（VPS 等）」を新設（共有シークレットの強度、RadSec はスコープ外、`RADIUS_SECRET` を空にしてクライアント登録、NAT 配下の AP と送信元IP、クラウド側のファイアウォール、同一ホストからの試験の送信元IP）。§4 シークレット管理の `RADIUS_SECRET` を任意（空を推奨）とし、空の場合の動作（`RADIUS_NO_SECRET` で破棄）、Valkey エラー時等のフォールバック、compose の `${RADIUS_SECRET:-}`、起動ログの `radius_secret_fallback` と WARN を追記。§5 の fluent-bit の公開ポートを `127.0.0.1:24224/tcp, 127.0.0.1:24224/udp` に修正し、公開ポートの注記を追加。§7 docker-compose.yml を実ファイルと一致させた（auth-server / acct-server の `RADIUS_SECRET: ${RADIUS_SECRET:-}`、fluent-bit の `127.0.0.1:24224` バインドとコメント）。§9 の FW設定・デプロイに注記を追加 |
 | r17 | 2026-10-04 | §2 の Acct Server の検証を「Message-Authenticator検証」から実装どおり「Request Authenticator の検証（Accounting-Request。Status-Server は Message-Authenticator）」に訂正。§6 のディレクトリ構成のセットアップ手引書群を B-01〜B-03 に（VPS 向けのデプロイ手順書 B-03 を追加） |
 | r18 | 2026-10-07 | Admin TUI の加入者・RADIUSクライアント・認可ポリシーの store と validation を pkg に移した実装修正（Provisioning API（D-13）と共通で使うため。E-03 r11）の反映: §6 開発リポジトリ構成の pkg に `validation/`・`masterdata/` を追加 |
+| r19 | 2026-10-08 | Provisioning API（provisioning-api。D-13）の実装の反映: §2 の構成図に `8. provisioning-api`（任意）と注記、§3 の実装ノードを6つに（§3.1 に Provisioning API）、§3.2 のパッケージ利用マップに Prov 列（gin、go-redis、envconfig、slog）、§3.3 のキースキーマの使用コンポーネントに Provisioning API、§4 の公開ポートの注記に 9444/tcp（既定 127.0.0.1、`PROVISIONING_API_BIND`）、§5 のコンテナ一覧に provisioning-api（profile `provisioning`）、§6 のリポジトリ構成に `apps/provisioning-api`・`docs/openapi`・`certs/provisioning`、§7 の docker-compose.yml を実ファイルと一致させた（provisioning-api サービス）、ログレベルの注記の対象に provisioning-api |
