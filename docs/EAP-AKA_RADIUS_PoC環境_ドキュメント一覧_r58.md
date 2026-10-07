@@ -109,7 +109,7 @@
 | No. | ドキュメント名 | 作成時期 | 必須前提・方針 | 概要 |
 |-----|---------------|---------|---------------|------|
 | O-04 | バックアップ・リストア手順書 | **完了 (r2)** | D-08でバックアップ方針定義後 | Valkeyデータのバックアップ/リストア（自動・手動）、リストア手順、設定ファイルのバックアップと復元、トラブルシューティング、運用チェックリスト、リストア手順を訂正（5ステップ、docker compose run でボリュームの中身を入れ替え、加入者キー sub:*）、バックアップのパーミッションとホスト外への退避 |
-| O-05 | ログ解析ガイド | **完了 (r20)** | D-04の完成後 | lnavの使い方、頻出クエリ集、障害調査パターン。event_idを実装に整合、lnavクエリを実動作に整合（aka_radius_logテーブル）、user_nameマスク反映・SQLカラム（code/subtype/eap_type/acct_status_type/session_time）追加、ACCT_SEQUENCE_ERR（interim_after_stop）・ACCT_SESSION_NOT_FOUND（Interim）の反映、テストベクターモードのTEST_SQN_*を削除、2回目以降の PKT_RECV も同一 trace_id で追跡できる旨に修正、EAP_ENGINE_ERR 削除、LOG_LEVEL=DEBUG の vector api success、Vector API の SQN_RESYNC を trace_id で追跡・SQN_RESYNC_DELTA_ERR の error から SQN 値を取り出すクエリ・CALC_OK の test_mode で抽出するクエリ、ACCT_DUPLICATE_INTERIM の追加と重複検出クエリ（両 event_id）、SYS_ERR 削除、Admin TUI 監査ログの件数（record_count / result_count）と検索IMSI（target_imsi）の反映・jq 例の更新、VECTOR_CONN_ERR の原因特定に vector-gateway のタイムアウト設定（起動時 WARN）の確認を追記、SQN競合制御のログ（SQN_CONFLICT_RETRY / SQN_CONFLICT_ERR、attempt）を実装済みとして記載、Admin TUI の保存で SQN が巻き戻らなくなったことを反映、RADIUS パケットの破棄の調査（RADIUS_AUTH_ERR・RADIUS_LIB_ERR・PKT_UNKNOWN_CODE）を追加、Status-Server の正常時ログを DEBUG に（疎通確認は LOG_LEVEL=DEBUG）、プロキシ経由での NAS の特定（§7.5。nas_identifier） |
+| O-05 | ログ解析ガイド | **完了 (r21)** | D-04の完成後 | lnavの使い方、頻出クエリ集、障害調査パターン。event_idを実装に整合、lnavクエリを実動作に整合（aka_radius_logテーブル）、user_nameマスク反映・SQLカラム（code/subtype/eap_type/acct_status_type/session_time）追加、ACCT_SEQUENCE_ERR（interim_after_stop）・ACCT_SESSION_NOT_FOUND（Interim）の反映、テストベクターモードのTEST_SQN_*を削除、2回目以降の PKT_RECV も同一 trace_id で追跡できる旨に修正、EAP_ENGINE_ERR 削除、LOG_LEVEL=DEBUG の vector api success、Vector API の SQN_RESYNC を trace_id で追跡・SQN_RESYNC_DELTA_ERR の error から SQN 値を取り出すクエリ・CALC_OK の test_mode で抽出するクエリ、ACCT_DUPLICATE_INTERIM の追加と重複検出クエリ（両 event_id）、SYS_ERR 削除、Admin TUI 監査ログの件数（record_count / result_count）と検索IMSI（target_imsi）の反映・jq 例の更新、VECTOR_CONN_ERR の原因特定に vector-gateway のタイムアウト設定（起動時 WARN）の確認を追記、SQN競合制御のログ（SQN_CONFLICT_RETRY / SQN_CONFLICT_ERR、attempt）を実装済みとして記載、Admin TUI の保存で SQN が巻き戻らなくなったことを反映、RADIUS パケットの破棄の調査（RADIUS_AUTH_ERR・RADIUS_LIB_ERR・PKT_UNKNOWN_CODE）を追加、Status-Server の正常時ログを DEBUG に（疎通確認は LOG_LEVEL=DEBUG）、プロキシ経由での NAS の特定（§7.5。nas_identifier）、Provisioning API のログ・監査ログの確認（§11.6。`src_ip` がゲートウェイIPになる注意） |
 
 ---
 
@@ -173,7 +173,7 @@
     ├─ O-02: ポリシー設定ガイド (r3)✓
     ├─ O-03: 障害対応手順書 (r12) ✓
     ├─ O-04: バックアップ・リストア手順書 (r2) ✓
-    └─ O-05: ログ解析ガイド (r20)✓
+    └─ O-05: ログ解析ガイド (r21)✓
 ```
 
 ---
@@ -224,7 +224,7 @@
 | 17 | O-02 | ポリシー設定ガイド | **完了 (r3)** |
 | 18 | O-03 | 障害対応手順書 | **完了 (r12)** |
 | 19 | O-04 | バックアップ・リストア手順書 | **完了 (r2)** |
-| 20 | O-05 | ログ解析ガイド | **完了 (r20)** |
+| 20 | O-05 | ログ解析ガイド | **完了 (r21)** |
 
 ---
 
@@ -305,4 +305,4 @@
 | r55 | 2026-10-06 | NAS-Identifier を NAS の識別情報としてセッションとログに加えた実装修正（radsecproxy 等のプロキシ経由では送信元IPがプロキシのIPになり NAS を区別できないため。auth-server はポリシー評価に使った NAS-Identifier をセッションに書き、PKT_RECV（Access-Request）・AUTH_SUCCESS・AUTH_POLICY_DENIED・AUTH_POLICY_NOT_FOUND に出す。acct-server は Start / Interim で NAS-Identifier があればセッションを上書きし、src_ip を持つ課金のログに出す。Admin TUI の Session List / Session Search に NAS-ID カラムとフィルタ。lnav フォーマットに nas_identifier）と、外部の radsecproxy と接続する場合の注意（radsecproxy は本PoCに含めず外部に置く方針。2026-10-06 の PoC の結果）に伴う版数更新: D-02(r19→r20)、D-04(r32→r33)、D-07(r10→r11)、D-08(r21→r22)、D-09(r19→r20)、D-10(r13→r14)、E-03(r9→r10)、O-05(r19→r20)、T-02(r17→r18。テストケース 1,334→1,355件) |
 | r56 | 2026-10-07 | D-13 Provisioning API詳細設計書（r1、設計中・未実装）と OpenAPI 定義 `docs/openapi/provisioning-api.yaml`（0.1.0-draft）を追加（設計ドキュメント 12→13件、総数 28→29件）。Admin TUI の CRUD を REST API として本PoCの外の BFF に提供する provisioning-api の設計で、aka-only-server の管理API に作法を揃え、将来の統合API（eapaka-node-provisioner）から使う前提。§1.3 の実装ノードの表に Provisioning API（未実装）を追加 |
 | r57 | 2026-10-07 | Admin TUI の加入者・RADIUSクライアント・認可ポリシーの store と validation を pkg（`pkg/masterdata`、`pkg/validation`）に移し、Admin TUI の `internal/model` を `pkg/model` に統合した実装修正（Provisioning API（D-13）と共通で使うため。作成・変更を Lua スクリプトで原子的にし、`Patch` / `Put` / `Count` を追加）に伴う版数更新: D-01(r17→r18)、D-02(r20→r21)、D-05(r12→r13)、D-07(r11→r12)、D-11(r11→r12)、D-13(r1→r2)、E-03(r10→r11)、T-02(r18→r19。テストケース 1,355→1,361件) |
-| r58 | 2026-10-08 | Provisioning API（`apps/provisioning-api`。D-13）の実装（REST API `/admin/v1`、mTLS のフィンガープリント固定、監査ログ、compose の profile `provisioning`。`pkg/masterdata` に `ListPage`・`ClientStore.Patch` を追加）と simwifi 実機での結合確認に伴う版数更新: D-01(r18→r19)、D-02(r21→r22)、D-04(r33→r34)、D-08(r22→r23)、D-13(r2→r3。設計中→実装済み)、E-03(r11→r12)、T-02(r19→r20。テストケース 1,361→1,461件)、T-03(r14→r15。G11 Provisioning API 結合 23件を追加)、B-02(r19→r20。§15 Provisioning API の有効化)。OpenAPI 定義 `docs/openapi/provisioning-api.yaml` を 0.1.0-draft→0.1.0 に。§1.3 の実装ノードの表の Provisioning API を「任意」に |
+| r58 | 2026-10-08 | Provisioning API（`apps/provisioning-api`。D-13）の実装（REST API `/admin/v1`、mTLS のフィンガープリント固定、監査ログ、compose の profile `provisioning`。`pkg/masterdata` に `ListPage`・`ClientStore.Patch` を追加）と simwifi 実機での結合確認に伴う版数更新: D-01(r18→r19)、D-02(r21→r22)、D-04(r33→r34)、D-08(r22→r23)、D-13(r2→r3。設計中→実装済み)、E-03(r11→r12)、T-02(r19→r20。テストケース 1,361→1,461件)、T-03(r14→r15。G11 Provisioning API 結合 23件を追加)、B-02(r19→r20。§15 Provisioning API の有効化)、O-05(r20→r21。§11.6 Provisioning API のログ・監査ログの確認、`src_ip` の注意)。OpenAPI 定義 `docs/openapi/provisioning-api.yaml` を 0.1.0-draft→0.1.0 に。§1.3 の実装ノードの表の Provisioning API を「任意」に |
