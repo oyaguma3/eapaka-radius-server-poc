@@ -39,29 +39,7 @@ func (s *PolicyStore) Get(ctx context.Context, imsi string) (*model.Policy, erro
 		return nil, ErrPolicyNotFound
 	}
 
-	policy := &model.Policy{
-		IMSI: imsi,
-	}
-
-	// defaultフィールドの取得
-	if defaultVal, ok := result["default"]; ok {
-		policy.Default = defaultVal
-	} else {
-		policy.Default = "deny" // デフォルト値
-	}
-
-	// rulesフィールドのJSONデシリアライズ
-	if rulesJSON, ok := result["rules"]; ok && rulesJSON != "" {
-		policy.RulesJSON = rulesJSON
-		if err := json.Unmarshal([]byte(rulesJSON), &policy.Rules); err != nil {
-			return nil, err
-		}
-	} else {
-		policy.RulesJSON = "[]"
-		policy.Rules = []model.PolicyRule{}
-	}
-
-	return policy, nil
+	return policyFromHash(imsi, result)
 }
 
 // Create は新しいポリシーを作成する。
@@ -295,4 +273,31 @@ func (s *PolicyStore) GetIMSIsWithPolicy(ctx context.Context) (map[string]bool, 
 	}
 
 	return result, nil
+}
+
+// policyFromHash はHashマップからPolicyを構築する。rules のJSONを解釈できなければエラーを返す。
+func policyFromHash(imsi string, fields map[string]string) (*model.Policy, error) {
+	policy := &model.Policy{
+		IMSI: imsi,
+	}
+
+	// defaultフィールドの取得
+	if defaultVal, ok := fields["default"]; ok {
+		policy.Default = defaultVal
+	} else {
+		policy.Default = "deny" // デフォルト値
+	}
+
+	// rulesフィールドのJSONデシリアライズ
+	if rulesJSON, ok := fields["rules"]; ok && rulesJSON != "" {
+		policy.RulesJSON = rulesJSON
+		if err := json.Unmarshal([]byte(rulesJSON), &policy.Rules); err != nil {
+			return nil, err
+		}
+	} else {
+		policy.RulesJSON = "[]"
+		policy.Rules = []model.PolicyRule{}
+	}
+
+	return policy, nil
 }

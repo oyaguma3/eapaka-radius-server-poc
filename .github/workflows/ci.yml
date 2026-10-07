@@ -30,7 +30,7 @@ jobs:
         uses: golangci/golangci-lint-action@v7
         with:
           version: v2.10
-          args: ./pkg/... ./apps/auth-server/... ./apps/acct-server/... ./apps/vector-gateway/... ./apps/vector-api/... ./apps/admin-tui/...
+          args: ./pkg/... ./apps/auth-server/... ./apps/acct-server/... ./apps/vector-gateway/... ./apps/vector-api/... ./apps/provisioning-api/... ./apps/admin-tui/...
 
       - name: Test
         run: make test-race
