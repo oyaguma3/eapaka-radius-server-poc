@@ -1,4 +1,4 @@
-# D-05 Admin TUI 詳細設計書【前半】(r13)
+# D-05 Admin TUI 詳細設計書【前半】(r14)
 
 ## 1. 概要
 
@@ -563,7 +563,7 @@ func checkPoliciesExist(imsiList []string) map[string]bool {
 
 ##### レイアウト
 
-tview.Form を centered() ヘルパーで画面中央にダイアログ表示する。背景に一覧テーブルが透過表示される。新規作成時のタイトルは「Create Subscriber」、編集時は「Edit Subscriber」。
+tview.Form を centered() ヘルパーで画面中央にダイアログ表示する（幅60。高さは入力欄の数から `ui.FormHeight` で計算し、入力欄5つで15行。§4.3.2 の注記）。背景に一覧テーブルが透過表示される。新規作成時のタイトルは「Create Subscriber」、編集時は「Edit Subscriber」。
 
 ```
               ┌ Create Subscriber ────────────────────────────────┐
@@ -676,7 +676,9 @@ F1:Help  |  q:Back/Quit  |  Ctrl+Q:Exit
 
 ##### レイアウト
 
-tview.Form を centered() ヘルパーで画面中央にダイアログ表示する。新規作成時のタイトルは「Create RADIUS Client」、編集時は「Edit RADIUS Client」。フォーム内のフィールド数が多いため、フォーカスが下部に移動するとフォーム内がスクロールし、上部フィールドが隠れてSave/Cancelボタンが表示される動作となる。
+tview.Form を centered() ヘルパーで画面中央にダイアログ表示する（幅60。高さは入力欄の数から `ui.FormHeight` で計算し、入力欄4つで13行）。新規作成時のタイトルは「Create RADIUS Client」、編集時は「Edit RADIUS Client」。すべての入力欄と Save / Cancel ボタンを常に枠内に表示する。
+
+> **注記（フォームの高さ）:** tview.Form（既定の枠・余白・項目間隔）は、枠2行＋上下の余白2行＋入力欄ごとに2行（欄と空行）＋ボタン1行の高さが要る。`internal/ui/form.go` の `FormHeight(入力欄の数)` でこれを計算し、`main.go` の加入者・RADIUSクライアントのフォームの表示に使う。2026-10-08 まではクライアントの画面の高さを固定値 12 にしていたため（必要な高さは 13）、Save / Cancel ボタンの行が枠の外に出て表示されず、Tab でボタンにフォーカスを移したときだけフォーム内がスクロールして表示されていた。
 
 ```
               ┌ Create RADIUS Client ─────────────────────────────┐
@@ -1175,3 +1177,4 @@ Admin TUIからの操作は、標準出力にJSON形式で記録する。
 | r11 | 2026-10-04 | Admin TUI のキー配線漏れを修正した実装修正の反映: §3.1 に、`F1` / `?` をグローバルの InputCapture で処理し、入力欄（`tview.InputField` / `tview.TextArea`。`ui.IsTextInput`）にフォーカスがあるときは `?` を文字として入力欄へ渡す旨の注記を追加。§3.2 に、加入者・クライアント・ポリシーの一覧の `Enter` で編集画面（ポリシーは Policy Details）を開くこと（`main.go` で各一覧に `SetOnSelect` を設定）、`F6` / `/` のフィルタは各一覧と Session List で共通で、ポリシー詳細フォームの `F6` とは競合しないことの注記を追加。§3.7 フィルタの起動方法に `F6` を追加し、フィルタ入力ダイアログを `Cancel` ボタンまたは `Esc`（`tview.Form.SetCancelFunc`）で閉じられること、一覧画面の `Esc` でフィルタを解除することを明記。あわせて、キー操作・ダイアログの記述を実装（`main.go`、`internal/ui`）に合わせて修正: §2.1 / §3.1 / §4.1 メインメニューの `q` / `Esc` は確認なしで終了（終了確認ダイアログはない）。§3.3 フォームのキーに `Tab` / `Shift+Tab` と `Cancel` / `Esc`（確認なしで破棄）を追加し、保存のショートカットはないことを明記。§3.4 確認ダイアログを実装にあるもの（`Confirm Delete` の `Yes` / `No`、SQN変更警告・Default allow 警告の `Continue` / `Cancel`、`Connection Error` の `Retry` / `Exit`）に差し替え、変更破棄確認・終了確認・上書き確認はないこと、ダイアログの `Esc` は2つ目のボタンと同じ動作であることを追記。§3.5 Default allow 警告ダイアログを実際の表示（`Default Allow Warning`、`Continue` / `Cancel`）に差し替え。§3.6 ステータスバーの表示時間・例を実装（成功・エラーとも5秒）に修正。§3.7 フィルタの対象カラム（画面ごと）、`OK` 押下で適用（逐次絞り込みはしない）、件数表示（ボーダータイトルの `(Filter: ...)` とページ情報）を修正し、SCANによる追加取得の記述を削除。§3.8 ページネーションのナビゲーションを `←` / `→` から `PgUp` / `PgDn` に、UI形式をボーダータイトルの `1-50 of 125 (Page 1/3)` に、データ取得を一覧表示時の全件取得に修正。§4.2.2 SQN変更警告の表示タイミングを保存時（SQN を変更して `Save`）に修正。§4.4.2 ポリシーフォームのキーから `Ctrl+S` を削除し、`F6`（フォーム→ルールリスト）、ルールリストの `Esc` / `Tab` / `Enter`、各ボタン、ルール編集サブダイアログは `Esc` では閉じないことを記載。§6.5 に Import/Export メニューの操作と、インポート/エクスポート画面の `Cancel` / `Esc` / `Done` を追加。§7.1 初期化シーケンスを実装（VALKEY_PASSWORD 未設定でもエラーにしない、接続失敗時は Connection Error ダイアログで Retry / Exit）に修正 |
 | r12 | 2026-10-04 | Admin TUI の加入者編集による SQN の上書き（巻き戻り）を解消した実装修正の反映: §4.2.2 の「SQN手動編集時の警告」に、SQN の変更判定は正規化後の入力値と編集開始時の値を大文字小文字を区別せずに比較すること（Vector API が小文字で書き戻した SQN で誤って警告が出ていた問題の修正）を追記。「編集の保存処理」を新設し、SQN を変更していなければ `sqn` を書き換えない（`Update`）、変更した場合は編集開始時の値と一致するときだけ書き換える（`UpdateWithSQN`）、Lua スクリプトで存在チェックと更新をまとめて行い削除済みの加入者のキーを作らないこと、失敗時のステータスバーのエラー（`Failed to update: SQN was changed by authentication while editing. Reopen the subscriber and try again` 等）と開き直しての再実行、監査ログは成功時のみであることを記載。§3.4 SQN変更警告のトリガー、§4.2.2 フィールド定義の SQN、§5.2 に更新時のエラーを補足 |
 | r13 | 2026-10-07 | Admin TUI の加入者・RADIUSクライアント・認可ポリシーの store と validation を pkg に移した実装修正（Provisioning API（D-13）と共通で使うため。E-03 r11）の反映: §5.1 のバリデーションの実装箇所を `pkg/validation` に修正、§5.2 の登録時のエラーに、存在確認と書き込みを1つの操作で行い同時に作成しても上書きしない旨を追記 |
+| r14 | 2026-10-08 | Admin TUI の RADIUS クライアントの登録・編集画面で Save / Cancel ボタンが枠外に出て表示されなかった不具合の修正の反映: §4.3.2 のレイアウトの説明（フォーカスが下に移るとスクロールしてボタンが表示される、としていた）を、高さを入力欄の数から `ui.FormHeight` で計算し（入力欄4つで13行）ボタンを常に表示する動作に修正し、高さの計算と経緯の注記を追加。§4.2.2 に加入者のフォームの高さ（同じ関数、入力欄5つで15行）を追記 |
