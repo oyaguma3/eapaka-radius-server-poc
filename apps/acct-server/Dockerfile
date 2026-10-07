@@ -8,6 +8,7 @@ COPY go.work go.work.sum ./
 COPY apps/acct-server/go.mod apps/acct-server/go.sum ./apps/acct-server/
 COPY apps/admin-tui/go.mod apps/admin-tui/go.sum ./apps/admin-tui/
 COPY apps/auth-server/go.mod apps/auth-server/go.sum ./apps/auth-server/
+COPY apps/provisioning-api/go.mod apps/provisioning-api/go.sum ./apps/provisioning-api/
 COPY apps/vector-api/go.mod apps/vector-api/go.sum ./apps/vector-api/
 COPY apps/vector-gateway/go.mod apps/vector-gateway/go.sum ./apps/vector-gateway/
 COPY pkg/go.mod pkg/go.sum ./pkg/

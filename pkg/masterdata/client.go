@@ -68,6 +68,44 @@ func (s *ClientStore) Update(ctx context.Context, c *model.RadiusClient) error {
 	return nil
 }
 
+// ClientPatch はRADIUSクライアントの変更内容を表す。nil の項目は変更しない（JSON Merge Patch 用。D-13 §3.2）。
+type ClientPatch struct {
+	Secret *string
+	Name   *string
+	Vendor *string
+}
+
+// Patch は既存のRADIUSクライアントの、指定した項目だけを書き換える。
+// 存在確認と書き込みを1回の操作で行い、存在しなければ ErrClientNotFound を返す。
+// 変更する項目がなければ、存在だけを確認する。
+func (s *ClientStore) Patch(ctx context.Context, ip string, patch *ClientPatch) error {
+	fields := map[string]any{}
+	for name, v := range map[string]*string{"secret": patch.Secret, "name": patch.Name, "vendor": patch.Vendor} {
+		if v != nil {
+			fields[name] = *v
+		}
+	}
+	if len(fields) == 0 {
+		exists, err := s.Exists(ctx, ip)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return ErrClientNotFound
+		}
+		return nil
+	}
+
+	updated, err := runHashScript(ctx, s.client, updateHashScript, ClientKey(ip), fields)
+	if err != nil {
+		return err
+	}
+	if !updated {
+		return ErrClientNotFound
+	}
+	return nil
+}
+
 // clientFields はRADIUSクライアントのHashフィールドを返す。
 func clientFields(c *model.RadiusClient) map[string]any {
 	return map[string]any{

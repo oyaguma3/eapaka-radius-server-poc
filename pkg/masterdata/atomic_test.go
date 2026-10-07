@@ -261,3 +261,69 @@ func TestPolicyStore_Count(t *testing.T) {
 		t.Errorf("Count() = %d, %v, want 2, nil", n, err)
 	}
 }
+
+// TestClientStore_Patch は、指定した項目だけを書き換え、存在しなければ何も作らないことを確認する。
+func TestClientStore_Patch(t *testing.T) {
+	str := func(s string) *string { return &s }
+	base := map[string]string{"secret": "s3cret", "name": "AP-01", "vendor": "generic"}
+	tests := []struct {
+		name  string
+		patch ClientPatch
+		want  map[string]string // base から変わるフィールド
+	}{
+		{"secret only", ClientPatch{Secret: str("n3w")}, map[string]string{"secret": "n3w"}},
+		{"name and vendor", ClientPatch{Name: str("AP-02"), Vendor: str("")}, map[string]string{"name": "AP-02", "vendor": ""}},
+		{"empty patch changes nothing", ClientPatch{}, map[string]string{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mr, client := newTestRedis(t)
+			defer client.Close()
+			key := ClientKey("192.168.10.1")
+			for f, v := range base {
+				mr.HSet(key, f, v)
+			}
+
+			if err := NewClientStore(client).Patch(context.Background(), "192.168.10.1", &tt.patch); err != nil {
+				t.Fatalf("Patch() error = %v", err)
+			}
+			for f, v := range base {
+				want := v
+				if w, ok := tt.want[f]; ok {
+					want = w
+				}
+				if got := mr.HGet(key, f); got != want {
+					t.Errorf("%s = %q, want %q", f, got, want)
+				}
+			}
+		})
+	}
+
+	t.Run("not found", func(t *testing.T) {
+		mr, client := newTestRedis(t)
+		defer client.Close()
+		cs := NewClientStore(client)
+		ctx := context.Background()
+
+		for _, patch := range []ClientPatch{{Name: str("AP-01")}, {}} {
+			if err := cs.Patch(ctx, "192.168.10.1", &patch); !errors.Is(err, ErrClientNotFound) {
+				t.Errorf("Patch(%+v) error = %v, want ErrClientNotFound", patch, err)
+			}
+		}
+		if mr.Exists(ClientKey("192.168.10.1")) {
+			t.Error("Patch() created the key")
+		}
+	})
+
+	t.Run("valkey error", func(t *testing.T) {
+		mr, client := newTestRedis(t)
+		defer client.Close()
+		mr.SetError("forced error")
+		cs := NewClientStore(client)
+		for _, patch := range []ClientPatch{{Name: str("AP-01")}, {}} {
+			if err := cs.Patch(context.Background(), "192.168.10.1", &patch); err == nil {
+				t.Errorf("Patch(%+v) expected error", patch)
+			}
+		}
+	})
+}

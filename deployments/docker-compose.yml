@@ -155,6 +155,56 @@ services:
         tag: "app.vector-api"
 
   # ==========================================================================
+  # Management Layer
+  # ==========================================================================
+  # Provisioning API（D-13）。本PoCの外の BFF から、加入者・RADIUSクライアント・
+  # 認可ポリシーを操作する REST API（HTTPS + mTLS）。証明書の準備が要るため
+  # profile に入れており、既定の `docker compose up` では起動しない。
+  #   docker compose --profile provisioning up -d
+  provisioning-api:
+    build:
+      context: ..
+      dockerfile: apps/provisioning-api/Dockerfile
+    profiles: ["provisioning"]
+    ports:
+      # 既定はループバックだけ。別ノードの BFF から使う場合は .env の PROVISIONING_API_BIND を変える
+      - "${PROVISIONING_API_BIND:-127.0.0.1}:9444:9444/tcp"
+    environment:
+      <<: *timezone
+      REDIS_HOST: valkey
+      REDIS_PORT: "6379"
+      REDIS_PASS: ${VALKEY_PASSWORD}
+      PROVISIONING_API_TLS_CERT: /certs/server.pem
+      PROVISIONING_API_TLS_KEY: /certs/server.key
+      # 管理クライアントの「識別名=フィンガープリント」。空なら起動しない
+      PROVISIONING_API_ADMIN_CLIENTS: ${PROVISIONING_API_ADMIN_CLIENTS:-}
+      PROVISIONING_API_NODE_NAME: ${PROVISIONING_API_NODE_NAME:-}
+      LOG_MASK_IMSI: ${LOG_MASK_IMSI:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      # サーバー証明書（server.pem / server.key）
+      - ./certs/provisioning:/certs:ro
+    depends_on:
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      # /status は mTLS が要るため、プロセスの確認にする。
+      # プロセス名（comm）は15文字までに切り詰められ "provisioning-api" と一致しないため、-x ではなく -f で照合する
+      test: ["CMD", "pgrep", "-f", "/usr/local/bin/provisioning-api"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: always
+    logging:
+      <<: *fluent-bit-logging
+      options:
+        fluentd-address: localhost:24224
+        fluentd-async: "true"
+        fluentd-buffer-limit: "1048576"
+        tag: "app.provisioning-api"
+
+  # ==========================================================================
   # Data Layer
   # ==========================================================================
   valkey:

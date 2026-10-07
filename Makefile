@@ -8,6 +8,7 @@ MODULES := ./pkg/... \
 	./apps/acct-server/... \
 	./apps/vector-gateway/... \
 	./apps/vector-api/... \
+	./apps/provisioning-api/... \
 	./apps/admin-tui/...
 
 .PHONY: build test test-cover test-race fmt vet lint clean

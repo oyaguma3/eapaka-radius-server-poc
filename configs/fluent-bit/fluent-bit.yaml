@@ -59,6 +59,12 @@ pipeline:
       format: plain
 
     - name: file
+      match: app.provisioning-api
+      path: /output_logs
+      file: provisioning-api.log
+      format: plain
+
+    - name: file
       match: app.valkey
       path: /output_logs
       file: valkey.log

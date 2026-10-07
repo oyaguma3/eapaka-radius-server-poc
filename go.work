@@ -4,6 +4,7 @@ use (
 	./apps/acct-server
 	./apps/admin-tui
 	./apps/auth-server
+	./apps/provisioning-api
 	./apps/vector-api
 	./apps/vector-gateway
 	./pkg
