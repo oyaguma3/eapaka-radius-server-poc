@@ -161,6 +161,8 @@ services:
   # 認可ポリシーを操作する REST API（HTTPS + mTLS）。証明書の準備が要るため
   # profile に入れており、既定の `docker compose up` では起動しない。
   #   docker compose --profile provisioning up -d
+  # 同じホストの BFF（別の compose）は、ホストの 127.0.0.1 に届かないため、
+  # 共有ネットワーク（既定名 eapaka-prov）に参加して https://provisioning-api:9444 で接続する。
   provisioning-api:
     build:
       context: ..
@@ -182,8 +184,12 @@ services:
       LOG_MASK_IMSI: ${LOG_MASK_IMSI:-true}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
-      # サーバー証明書（server.pem / server.key）
+      # サーバー証明書（server.pem / server.key）。SAN に DNS:provisioning-api を入れる
       - ./certs/provisioning:/certs:ro
+    networks:
+      - default
+      # 同じホストの BFF 用の共有ネットワーク（provisioning-api だけを参加させる）
+      - provisioning-shared
     depends_on:
       valkey:
         condition: service_healthy
@@ -256,3 +262,10 @@ services:
 
 volumes:
   valkey_data:
+
+networks:
+  # 同じホストの BFF と provisioning-api の共有ネットワーク（D-13 §2.2）。
+  # 本 compose が作り、BFF 側は外部ネットワーク（external）として参加する。
+  # provisioning-api を起動したとき（profile provisioning）だけ作られる。
+  provisioning-shared:
+    name: ${PROVISIONING_SHARED_NETWORK:-eapaka-prov}
