@@ -1,4 +1,4 @@
-# D-01 ミニPC版 EAP-AKA RADIUS PoC環境 設計仕様書 (r19)
+# D-01 ミニPC版 EAP-AKA RADIUS PoC環境 設計仕様書 (r20)
 
 ## 1. システム概要
 
@@ -59,7 +59,7 @@
 
 > **注記（aka-only-server、任意）:** aka-only-server（https://github.com/oyaguma3/aka-only-server ）は、3GPP TS 29.503 Nudm_UEAU GenerateAv ベースの API で AKA 認証ベクターを払い出す外部サーバーであり、本リポジトリの構成要素ではない。Vector Gateway の接続方式ID `01` として、`VECTOR_GATEWAY_PLMN_MAP` で `01` を指定した PLMN の加入者についてだけ利用する（`VECTOR_GATEWAY_AKAONLY_URL` を設定した場合のみ有効）。接続は mTLS（証明書ピン留め）が既定で、平文HTTP は同一ホスト内に限る。同一ホストで動かす場合は `deployments/docker-compose.aka-av.yml` を重ね、vector-gateway を aka-only-server 側の共有ネットワーク（既定名 `aka-av`）に参加させる。詳細は D-12「Vector Gateway 詳細設計書」4.5節・5章を参照。
 
-> **注記（provisioning-api、任意）:** Admin TUI の加入者・RADIUSクライアント・認可ポリシーの CRUD を、本PoCの外の BFF から REST API（`/admin/v1`、HTTPS + mTLS、9444/tcp）で使えるようにするコンテナ。証明書の準備が要るため compose の profile `provisioning` に入れており、既定の起動には含まれない。公開は既定で `127.0.0.1` だけで、別ノードの BFF から使う場合は `.env` の `PROVISIONING_API_BIND` で公開するアドレスを指定する。詳細は D-13「Provisioning API 詳細設計書」を参照。
+> **注記（provisioning-api、任意）:** Admin TUI の加入者・RADIUSクライアント・認可ポリシーの CRUD を、本PoCの外の BFF から REST API（`/admin/v1`、HTTPS + mTLS、9444/tcp）で使えるようにするコンテナ。証明書の準備が要るため compose の profile `provisioning` に入れており、既定の起動には含まれない。公開は既定で `127.0.0.1` だけで、同じホストの BFF（別の compose）は共有ネットワーク（既定名 `eapaka-prov`）経由で `https://provisioning-api:9444` に接続する。別ノードの BFF から使う場合は `.env` の `PROVISIONING_API_BIND` で公開するアドレスを指定する。詳細は D-13「Provisioning API 詳細設計書」を参照。
 
 ## 3. Go実装ノード詳細と採用パッケージ
 
@@ -213,7 +213,7 @@ Auth ServerからVector Gateway、Vector GatewayからVector API（および aka
 | **4**   | **vector-api**      | なし                 | 内部API。外部公開なし。`TEST_VECTOR_ENABLED` 環境変数でテストベクターモードを有効化可能（compose が `.env` の `TEST_VECTOR_ENABLED`／`TEST_VECTOR_IMSI_PREFIX` を渡す。既定は無効）。`GET /health` でヘルスチェック応答。 |
 | **5**   | **valkey**          | 127.0.0.1:6379       | DB。ホスト(TUI)用にlocalhostのみバインド。`--requirepass` 有効化。 |
 | **6**   | **fluent-bit**      | 127.0.0.1:24224/tcp, 127.0.0.1:24224/udp | ログ収集。設定は `configs/fluent-bit/fluent-bit.yaml`（YAML形式）。出力先は `/output_logs` 固定。Docker のログドライバーがホストの `localhost:24224` に接続するため、localhostのみバインド（外部には公開しない）。 |
-| **7**   | **provisioning-api**（任意） | 127.0.0.1:9444/tcp（`PROVISIONING_API_BIND` で変更可） | 管理API（D-13）。profile `provisioning` で起動する。HTTPS + mTLS。`./certs/provisioning` を `/certs` に読み取り専用マウント（サーバー証明書）。ヘルスチェックは `pgrep -f`。 |
+| **7**   | **provisioning-api**（任意） | 127.0.0.1:9444/tcp（`PROVISIONING_API_BIND` で変更可） | 管理API（D-13）。profile `provisioning` で起動する。HTTPS + mTLS。`./certs/provisioning` を `/certs` に読み取り専用マウント（サーバー証明書）。ヘルスチェックは `pgrep -f`。同じホストの BFF（別の compose）との共有ネットワーク（既定名 `eapaka-prov`）にも参加する（このサービスだけ）。 |
 
 > **注記（公開ポート）:** 外部（0.0.0.0 / [::]）に公開するのは auth-server の 1812/udp と acct-server の 1813/udp だけである。valkey の 6379 と fluent-bit の 24224 は 127.0.0.1 のみで待ち受け、vector-gateway・vector-api はホストに公開しない。provisioning-api（任意）の 9444/tcp も既定は 127.0.0.1 のみである。Docker の公開ポートは UFW を通らないため、内部向けのポートを 0.0.0.0 で公開しないこと（4章の注記）。
 
@@ -434,6 +434,8 @@ services:
   # 認可ポリシーを操作する REST API（HTTPS + mTLS）。証明書の準備が要るため
   # profile に入れており、既定の `docker compose up` では起動しない。
   #   docker compose --profile provisioning up -d
+  # 同じホストの BFF（別の compose）は、ホストの 127.0.0.1 に届かないため、
+  # 共有ネットワーク（既定名 eapaka-prov）に参加して https://provisioning-api:9444 で接続する。
   provisioning-api:
     build:
       context: ..
@@ -455,8 +457,12 @@ services:
       LOG_MASK_IMSI: ${LOG_MASK_IMSI:-true}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
-      # サーバー証明書（server.pem / server.key）
+      # サーバー証明書（server.pem / server.key）。SAN に DNS:provisioning-api を入れる
       - ./certs/provisioning:/certs:ro
+    networks:
+      - default
+      # 同じホストの BFF 用の共有ネットワーク（provisioning-api だけを参加させる）
+      - provisioning-shared
     depends_on:
       valkey:
         condition: service_healthy
@@ -529,6 +535,13 @@ services:
 
 volumes:
   valkey_data:
+
+networks:
+  # 同じホストの BFF と provisioning-api の共有ネットワーク（D-13 §2.2）。
+  # 本 compose が作り、BFF 側は外部ネットワーク（external）として参加する。
+  # provisioning-api を起動したとき（profile provisioning）だけ作られる。
+  provisioning-shared:
+    name: ${PROVISIONING_SHARED_NETWORK:-eapaka-prov}
 ```
 
 > **注記（ログレベル）:** auth-server / acct-server / vector-gateway / vector-api / provisioning-api の `LOG_LEVEL`（既定 `INFO`。`DEBUG` / `INFO` / `WARN` / `ERROR`）は、compose が `.env` の値を渡す（D-04 §4.6）。
@@ -641,3 +654,4 @@ VECTOR_GATEWAY_PLMN_MAP=""
 | r17 | 2026-10-04 | §2 の Acct Server の検証を「Message-Authenticator検証」から実装どおり「Request Authenticator の検証（Accounting-Request。Status-Server は Message-Authenticator）」に訂正。§6 のディレクトリ構成のセットアップ手引書群を B-01〜B-03 に（VPS 向けのデプロイ手順書 B-03 を追加） |
 | r18 | 2026-10-07 | Admin TUI の加入者・RADIUSクライアント・認可ポリシーの store と validation を pkg に移した実装修正（Provisioning API（D-13）と共通で使うため。E-03 r11）の反映: §6 開発リポジトリ構成の pkg に `validation/`・`masterdata/` を追加 |
 | r19 | 2026-10-08 | Provisioning API（provisioning-api。D-13）の実装の反映: §2 の構成図に `8. provisioning-api`（任意）と注記、§3 の実装ノードを6つに（§3.1 に Provisioning API）、§3.2 のパッケージ利用マップに Prov 列（gin、go-redis、envconfig、slog）、§3.3 のキースキーマの使用コンポーネントに Provisioning API、§4 の公開ポートの注記に 9444/tcp（既定 127.0.0.1、`PROVISIONING_API_BIND`）、§5 のコンテナ一覧に provisioning-api（profile `provisioning`）、§6 のリポジトリ構成に `apps/provisioning-api`・`docs/openapi`・`certs/provisioning`、§7 の docker-compose.yml を実ファイルと一致させた（provisioning-api サービス）、ログレベルの注記の対象に provisioning-api |
+| r20 | 2026-10-08 | 同じホストの BFF から provisioning-api に接続するための共有ネットワーク（既定名 `eapaka-prov`。D-13 r4）の反映: §2 の provisioning-api の注記、§5 のコンテナ一覧に共有ネットワークへの参加を追記し、§7 の docker-compose.yml を実ファイルと一致させた |

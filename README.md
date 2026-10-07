@@ -113,6 +113,7 @@ docker compose up -d
 | `PROVISIONING_API_ADMIN_CLIENTS` | No | Provisioning API の管理クライアント（`識別名=クライアント証明書のSHA-256フィンガープリント` のカンマ区切り。provisioning-api を使う場合は必須） |
 | `PROVISIONING_API_BIND` | No | Provisioning API の 9444/tcp を公開するアドレス (デフォルト: `127.0.0.1`) |
 | `PROVISIONING_API_NODE_NAME` | No | Provisioning API の `/status` が返すノード名 |
+| `PROVISIONING_SHARED_NETWORK` | No | 同じホストの BFF と共有する Docker ネットワークの名前 (デフォルト: `eapaka-prov`) |
 
 詳細は `deployments/.env.example` を参照してください。
 
@@ -133,6 +134,8 @@ docker compose -f docker-compose.yml -f docker-compose.aka-av.yml up -d
 ```bash
 docker compose --profile provisioning up -d
 ```
+
+同じホストで動かす BFF（[web-gui-for-eapaka-radius](https://github.com/oyaguma3/web-gui-for-eapaka-radius) 等）は、共有の Docker ネットワーク（既定名 `eapaka-prov`）に参加して `https://provisioning-api:9444` で接続します（サーバー証明書の SAN に `DNS:provisioning-api` を入れます）。
 
 API 仕様は `docs/openapi/provisioning-api.yaml`、設計は D-13、手順の詳細は B-02 §15 を参照してください。
 
@@ -228,7 +231,7 @@ go test ./apps/auth-server/...
 |---|---|---|
 | S-01 | eapaka_test 利用ノウハウ | eapaka_test の設定・テストケース解説・トラブルシューティング |
 
-詳細は [ドキュメント一覧](docs/EAP-AKA_RADIUS_PoC環境_ドキュメント一覧_r59.md) を参照してください。
+詳細は [ドキュメント一覧](docs/EAP-AKA_RADIUS_PoC環境_ドキュメント一覧_r60.md) を参照してください。
 
 ## ライセンス
 
