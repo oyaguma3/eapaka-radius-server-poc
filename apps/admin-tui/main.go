@@ -251,7 +251,7 @@ func (a *Application) showSubscriberForm(editMode bool, imsi string) {
 		screen.SetupCreate()
 	}
 
-	a.app.AddPage("subscriber-form", centered(screen.GetForm(), 60, 15), true, true)
+	a.app.AddPage("subscriber-form", centered(screen.GetForm(), 60, ui.FormHeight(screen.GetForm().GetFormItemCount())), true, true)
 	a.app.SetFocus(screen.GetForm())
 }
 
@@ -329,7 +329,7 @@ func (a *Application) showClientForm(editMode bool, ip string) {
 		screen.SetupCreate()
 	}
 
-	a.app.AddPage("client-form", centered(screen.GetForm(), 60, 12), true, true)
+	a.app.AddPage("client-form", centered(screen.GetForm(), 60, ui.FormHeight(screen.GetForm().GetFormItemCount())), true, true)
 	a.app.SetFocus(screen.GetForm())
 }
 
