@@ -1,4 +1,4 @@
-# D-13 Provisioning API 詳細設計書 (r3)
+# D-13 Provisioning API 詳細設計書 (r4)
 
 **作成日:** 2026-10-07
 **更新日:** 2026-10-08
@@ -87,10 +87,13 @@ Provisioning API は「1ノード分のマスタデータを操作する薄い A
 
 | 配置 | 公開方法 |
 |------|---------|
-| 同じホストの BFF | `127.0.0.1` にだけ公開する（既定） |
+| 同じホストの BFF（別の compose） | 共有の Docker ネットワーク（既定名 `eapaka-prov`。§8.2）に BFF が参加し、`https://provisioning-api:9444/admin/v1` で接続する。ホストへの公開は `127.0.0.1` のまま（ホストからの curl 等の確認用） |
+| 同じホストのプロセス（コンテナでないもの） | `127.0.0.1:9444`（既定の公開先）に接続する |
 | 別ノードの BFF | mTLS を前提に、公開するアドレスを `.env` の `PROVISIONING_API_BIND` で指定する（§8.1.2）。インターネットを経由する場合は、WireGuard 等で保護するか、クラウド側のファイアウォールで送信元を絞る |
 
 mTLS により、登録されていないクライアント証明書の接続は TLS ハンドシェイクで拒否される（§5）。
+
+> **注記（共有ネットワーク）:** コンテナの `127.0.0.1` はそのコンテナ自身を指すため、別の compose で動く BFF のコンテナからは、ホストの `127.0.0.1:9444` に届かない。aka-only-server と web-gui-for-aka-only-server の共有ネットワーク（`aka-av`）と同じく、サーバー側の本PoCがネットワークを作り、BFF が external として参加する形にした（2026-10-08）。共有ネットワークに参加するのは provisioning-api だけで、BFF から Valkey 等の他のサービスには名前解決も接続もできない（simwifi で確認）。BFF はホスト名を検証するため、サーバー証明書の SAN に `DNS:provisioning-api` が要る。
 
 ### 2.3 Admin TUI との併用
 
@@ -308,7 +311,7 @@ Valkey に接続できない場合は `500`（`SYSTEM_FAILURE`）を返す。
 | `http: TLS handshake error ...` | DEBUG | - | `http.Server` の `ErrorLog`（TLS ハンドシェイクの失敗等）。拒否の記録は上の WARN で足りるため DEBUG にする |
 | 設定エラー等 | ERROR | - | `failed to load config`、`failed to load server certificate`、`failed to connect to Valkey`（いずれも終了する） |
 
-> **注記（`src_ip`）:** `src_ip` はコンテナから見た送信元で、Docker のポート公開を経由するため、compose ネットワークのゲートウェイ（例 `172.18.0.1`）になることがある。simwifi では、同じホストからの接続でも、別ノードから Tailscale 経由で接続した場合でもゲートウェイIPになった（2026-10-08）。`src_ip` で BFF を区別できることを前提にせず、正常な接続は `mgmt_client`、拒否した接続は `fingerprint` で見分ける（運用上の確認方法は O-05 §11.6）。
+> **注記（`src_ip`）:** `src_ip` はコンテナから見た送信元である。Docker のポート公開を経由する接続では、compose ネットワークのゲートウェイ（例 `172.18.0.1`）になることがある（simwifi では、ホストからの接続でも、別ノードから Tailscale 経由で接続した場合でもゲートウェイIPになった）。共有ネットワーク（§2.2）経由の接続では、BFF のコンテナの共有ネットワーク上の IP（例 `172.19.0.3`）になる（2026-10-08 に simwifi で確認）。いずれも BFF の配置から決まる値で、`src_ip` で BFF を区別できることを前提にせず、正常な接続は `mgmt_client`、拒否した接続は `fingerprint` で見分ける（運用上の確認方法は O-05 §11.6）。
 
 ### 6.2 監査ログ
 
@@ -428,6 +431,7 @@ provisioning-api のプロセスが読む環境変数。
 | `PROVISIONING_API_BIND` | `127.0.0.1` | ホスト側で 9444/tcp を公開するアドレス（compose の `ports` の展開にだけ使い、コンテナには渡さない）。別ノードの BFF から使う場合は、受け付けるインターフェースのアドレス（WireGuard のアドレス等）または `0.0.0.0` にする |
 | `PROVISIONING_API_ADMIN_CLIENTS` | （空） | そのままコンテナの `PROVISIONING_API_ADMIN_CLIENTS` に渡す（§8.1.1。空なら provisioning-api は起動しない） |
 | `PROVISIONING_API_NODE_NAME` | （空） | そのままコンテナの `PROVISIONING_API_NODE_NAME` に渡す（空ならコンテナのホスト名） |
+| `PROVISIONING_SHARED_NETWORK` | `eapaka-prov` | 同じホストの BFF との共有ネットワークの名前（compose の `networks` の展開にだけ使う。§8.2）。通常は変えない |
 | `VALKEY_PASSWORD` | - | コンテナの `REDIS_PASS` に渡す（他のコンポーネントと同じ） |
 | `LOG_LEVEL` / `LOG_MASK_IMSI` | `INFO` / `true` | 他のコンポーネントと同じく、コンテナに渡す |
 
@@ -437,7 +441,10 @@ compose では、`PROVISIONING_API_LISTEN_ADDR` は既定値（`:9444`）のま�
 
 - `provisioning-api` サービスを追加する。証明書の準備が要るため、compose の profile（`provisioning`）に入れ、既定の `docker compose up` では起動しない。
 - 公開は `${PROVISIONING_API_BIND:-127.0.0.1}:9444:9444/tcp`。別ノードの BFF から使う場合だけ `.env` の `PROVISIONING_API_BIND` を変える（§8.1.2）。
-- 証明書は `deployments/certs/provisioning/` をコンテナの `/certs` に読み取り専用でマウントする。
+- 証明書は `deployments/certs/provisioning/` をコンテナの `/certs` に読み取り専用でマウントする。サーバー証明書の SAN には、BFF が接続に使う名前を入れる（同じホストの BFF は `DNS:provisioning-api`、ホストからの確認用に `DNS:localhost`・`IP:127.0.0.1`、別ノードの BFF は VPN のアドレス等）。SAN にない名前で接続すると、BFF（クライアント）側のホスト名の検証で失敗する（curl では `no alternative certificate subject name matches target hostname`）。
+- 共有ネットワーク: トップレベルの `networks` に `provisioning-shared`（`name: ${PROVISIONING_SHARED_NETWORK:-eapaka-prov}`）を定義し、provisioning-api だけを `default` とこのネットワークの両方に参加させる。provisioning-api は profile に入っているため、ネットワークも profile `provisioning` で起動したときだけ作られる（profile なしの `docker compose up` では作られない）。BFF 側の compose は、このネットワークを `external: true` で参照する。
+  - 本PoC側を先に起動する（ネットワークがない状態で BFF を起動すると、`network eapaka-prov declared as external, but could not be found` で起動できない）。
+  - BFF が参加したまま本PoC側を `down` すると、ネットワークは「Resource is still in use」で残る（問題ない）。本PoC側を起動し直すと、BFF は再起動なしで接続できる（2026-10-08 に simwifi で確認）。
 - ヘルスチェックはプロセスの確認（`pgrep -f /usr/local/bin/provisioning-api`）とする（`/status` は mTLS が要るため）。Linux のプロセス名（comm）は15文字までに切り詰められ、16文字の `provisioning-api` は `pgrep -x` で一致しないため、`-f` でコマンドラインと照合する。
 - `depends_on` は Valkey（healthy）だけ。サーバー証明書・秘密鍵が読めない、`PROVISIONING_API_ADMIN_CLIENTS` が空・不正、Valkey に接続できない場合は、エラーを出して終了する（`restart: always` により再起動を繰り返す）。
 - 秘密鍵のファイルはパーミッション 600 でよい（コンテナのプロセスは root で動く）。
@@ -492,3 +499,4 @@ compose では、`PROVISIONING_API_LISTEN_ADDR` は既定値（`:9444`）のま�
 | r1 | 2026-10-07 | 初版作成。Admin TUI の加入者・RADIUSクライアント・認可ポリシーの CRUD を REST API として提供する provisioning-api の設計（位置づけ、リソースモデル、aka-only-server の管理API に揃えた作法、秘密の値の読み出しと監査、mTLS 認証、ログ・監査、共通ライブラリへの移動、設定、テスト方針、将来拡張）。拡張案 X-01 を置き換える |
 | r2 | 2026-10-07 | 共通ライブラリへの移動（§7.2）の実装の反映: §7.2 を実装済みとし、`internal/model` の `pkg/model` への統合、ポリシーの変更も原子的にしたこと、`SubscriberStore.Patch` / `PolicyStore.Put` / `PolicyStore.Count` の追加、センチネルエラー、E-03 の依存ルールの例外を追記。§2.3 の注記を過去形に、§11 の手順2を実装済みに |
 | r3 | 2026-10-08 | provisioning-api の実装の反映: ステータスを実装済みに。§3.2 に IP アドレスの表記の規則（先頭の 0 を不可）、§3.3 に `vlanId` は数字だけ・正規化・`rules` の検証エラーの区分、§4.1 に PATCH の `application/json`・本文の上限・要求の解釈（未知の項目等は `INVALID_MSG_FORMAT`）・トレースIDの形式・ページングの実装（SCAN）・404/405、§4.2 に書き込み前の読み出しと PATCH の応答、§4.3 に `cause` の優先順・`X-Operator-Id`・500 の扱い、§5 に有効期間外の拒否と実装（`RequestClientCert` + `VerifyConnection`、`GetConfigForClient`）、§6.1 をログの表に（`PROV_REQUEST_ERR`、`PROV_CLIENT_REJECTED`、`src_ip` がゲートウェイIPになる注記と O-05 §11.6 への参照）、§6.2 に `trace_id`・`msg`・`details` の形式・ログレベルによらない出力、§6.3 を反映済みに、§7.1 を実装の構成に（`pkg/masterdata` の `ListPage`・`ClientStore.Patch` の追加、Dockerfile・Makefile・CI）、§8.1.1 に `GIN_MODE`、§8.2 にヘルスチェック（`pgrep -f`）・終了条件・鍵のパーミッション、§9 に実施結果、§11 の手順3を実装済みに |
+| r4 | 2026-10-08 | 同じホストの BFF（別の compose。web-gui-for-eapaka-radius）から接続するための共有ネットワークの追加: §2.2 の公開範囲を、同じホストの BFF は共有ネットワーク（既定名 `eapaka-prov`）経由で `https://provisioning-api:9444` に接続する形に改め（コンテナからはホストの 127.0.0.1 に届かないため）、注記を追加。§6.1 の `src_ip` の注記に共有ネットワーク経由では BFF のコンテナの IP になることを追記。§8.1.2 に `PROVISIONING_SHARED_NETWORK`、§8.2 に共有ネットワークの定義・起動と停止の順序、サーバー証明書の SAN（`DNS:provisioning-api`）を追加。いずれも simwifi で確認 |
