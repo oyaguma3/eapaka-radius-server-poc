@@ -1,4 +1,4 @@
-# D-05 Admin TUI 詳細設計書【前半】(r14)
+# D-05 Admin TUI 詳細設計書【前半】(r15)
 
 ## 1. 概要
 
@@ -57,6 +57,8 @@ Valkeyデータ設計仕様書に基づく、以下のマスタデータを管�
 | RADIUSクライアント | `client:{IP}` | Hash | 接続元NAS/APの共有秘密鍵 |
 | 認可ポリシー | `policy:{IMSI}` | Hash | 認証成功後の接続許可ルール |
 
+RADIUSクライアントについては、あわせてサーバー採番の ID の索引 `idx:client:{ID}`（String。値は IP）と採番のカウンター `seq:client`（String。`INCR`）を使う（D-02 §2.B）。Admin TUI はこれらを直接読み書きせず、`pkg/masterdata` の `ClientStore` を通して扱う。
+
 全マスタデータは **サーバーコンポーネント（Vector API / Auth Server / Acct Server）との互換性を確保するため、Hash形式** で保存する。
 
 #### 加入者データのHash形式
@@ -80,16 +82,21 @@ HSET "sub:440101234567890" "ki" "0123456789ABCDEF0123456789ABCDEF" "opc" "FEDCBA
 
 | フィールド | 型 | 説明 |
 |-----------|-----|------|
+| `id` | String (10進数) | サーバー採番の ID（1 から始まる連番。再利用しない） |
 | `secret` | String | 共有シークレット |
 | `name` | String | クライアント名称 |
 | `vendor` | String | ベンダー名 |
 
-**Valkeyコマンド例：**
+**Valkeyコマンド例（`pkg/masterdata` の Lua スクリプトで、次の3つを1回の操作として行う）：**
 ```
-HSET "client:192.168.1.100" "secret" "mysecretkey" "name" "AP-Floor1" "vendor" "cisco"
+INCR "seq:client"                          # → 3
+HSET "client:192.168.1.100" "id" "3" "secret" "mysecretkey" "name" "AP-Floor1" "vendor" "cisco"
+SET "idx:client:3" "192.168.1.100"
 ```
 
-**注記：** IPアドレスはキーに含まれるため、Hashフィールドには含めない。Auth Server / Acct Serverは `HGet` コマンドで共有シークレットを読み取る。
+**注記：** IPアドレスはキーに含まれるため、Hashフィールドには含めない。Auth Server / Acct Serverは `HGet` コマンドで共有シークレットを読み取る（`id` は使わない）。
+
+**注記（ID）：** ID は作成（Create）時に `seq:client` を `INCR` して採番し、Hash の `id` と索引 `idx:client:{ID}` に書き込む。削除（Delete）ではクライアントの Hash とあわせて索引も消す。削除したクライアントの ID は再利用しない。編集（Update）では ID は変わらない。いずれも `pkg/masterdata` の Lua スクリプトで行い、Admin TUI の画面のコードは ID の採番・索引を扱わない。ID の導入前に登録されたクライアント（`id` がない）には、起動時に ID を採番する（§7.1）。
 
 #### 認可ポリシーのデータ形式
 
@@ -278,7 +285,7 @@ tview.Modal（`ui.NewWarningDialog`）を使用。ボーダータイトル「Def
 |------|------|
 | 起動方法 | `/` または `F6` キー押下でフィルタ入力ダイアログ（`ui.NewInputDialog`。`OK` / `Cancel` ボタン）を表示し、入力欄にフォーカス |
 | ダイアログを閉じる | `OK` で適用。`Cancel` ボタンまたは `Esc` でフィルタを変えずに閉じる（`Esc` は `tview.Form.SetCancelFunc` で `Cancel` と同じ処理を呼ぶ） |
-| 対象カラム | 加入者一覧: IMSI（入力欄 `IMSI contains:`）、クライアント一覧: IP Address・Name・Vendor（`IP/Name/Vendor contains:`）、ポリシー一覧: IMSI（`IMSI contains:`）。Session List は D-07 §5.4。いずれも部分一致 |
+| 対象カラム | 加入者一覧: IMSI（入力欄 `IMSI contains:`）、クライアント一覧: ID・IP Address・Name・Vendor（入力欄は `IP/Name/Vendor contains:` のまま）、ポリシー一覧: IMSI（`IMSI contains:`）。Session List は D-07 §5.4。いずれも部分一致 |
 | マッチング | 大文字小文字を区別しない（case-insensitive） |
 | 動作 | ダイアログの `OK` 押下時に、入力文字列を含む行のみ表示する（入力中の逐次絞り込みはしない）。適用時は1ページ目に戻る |
 | クリア | 一覧画面で `Esc` を押すとフィルタ解除、全件表示に戻る（フィルタ未適用時の `Esc` は前の画面に戻る） |
@@ -650,33 +657,38 @@ SQN が変わっていたエラーの場合は、Edit Subscriber を閉じて開
 
 ```
 ┌ RADIUS Client List 1-6 of 6 (Page 1/1) ──────────────────────────────────┐
-│ IP Address        Name               Secret          Vendor              │
-│ 10.0.0.100        E2E-NAS            e2****as        generic             │
-│ 127.0.0.1         Localhost           TE****23        generic            │
-│ 172.19.0.1        DockerGateway       TE****23        generic            │
-│ 192.168.1.10      TestAP-01           te****p1        generic            │
-│ 192.168.10.1      Customer01          TE****23        generic            │
-│ 192.168.30.1      testClient          ab****mn        none               │
+│ ID  IP Address       Name             Secret          Vendor             │
+│  4  10.0.0.100       E2E-NAS          e2****as        generic            │
+│  1  127.0.0.1        Localhost        TE****23        generic            │
+│  2  172.19.0.1       DockerGateway    TE****23        generic            │
+│  5  192.168.1.10     TestAP-01        te****p1        generic            │
+│  6  192.168.10.1     Customer01       TE****23        generic            │
+│  3  192.168.30.1     testClient       ab****mn        none               │
 └──────────────────────────────────────────────────────────────────────────┘
 F1:Help  |  q:Back/Quit  |  Ctrl+Q:Exit
 ```
+
+行の並び順は従来どおり IP Address の文字列順（`internal/ui/client/list.go` の `Load`。ID の順ではない）。ID は採番した順の番号なので、上の例のように IP の順とは一致しない。
 
 ##### 表示項目
 
 | カラム | 内容 | Expansion | 色 | 備考 |
 |--------|------|-----------|-----|------|
+| ID | サーバー採番の ID（§1.5） | 0 | Gray | 右寄せ。短いので列を広げない（ヘッダーのセルも Expansion 0） |
 | IP Address | クライアントIPアドレス | 1 | White | - |
 | Name | クライアント名称 | 1 | White | 超過時は "..." で切り詰め |
 | Secret | 共有シークレット（マスク表示） | 1 | Gray | 先頭2文字+****+末尾2文字（例: `e2****as`） |
-| Vendor | ベンダー名 | 1 | Gray | 空の場合は `none` と表示 |
+| Vendor | ベンダー名 | 1 | Gray | 空の場合は `-` と表示 |
 
 **注記：** Shared Secretは一覧でマスク表示する（先頭2文字+****+末尾2文字）。
+
+**注記（ID）：** フィルタ（`/` / `F6`。§3.7）は ID・IP Address・Name・Vendor のいずれかに入力文字列を含む行を表示する（部分一致。たとえば `1` は ID 1・12 や IP に `1` を含む行に一致する）。ID の導入前に登録されたクライアントにも起動時に採番する（§7.1）。Admin TUI の起動後に `pkg/masterdata` を通さずに（valkey-cli などで直接）登録したクライアントは `id` を持たないため ID を `0` と表示する（次回の起動時に採番される）。
 
 #### 4.3.2 クライアント登録 [C2] / 編集 [C3]
 
 ##### レイアウト
 
-tview.Form を centered() ヘルパーで画面中央にダイアログ表示する（幅60。高さは入力欄の数から `ui.FormHeight` で計算し、入力欄4つで13行）。新規作成時のタイトルは「Create RADIUS Client」、編集時は「Edit RADIUS Client」。すべての入力欄と Save / Cancel ボタンを常に枠内に表示する。
+tview.Form を centered() ヘルパーで画面中央にダイアログ表示する（幅60。高さは入力欄の数から `ui.FormHeight` で計算し、入力欄4つで13行）。新規作成時のタイトルは「Create RADIUS Client」、編集時は「Edit RADIUS Client (ID n)」（`n` はそのクライアントの ID。§1.5）。すべての入力欄と Save / Cancel ボタンを常に枠内に表示する。
 
 > **注記（フォームの高さ）:** tview.Form（既定の枠・余白・項目間隔）は、枠2行＋上下の余白2行＋入力欄ごとに2行（欄と空行）＋ボタン1行の高さが要る。`internal/ui/form.go` の `FormHeight(入力欄の数)` でこれを計算し、`main.go` の加入者・RADIUSクライアントのフォームの表示に使う。2026-10-08 まではクライアントの画面の高さを固定値 12 にしていたため（必要な高さは 13）、Save / Cancel ボタンの行が枠の外に出て表示されず、Tab でボタンにフォーカスを移したときだけフォーム内がスクロールして表示されていた。
 
@@ -693,7 +705,13 @@ tview.Form を centered() ヘルパーで画面中央にダイアログ表示す
               └───────────────────────────────────────────────────┘
 ```
 
-編集時: タイトル「Edit RADIUS Client」、IP Addressフィールドは無効化（グレーアウト、編集不可）。
+編集時: タイトル「Edit RADIUS Client (ID n)」（`internal/ui/client/form.go` の `SetupEdit` で ` Edit RADIUS Client (ID %d) ` を設定する。例: ` Edit RADIUS Client (ID 1) `）、IP Addressフィールドは無効化（グレーアウト、編集不可）。
+
+```
+              ┌ Edit RADIUS Client (ID 1) ────────────────────────┐
+```
+
+**注記（ID）：** ID は入力しない（登録・編集とも入力欄は IP Address / Secret / Name / Vendor の4つのまま）。登録時は保存（Create）のときに ID を採番するため、登録画面のタイトルに ID は出さない（「Create RADIUS Client」のまま）。編集の保存（Update）では ID は変わらない。
 
 ##### フィールド定義
 
@@ -900,6 +918,8 @@ ip,secret,name,vendor
 192.168.1.101,anothersecret,AP-Floor2,cisco
 ```
 
+**注記（ID）：** CSV ではサーバー採番の ID（§1.5）を扱わない。列は `ip,secret,name,vendor` のまま（ID の導入前と同じ形式）で、エクスポートにも ID は出力しない。インポート（`pkg/masterdata` の `ClientStore.BulkCreate`）では、既存の IP のクライアントは ID を引き継いで上書きし、新しい IP のクライアントには ID を採番する（1件ずつ Lua スクリプトで、Hash・索引・カウンターをまとめて書き換える）。このため、エクスポートした CSV を別の環境にインポートすると、ID は元の環境と一致しない場合がある。
+
 ### 6.4 認可ポリシーCSV仕様
 
 ```csv
@@ -1060,15 +1080,17 @@ func importSubscribers(records []SubscriberRecord) error {
 1. 環境変数読み込み（os.Getenv）
    └─ VALKEY_PASSWORD 未設定時は空のパスワードとして扱う（ここではエラーにしない）
 
-2. Valkey接続確認（127.0.0.1:6379 に接続し PING）
-   └─ 接続失敗 → Connection Error ダイアログ（§7.2）を表示
-      ├─ Retry → 再接続。成功すればメインメニューへ、失敗すればステータスバーに `Connection failed: ...`
+2. Valkey接続確認（127.0.0.1:6379 に接続し PING）、および RADIUSクライアントの ID の採番（`ClientStore.EnsureIDs`）
+   └─ 接続失敗 または 採番の失敗 → Connection Error ダイアログ（§7.2）を表示
+      ├─ Retry → 再接続（採番も再実行）。成功すればメインメニューへ、失敗すればステータスバーに `Connection failed: ...`
       └─ Exit（または Esc）→ 終了
 
 3. 画面初期化 (tview.Application)
 
 4. メインメニュー表示
 ```
+
+**注記（RADIUSクライアントの ID の採番）：** 手順2は `main.go` の `connectValkey` で行う。PING とストアの初期化の後に `masterdata.ClientStore.EnsureIDs` を呼び、ID の導入前に登録された（Hash に `id` がない）RADIUSクライアントに ID を採番する（§1.5）。ID を持つクライアントは変えない（索引 `idx:client:{ID}` がなければ作り直し、カウンター `seq:client` が ID より小さければ合わせる）。何度実行しても結果は同じなので、起動のたびに実行する。Provisioning API（D-13）も起動時に同じ処理を行う。`EnsureIDs` が失敗した場合は Valkey の接続失敗と同じ扱いで Connection Error ダイアログを表示する。
 
 ### 7.2 エラー時の表示
 
@@ -1178,3 +1200,4 @@ Admin TUIからの操作は、標準出力にJSON形式で記録する。
 | r12 | 2026-10-04 | Admin TUI の加入者編集による SQN の上書き（巻き戻り）を解消した実装修正の反映: §4.2.2 の「SQN手動編集時の警告」に、SQN の変更判定は正規化後の入力値と編集開始時の値を大文字小文字を区別せずに比較すること（Vector API が小文字で書き戻した SQN で誤って警告が出ていた問題の修正）を追記。「編集の保存処理」を新設し、SQN を変更していなければ `sqn` を書き換えない（`Update`）、変更した場合は編集開始時の値と一致するときだけ書き換える（`UpdateWithSQN`）、Lua スクリプトで存在チェックと更新をまとめて行い削除済みの加入者のキーを作らないこと、失敗時のステータスバーのエラー（`Failed to update: SQN was changed by authentication while editing. Reopen the subscriber and try again` 等）と開き直しての再実行、監査ログは成功時のみであることを記載。§3.4 SQN変更警告のトリガー、§4.2.2 フィールド定義の SQN、§5.2 に更新時のエラーを補足 |
 | r13 | 2026-10-07 | Admin TUI の加入者・RADIUSクライアント・認可ポリシーの store と validation を pkg に移した実装修正（Provisioning API（D-13）と共通で使うため。E-03 r11）の反映: §5.1 のバリデーションの実装箇所を `pkg/validation` に修正、§5.2 の登録時のエラーに、存在確認と書き込みを1つの操作で行い同時に作成しても上書きしない旨を追記 |
 | r14 | 2026-10-08 | Admin TUI の RADIUS クライアントの登録・編集画面で Save / Cancel ボタンが枠外に出て表示されなかった不具合の修正の反映: §4.3.2 のレイアウトの説明（フォーカスが下に移るとスクロールしてボタンが表示される、としていた）を、高さを入力欄の数から `ui.FormHeight` で計算し（入力欄4つで13行）ボタンを常に表示する動作に修正し、高さの計算と経緯の注記を追加。§4.2.2 に加入者のフォームの高さ（同じ関数、入力欄5つで15行）を追記 |
+| r15 | 2026-10-08 | RADIUSクライアントにサーバー採番の ID を導入した実装修正（D-02、D-13）の反映: §1.5 の RADIUSクライアントの Hash に `id` を追加し、索引 `idx:client:{ID}`・カウンター `seq:client`、作成時の採番・削除時の索引の削除（`pkg/masterdata` の Lua）、ID を再利用しないことを追記。§3.7・§4.3.1 のクライアント一覧に、先頭の ID 列（右寄せ、灰色、幅は広げない。列は ID / IP Address / Name / Secret / Vendor）とフィルタの対象への ID の追加、並び順は従来どおり IP の文字列順であることを追記。§4.3.2 の編集画面のタイトルを「Edit RADIUS Client (ID n)」に修正し、登録画面のタイトルは変えないこと・ID は入力しないことを追記。§6.3 に CSV では ID を扱わない（列は変えない）こと、インポートは既存のクライアントの ID を引き継ぎ新しいクライアントに採番することを追記。§7.1 に起動時（`connectValkey`）の `ClientStore.EnsureIDs` による ID の導入前のクライアントへの採番（何度実行しても同じ。失敗時は接続エラーと同じ扱い）を追記。2026-10-08 に simwifi で、一覧の ID 表示、Admin TUI で登録したクライアントへの ID 3 の採番、編集画面のタイトル `Edit RADIUS Client (ID 1)` を確認。あわせて、§4.3.1 の Vendor が空のときの表示を実装どおり `-` に訂正（従来から `none` と誤記）。§6.3 のインポートは、従来どおり MULTI / EXEC で全件を1回の操作として書き込む |

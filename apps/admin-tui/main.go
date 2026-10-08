@@ -93,6 +93,11 @@ func (a *Application) connectValkey() error {
 		a.sessionStore,
 	)
 
+	// ID の導入前に登録された RADIUSクライアントに ID を採番する（何度実行しても結果は同じ。D-02）
+	if _, err := a.clientStore.EnsureIDs(context.Background()); err != nil {
+		return err
+	}
+
 	return nil
 }
 

@@ -4,6 +4,7 @@ package client
 import (
 	"context"
 	"sort"
+	"strconv"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/ui"
@@ -135,7 +136,7 @@ func (s *ListScreen) GetSelectedIP() string {
 
 func (s *ListScreen) getFilteredClients() []*model.RadiusClient {
 	return ui.FilterItems(s.clients, s.filter, func(client *model.RadiusClient) []string {
-		return []string{client.IP, client.Name, client.Vendor}
+		return []string{strconv.FormatInt(client.ID, 10), client.IP, client.Name, client.Vendor}
 	})
 }
 
@@ -143,13 +144,17 @@ func (s *ListScreen) render() {
 	s.table.Clear()
 
 	// ヘッダー
-	headers := []string{"IP Address", "Name", "Secret", "Vendor"}
+	headers := []string{"ID", "IP Address", "Name", "Secret", "Vendor"}
 	for col, header := range headers {
 		cell := tview.NewTableCell(header).
 			SetTextColor(tcell.ColorYellow).
 			SetAlign(tview.AlignLeft).
 			SetSelectable(false).
 			SetExpansion(1)
+		if col == 0 {
+			// ID は短いので広げない
+			cell.SetExpansion(0)
+		}
 		s.table.SetCell(0, col, cell)
 	}
 
@@ -161,14 +166,19 @@ func (s *ListScreen) render() {
 	for i, client := range pageItems {
 		row := i + 1
 
+		// ID（サーバー採番。D-02）
+		s.table.SetCell(row, 0, tview.NewTableCell(strconv.FormatInt(client.ID, 10)).
+			SetTextColor(tcell.ColorGray).
+			SetAlign(tview.AlignRight))
+
 		// IP Address
-		s.table.SetCell(row, 0, tview.NewTableCell(client.IP).
+		s.table.SetCell(row, 1, tview.NewTableCell(client.IP).
 			SetTextColor(tcell.ColorWhite).
 			SetAlign(tview.AlignLeft).
 			SetExpansion(1))
 
 		// Name
-		s.table.SetCell(row, 1, tview.NewTableCell(client.Name).
+		s.table.SetCell(row, 2, tview.NewTableCell(client.Name).
 			SetTextColor(tcell.ColorWhite).
 			SetAlign(tview.AlignLeft).
 			SetExpansion(1))
@@ -178,7 +188,7 @@ func (s *ListScreen) render() {
 		if len(client.Secret) > 4 {
 			secretDisplay = client.Secret[:2] + "****" + client.Secret[len(client.Secret)-2:]
 		}
-		s.table.SetCell(row, 2, tview.NewTableCell(secretDisplay).
+		s.table.SetCell(row, 3, tview.NewTableCell(secretDisplay).
 			SetTextColor(tcell.ColorGray).
 			SetAlign(tview.AlignLeft).
 			SetExpansion(1))
@@ -188,7 +198,7 @@ func (s *ListScreen) render() {
 		if vendor == "" {
 			vendor = "-"
 		}
-		s.table.SetCell(row, 3, tview.NewTableCell(vendor).
+		s.table.SetCell(row, 4, tview.NewTableCell(vendor).
 			SetTextColor(tcell.ColorGray).
 			SetAlign(tview.AlignLeft).
 			SetExpansion(1))

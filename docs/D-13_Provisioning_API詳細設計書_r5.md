@@ -1,4 +1,4 @@
-# D-13 Provisioning API 詳細設計書 (r4)
+# D-13 Provisioning API 詳細設計書 (r5)
 
 **作成日:** 2026-10-07
 **更新日:** 2026-10-08
@@ -116,7 +116,7 @@ API のリソースと Valkey のキーの対応は次のとおり。
 | リソース | Valkey | 識別子 | 秘密の値 |
 |---------|--------|--------|---------|
 | 加入者（Subscriber） | `sub:{IMSI}`（Hash） | IMSI | Ki、OPc |
-| RADIUSクライアント（Client） | `client:{IP}`（Hash） | IPv4 アドレス | 共有シークレット |
+| RADIUSクライアント（Client） | `client:{IP}`（Hash）。索引 `idx:client:{ID}`、カウンター `seq:client` | サーバー採番の ID（IP アドレスは変更できる属性） | 共有シークレット |
 | 認可ポリシー（Policy） | `policy:{IMSI}`（Hash） | IMSI | なし |
 
 ### 3.1 加入者
@@ -140,15 +140,22 @@ API のリソースと Valkey のキーの対応は次のとおり。
 
 | API の項目 | Valkey のフィールド | 型・形式 | 作成時 | 応答 |
 |-----------|-------------------|---------|--------|------|
-| `ip` | キー `client:{IP}` | IPv4 | 必須 | 含む |
+| `id` | `id`（索引 `idx:client:{ID}` → IP） | 1 からの整数（int64） | サーバーが採番 | 含む |
+| `ip` | キー `client:{IP}` | IPv4 | 必須（PATCH で変更可） | 含む |
 | `secret` | `secret` | 印字可能ASCII（空白を除く）1〜128文字 | 必須 | 含まない（`/secret` だけ） |
 | `name` | `name` | 英数字・`-`・`_` 1〜64文字 | 必須 | 含む |
 | `vendor` | `vendor` | 英数字・空白・`-` 0〜64文字 | 任意（既定は空文字） | 含む |
 
-- IP アドレスがそのまま識別子になる（aka-only-server の AVクライアントのような、サーバーが採番する ID は持たない）。IP アドレスの変更は「削除して作成」で行う。
-- IP アドレスは、`pkg/validation` の規則（Admin TUI と同じ）に加え、表記が一意であること（各オクテットの先頭に `0` を付けない）を求める。Auth Server は送信元IPの文字列表記で `client:{IP}` を引くため、`192.168.010.1` のような表記で登録すると一致しない（パスの IP も同じ規則。不正なら `MANDATORY_IE_INCORRECT`）。
-- **変更（PATCH）:** `secret` / `name` / `vendor` のうち指定した項目だけを書き換える。
-- **応答に含めない値:** 共有シークレットは、読み出しを `GET /clients/{ip}/secret` だけで行い、監査ログに記録する。
+- **識別子:** サーバーが採番する ID（1 からの連番。再利用しない）で識別し、パスは `/clients/{clientId}` とする（aka-only-server の AVクライアントと同じ）。IP アドレスは識別子ではなく、変更できる属性として扱う。
+  - Valkey のキーは従来どおり `client:{IP}` で、Auth / Acct Server は送信元IPでこれを直接引く（変更なし）。ID はその Hash の `id` フィールドに持ち、ID から IP を引く索引 `idx:client:{ID}`（String）と、採番のカウンター `seq:client`（INCR）を使う（D-02）。`client:*` の SCAN に混ざらないよう、索引とカウンターは `client:` で始めない。
+  - 同じ IP のクライアントは1件だけである（RADIUS では送信元IPで共有シークレットを決めるため）。
+  - 作成（採番と索引の作成）、IP の変更（キーの付け替えと索引の更新）、削除（索引の削除）は、それぞれ Lua スクリプトで1回の操作として行う（E-03 §9）。
+  - ID の導入前に登録されたクライアント（`id` を持たない）には、provisioning-api と Admin TUI の起動時に ID を採番する（`ClientStore.EnsureIDs`。何度実行しても結果は同じ。`seq:client` が既存の最大の ID より小さければ合わせる）。
+  - `GET /clients?ip={IP}` で、IP アドレスから探せる（0 件または 1 件）。
+  - 2026-10-08 までの版（r4 / API 0.1.0）は IP アドレスをそのまま識別子とし、パスに使っていた。IP は NAS の位置を示す変わり得る属性で、変更が「削除して作成」になり、IPv6 の長い表記やサブネット単位の登録（`/` を含む）をパスに入れにくいため、ID に改めた（FreeRADIUS も、クライアントの定義に名前を付け、IP を照合の属性として持つ）。
+- IP アドレスは、`pkg/validation` の規則（Admin TUI と同じ）に加え、表記が一意であること（各オクテットの先頭に `0` を付けない）を求める。Auth Server は送信元IPの文字列表記で `client:{IP}` を引くため、`192.168.010.1` のような表記で登録すると一致しない（作成では `MANDATORY_IE_INCORRECT`、PATCH では `OPTIONAL_IE_INCORRECT`、`?ip=` では `INVALID_QUERY_PARAM`）。パスの `clientId` が 1 以上の整数でなければ `MANDATORY_IE_INCORRECT`。
+- **変更（PATCH）:** `ip` / `secret` / `name` / `vendor` のうち指定した項目だけを書き換える。`ip` を変えると、キーを `client:{新しいIP}` に付け替える（ID は変わらない。Auth / Acct Server は新しい IP で引くようになる）。他のクライアントが使っている IP には変更できない（409 `CLIENT_ALREADY_EXISTS`）。
+- **応答に含めない値:** 共有シークレットは、読み出しを `GET /clients/{clientId}/secret` だけで行い、監査ログに記録する。
 
 ### 3.3 認可ポリシー
 
@@ -178,7 +185,7 @@ API のリソースと Valkey のキーの対応は次のとおり。
 | エンドポイント | 返す値 | 監査ログ |
 |--------------|-------|---------|
 | `GET /subscribers/{imsi}/keys` | `ki`、`opc` | 必ず記録する（値は記録しない） |
-| `GET /clients/{ip}/secret` | `secret` | 必ず記録する（値は記録しない） |
+| `GET /clients/{clientId}/secret` | `secret` | 必ず記録する（値は記録しない） |
 
 そのほかの応答・ログ・監査ログには、秘密の値を含めない。
 
@@ -223,12 +230,12 @@ API のリソースと Valkey のキーの対応は次のとおり。
 | PATCH | `/subscribers/{imsi}` | 加入者の変更 | 200 | update |
 | DELETE | `/subscribers/{imsi}` | 加入者の削除 | 204 | delete |
 | GET | `/subscribers/{imsi}/keys` | Ki / OPc の取得 | 200 | read |
-| GET | `/clients` | RADIUSクライアントの一覧（全件） | 200 | - |
+| GET | `/clients` | RADIUSクライアントの一覧（全件。`?ip=` で絞り込み） | 200 | - |
 | POST | `/clients` | RADIUSクライアントの登録 | 201 | create |
-| GET | `/clients/{ip}` | RADIUSクライアントの取得 | 200 | - |
-| PATCH | `/clients/{ip}` | RADIUSクライアントの変更 | 200 | update |
-| DELETE | `/clients/{ip}` | RADIUSクライアントの削除 | 204 | delete |
-| GET | `/clients/{ip}/secret` | 共有シークレットの取得 | 200 | read |
+| GET | `/clients/{clientId}` | RADIUSクライアントの取得 | 200 | - |
+| PATCH | `/clients/{clientId}` | RADIUSクライアントの変更 | 200 | update |
+| DELETE | `/clients/{clientId}` | RADIUSクライアントの削除 | 204 | delete |
+| GET | `/clients/{clientId}/secret` | 共有シークレットの取得 | 200 | read |
 | GET | `/policies` | 認可ポリシーの一覧 | 200 | - |
 | GET | `/policies/{imsi}` | 認可ポリシーの取得 | 200 | - |
 | PUT | `/policies/{imsi}` | 認可ポリシーの作成・置き換え | 201 / 200 | create / update |
@@ -253,7 +260,7 @@ ProblemDetails（RFC 7807）の `title` / `status` / `detail` に、aka-only-ser
 | 404 | `CLIENT_NOT_FOUND` | RADIUSクライアントが存在しない |
 | 404 | `POLICY_NOT_FOUND` | 認可ポリシーが存在しない |
 | 409 | `SUBSCRIBER_ALREADY_EXISTS` | 同じ IMSI の加入者が既に存在する |
-| 409 | `CLIENT_ALREADY_EXISTS` | 同じ IP の RADIUSクライアントが既に存在する |
+| 409 | `CLIENT_ALREADY_EXISTS` | 同じ IP の RADIUSクライアントが既に存在する（作成、PATCH の IP の変更） |
 | 500 | `SYSTEM_FAILURE` | Valkey のエラー等、サーバー内部のエラー |
 
 - `POLICY_NOT_FOUND`、`CLIENT_ALREADY_EXISTS` は aka-only-server にはない、本APIで追加する値である。
@@ -304,6 +311,7 @@ Valkey に接続できない場合は `500`（`SYSTEM_FAILURE`）を返す。
 | ログ | Level | event_id | 内容 |
 |------|-------|----------|------|
 | `starting provisioning-api` | INFO | - | 起動時に `version`、`listen_addr`、`log_level`、`node_name`、`admin_clients`（登録クライアントの件数）を出す（フィンガープリントは出さない）。続いて `connected to Valkey`（`addr`）、`starting server`（`addr`） |
+| `assigned client ids` | INFO | - | 起動時に ID の導入前の RADIUSクライアントに ID を採番したとき（`count`。採番がなければ出さない）。採番に失敗したら `failed to assign client ids`（ERROR）を出して終了する |
 | `request completed` | INFO | - | `trace_id`、`method`、`path`、`http_status`、`latency_ms`、`mgmt_client`（クライアントの識別名）、`src_ip`。パスのうち7桁を超える数字だけのセグメント（IMSI。15桁でない誤った IMSI も含む）は `LOG_MASK_IMSI` に従ってマスクする。クエリパラメーター（`prefix` 等）は出さない |
 | `request failed` | ERROR | `PROV_REQUEST_ERR` | 500 を返したとき（Valkey のエラー等）。`trace_id`、`method`、`path`（マスク済み）、`error` |
 | `panic recovered` | ERROR | `PROV_REQUEST_ERR` | ハンドラーのパニックから復旧して 500 を返したとき |
@@ -321,7 +329,8 @@ Valkey に接続できない場合は `500`（`SYSTEM_FAILURE`）を返す。
 |------|------|
 | `operation` | `create` / `update` / `delete` / `read`（秘密の値の読み出し） |
 | `target_type` | `subscriber` / `client` / `policy` |
-| `target_key` | Valkey のキー（`sub:{IMSI}` 等） |
+| `target_key` | Valkey のキー（`sub:{IMSI}` 等。RADIUSクライアントの IP の変更では変更後のキー） |
+| `target_id` | RADIUSクライアントの ID（RADIUSクライアントだけ。IP を変えても変わらないので、同じクライアントの記録を追える。本APIで追加する項目） |
 | `target_imsi` | 加入者・認可ポリシーの IMSI（生値。Admin TUI と同じ） |
 | `admin_user` | `X-Operator-Id` の値（省略時は空文字） |
 | `mgmt_client` | クライアント証明書に対応する識別名（本APIで追加する項目） |
@@ -334,8 +343,8 @@ Valkey に接続できない場合は `500`（`SYSTEM_FAILURE`）を返す。
 |------|---------------|
 | 加入者の作成・削除 | `amf=8000, sqn=000000000000`（削除は削除時点の値） |
 | 加入者の変更 | `ki: changed, opc: unchanged, amf: 8000 -> b9b9, sqn: ff9bb4d0b627 -> 000000000020`（指定した項目だけ。Ki / OPc は値が変わったかだけ） |
-| RADIUSクライアントの作成・削除 | `name="AP-01", vendor="generic"` |
-| RADIUSクライアントの変更 | `secret: changed, name: "AP-01" -> "AP-02"` |
+| RADIUSクライアントの作成・削除 | `ip=192.168.10.1, name="AP-01", vendor="generic"` |
+| RADIUSクライアントの変更 | `ip: 192.168.10.1 -> 192.168.10.9, secret: changed, name: "AP-01" -> "AP-02"`（指定した項目だけ。IP は変わったときだけ） |
 | 認可ポリシーの作成・削除 | `default=deny, rules=2` |
 | 認可ポリシーの置き換え | `default: allow -> deny, rules: changed (1 -> 2)`（`rules` は内容が変わったかと件数） |
 | 秘密の値の読み出し | `ki,opc` / `secret` |
@@ -381,7 +390,8 @@ apps/provisioning-api/
 | 追加 | 内容 |
 |------|------|
 | `SubscriberStore.ListPage` / `PolicyStore.ListPage`（`pkg/masterdata/page.go`） | IMSI の前方一致・cursor・件数で1ページを返す（§4.1 のページング）。`rules` を解釈できないポリシーは `List` と同じく結果に含めない（`total` には数える） |
-| `ClientStore.Patch` | 指定した項目だけを書き換える（PATCH 用。存在確認と書き込みを1回の操作で行う） |
+| `ClientStore.Patch` | 指定した項目だけを書き換える（PATCH 用。存在確認と書き込みを1回の操作で行う）。r5 で IP の変更（キーの付け替え）に対応 |
+| `ClientStore.GetByID` / `EnsureIDs`、`Create` の採番（r5） | ID からの取得（索引 `idx:client:{ID}` を引き、Hash の `id` と一致するときだけ返す）、ID の導入前のデータへの採番、作成時の採番（`model.RadiusClient.ID` に設定）。`BulkCreate`（CSV）は既存の ID を引き継ぐ |
 
 ### 7.2 共通ライブラリへの移動
 
@@ -479,7 +489,7 @@ compose では、`PROVISIONING_API_LISTEN_ADDR` は既定値（`:9444`）のま�
 | 参照系 | セッション（`sess:`）・統計の参照（読み取りのみ） |
 | 監査ログの参照 | aka-only-server の `/audit-logs` に相当する API（監査ログを Valkey Stream 等に保存する必要がある） |
 | 権限 | 管理クライアントごとの読み取り専用等 |
-| IPv6 | RADIUSクライアントの IPv6 アドレス（Admin TUI・Auth Server を含めた対応が必要） |
+| IPv6 | RADIUSクライアントの IPv6 アドレス（Admin TUI・Auth Server を含めた対応が必要）。r5 で識別子を ID にしたため、API のパスへの影響はない。サブネット単位の登録も同様 |
 
 ---
 
@@ -500,3 +510,4 @@ compose では、`PROVISIONING_API_LISTEN_ADDR` は既定値（`:9444`）のま�
 | r2 | 2026-10-07 | 共通ライブラリへの移動（§7.2）の実装の反映: §7.2 を実装済みとし、`internal/model` の `pkg/model` への統合、ポリシーの変更も原子的にしたこと、`SubscriberStore.Patch` / `PolicyStore.Put` / `PolicyStore.Count` の追加、センチネルエラー、E-03 の依存ルールの例外を追記。§2.3 の注記を過去形に、§11 の手順2を実装済みに |
 | r3 | 2026-10-08 | provisioning-api の実装の反映: ステータスを実装済みに。§3.2 に IP アドレスの表記の規則（先頭の 0 を不可）、§3.3 に `vlanId` は数字だけ・正規化・`rules` の検証エラーの区分、§4.1 に PATCH の `application/json`・本文の上限・要求の解釈（未知の項目等は `INVALID_MSG_FORMAT`）・トレースIDの形式・ページングの実装（SCAN）・404/405、§4.2 に書き込み前の読み出しと PATCH の応答、§4.3 に `cause` の優先順・`X-Operator-Id`・500 の扱い、§5 に有効期間外の拒否と実装（`RequestClientCert` + `VerifyConnection`、`GetConfigForClient`）、§6.1 をログの表に（`PROV_REQUEST_ERR`、`PROV_CLIENT_REJECTED`、`src_ip` がゲートウェイIPになる注記と O-05 §11.6 への参照）、§6.2 に `trace_id`・`msg`・`details` の形式・ログレベルによらない出力、§6.3 を反映済みに、§7.1 を実装の構成に（`pkg/masterdata` の `ListPage`・`ClientStore.Patch` の追加、Dockerfile・Makefile・CI）、§8.1.1 に `GIN_MODE`、§8.2 にヘルスチェック（`pgrep -f`）・終了条件・鍵のパーミッション、§9 に実施結果、§11 の手順3を実装済みに |
 | r4 | 2026-10-08 | 同じホストの BFF（別の compose。web-gui-for-eapaka-radius）から接続するための共有ネットワークの追加: §2.2 の公開範囲を、同じホストの BFF は共有ネットワーク（既定名 `eapaka-prov`）経由で `https://provisioning-api:9444` に接続する形に改め（コンテナからはホストの 127.0.0.1 に届かないため）、注記を追加。§6.1 の `src_ip` の注記に共有ネットワーク経由では BFF のコンテナの IP になることを追記。§8.1.2 に `PROVISIONING_SHARED_NETWORK`、§8.2 に共有ネットワークの定義・起動と停止の順序、サーバー証明書の SAN（`DNS:provisioning-api`）を追加。いずれも simwifi で確認 |
+| r5 | 2026-10-08 | RADIUSクライアントにサーバー採番の ID を導入（API 0.2.0。provisioning-api のバージョン 0.2.0）: §3 の識別子を ID に、§3.2 に `id` と、識別子の設計（`client:{IP}` の Hash の `id`、索引 `idx:client:{ID}`、カウンター `seq:client`、Lua による作成・IP の変更・削除、起動時の採番 `EnsureIDs`、`?ip=` による検索、ID に改めた理由）、PATCH での IP の変更（キーの付け替え、409）を追記。§3.4・§4.2 のパスを `/clients/{clientId}` に、§4.3 の `CLIENT_ALREADY_EXISTS` の条件に PATCH を追加。§6.1 に `assigned client ids`、§6.2 に `target_id` と details の `ip`。§10 の IPv6 に注記。simwifi で、変更前の版で登録したクライアントへの採番、IP の変更の認証への反映、Admin TUI の ID 表示を確認 |

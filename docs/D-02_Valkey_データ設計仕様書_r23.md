@@ -1,4 +1,4 @@
-# D-02 Valkey データ設計仕様書 (r22)
+# D-02 Valkey データ設計仕様書 (r23)
 
 ## 1. 全体方針
 
@@ -16,6 +16,8 @@
 | **`sess:`**        | State        | **アクティブセッション** (認証後) | Hash     | 長期 (24h、Acct Start/Interimでリセット) |
 | **`acct:seen:`**   | State        | **Accounting重複検出キャッシュ**  | String   | 一時 (24h、書き込みごとにリセット) |
 | **`idx:user:`**    | Index        | **ユーザー検索用インデックス**    | Set      | TTLなし（Acct-Stop時にSREM、Admin TUI読み取り時に掃除） |
+| **`idx:client:`**  | Index        | **RADIUSクライアントのIDからIPを引く索引** | String   | 永続（クライアントの作成・IP の変更・削除と同時に更新） |
+| **`seq:client`**   | Counter      | **RADIUSクライアントのIDの採番**  | String（INCR） | 永続（減らさない） |
 
 > **補足:** Admin TUI の `internal/store/keys.go` に `stats:global` 定数が定義されているが、現行実装では使用していない（統計情報は Admin TUI のメモリ上で1分間キャッシュするのみで、Valkey には保存しない）。
 
@@ -118,6 +120,7 @@ Vector APIがEAP-AKA認証ベクターを計算するための鍵情報。
 
 | **Field** | **必須** | **説明**       | **備考**                     |
 | --------- | -------- | -------------- | ---------------------------- |
+| `id`      | Yes（r23 以降） | **サーバー採番のID** | 1 からの連番（`seq:client` を INCR）。再利用しない。Auth/Acct Serverは参照しない。ID の導入前のデータにはないが、Admin TUI / Provisioning API の起動時に採番する |
 | `secret`  | Yes      | **共有秘密鍵** | Auth/Acct Serverが `HGET client:{IP} secret` で取得 |
 | `name`    | -        | クライアント名 | Admin TUIの表示・管理用（Auth/Acct Serverは参照しない） |
 | `vendor`  | -        | ベンダー名     | Admin TUIの表示・管理用（Auth/Acct Serverは参照しない） |
@@ -129,6 +132,26 @@ Vector APIがEAP-AKA認証ベクターを計算するための鍵情報。
 > レコードが存在しない場合、または Valkey エラーの場合は、フォールバックとして環境変数 `RADIUS_SECRET` の値を使用する。
 >
 > どちらも得られない場合はパケットを破棄する（`RADIUS_NO_SECRET` WARN）。
+
+**IDと索引（2026-10-08。D-13 §3.2）:**
+
+RADIUS の照合は送信元IPで行うため、キーは `client:{IP}` のままとし、管理上の識別子としてサーバー採番の ID を持たせる。
+
+| キー | 型 | 内容 |
+|------|----|------|
+| `client:{IP}` の `id` | Hash のフィールド | クライアントの ID |
+| `idx:client:{ID}` | String | ID からクライアントの IP を引く索引（値は IP の文字列） |
+| `seq:client` | String | 採番のカウンター（INCR。最後に採番した ID） |
+
+- 索引とカウンターは、`client:*` の SCAN（一覧・件数）に混ざらないよう `client:` で始めない。
+- 書き込みは `pkg/masterdata` の Lua スクリプトでまとめて1回の操作として行う（E-03 §9）。
+  - 作成: `client:{IP}` がなければ `seq:client` を INCR して `id` とフィールドを HSET し、`idx:client:{ID}` を SET する（あれば何もしない）。
+  - 上書き（CSV インポート）: 既存の `id` を引き継ぎ、なければ採番する。
+  - IP の変更: 変更後の `client:{新IP}` がなければ RENAME し、`idx:client:{ID}` を新しい IP にする（あれば何もしない）。
+  - 削除: `client:{IP}` を DEL し、`idx:client:{ID}` がその IP を指していれば DEL する。
+- ID からの取得は、`idx:client:{ID}` で IP を引き、その Hash の `id` が一致するときだけ有効とする（索引が古い場合は存在しないものとして扱う）。
+- ID の導入前のデータ（`id` を持たない `client:{IP}`）には、Admin TUI と Provisioning API の起動時に `ClientStore.EnsureIDs` で採番する（何度実行しても結果は同じ）。`id` を持つが索引がない場合は索引を作り直し、`seq:client` が既存の最大の `id` より小さい場合は合わせる（バックアップからの復元等に備える）。
+- 2026-10-08 に simwifi で、変更前の版で登録した2件に起動時に ID 1・2 が振られ、`idx:client:1`・`idx:client:2`・`seq:client`=2 ができること、再起動しても採番されないことを確認した。
 
 ### C. 認可ポリシー (Authorization Policy)
 
@@ -440,7 +463,8 @@ Acct Serverが重複パケットおよび順序異常を検出するためのキ
 ### Admin TUI
 
 1. **管理機能:**
-   - `sub:{IMSI}`, `client:{IP}`, `policy:{IMSI}` の CRUD操作（一覧は SCAN + パイプライン HGETALL、一括登録は TxPipeline）。
+   - `sub:{IMSI}`, `client:{IP}`, `policy:{IMSI}` の CRUD操作（一覧は SCAN + パイプライン HGETALL、一括登録は TxPipeline。RADIUSクライアントの一括登録は ID を採番・引き継ぐ Lua を MULTI / EXEC の中でまとめて実行）。
+   - RADIUSクライアントの作成・削除で、ID の採番と索引（`idx:client:`）の作成・削除を同時に行う（セクション2.B）。起動時に ID の導入前のクライアントに ID を採番する。
    - `sub:{IMSI}` の編集は Lua スクリプトで存在チェックと更新をまとめて行い、`sqn` は SQN を変更したときだけ、編集開始時の値との比較・置き換えで書き換える（セクション2.A）。
 2. **モニタリング:**
    - セッション一覧: `sess:*` を SCAN して表示。
@@ -450,7 +474,7 @@ Acct Serverが重複パケットおよび順序異常を検出するためのキ
 
 1. **管理機能:**
    - `sub:{IMSI}`, `client:{IP}`, `policy:{IMSI}` の CRUD 操作を、Admin TUI と同じ `pkg/masterdata` で行う（作成・変更は Lua スクリプトで存在確認と書き込みをまとめる。E-03 §9.3）。
-   - 加入者・RADIUSクライアントの変更（PATCH）は、指定した項目だけを書き換える（`SubscriberStore.Patch` / `ClientStore.Patch`）。認可ポリシーの PUT は `default` と `rules` を1回の HSET で置き換える（`PolicyStore.Put`）。
+   - 加入者・RADIUSクライアントの変更（PATCH）は、指定した項目だけを書き換える（`SubscriberStore.Patch` / `ClientStore.Patch`）。RADIUSクライアントの IP の変更はキーの付け替え（RENAME）と索引の更新を1回の操作で行う。RADIUSクライアントは ID（`idx:client:{ID}`）から IP を引いて操作する。起動時に ID の導入前のクライアントに ID を採番する。認可ポリシーの PUT は `default` と `rules` を1回の HSET で置き換える（`PolicyStore.Put`）。
    - 加入者・認可ポリシーの一覧は、`SCAN` で `sub:{prefix}*` / `policy:{prefix}*` のキーを集めて IMSI の昇順に並べ、そのページの分だけパイプライン HGETALL で読む（`ListPage`）。RADIUSクライアントの一覧は全件（SCAN + パイプライン HGETALL）。
    - `/status` の件数は `sub:*` / `client:*` / `policy:*` の SCAN で数える。
 2. **連動しない操作:** 加入者を削除しても `policy:{IMSI}`・`sess:`・`idx:user:` は削除しない（D-13 §3.1）。セッション・統計は参照しない。
@@ -478,6 +502,7 @@ type Subscriber struct {
 func NewSubscriber(imsi, ki, opc, amf, sqn, createdAt string) *Subscriber
 
 type RadiusClient struct {
+    ID     int64  `json:"id"`     // サーバー採番のID（0 は未採番）
     IP     string `json:"ip"`     // クライアントIPアドレス
     Secret string `json:"secret"` // 共有シークレット
     Name   string `json:"name"`   // クライアント名（識別用）
@@ -649,3 +674,4 @@ type Subscriber struct {
 | r20 | 2026-10-06 | `sess:{UUID}` に `nas_identifier`（NAS-Identifier）を追加した実装修正の反映: radsecproxy 等のプロキシ経由では `nas_ip`（送信元IP）がプロキシのIPになり NAS を区別できないため。Auth Server が Accept 時にポリシー評価に使った NAS-Identifier を書き、Acct Server が Start / Interim で NAS-Identifier があれば上書きする（なければ残す）。§2 のフィールド表・処理フロー・§5 の構造体を更新し、`nas_ip` がプロキシ経由ではプロキシのIPになる旨を追記 |
 | r21 | 2026-10-07 | Admin TUI の加入者・RADIUSクライアント・認可ポリシーの store と validation を pkg に移した実装修正（Provisioning API（D-13）と共通で使うため。E-03 r11）の反映: §2.A の Admin TUI の加入者編集の実装箇所を `pkg/masterdata/subscriber.go` に、§5.2 のストア層変換方式の補足を `pkg/masterdata` に修正し、作成・変更を Lua スクリプトで原子的に行う旨を追記。Admin TUI の `internal/model` は廃止して `pkg/model` に統合 |
 | r22 | 2026-10-08 | Provisioning API（D-13）の実装の反映: §2 の冒頭に Provisioning API も同じキー・形式で読み書きすること、§2.A に Provisioning API からの加入者の変更（`SubscriberStore.Patch`。`sqn` を指定しなければ触れない、指定した場合は比較せずに書き換える）、§4 に「Provisioning API」のアクセスパターン（CRUD、PATCH・PUT、`ListPage` による一覧、`/status` の件数、連動しない操作）を追加 |
+| r23 | 2026-10-08 | RADIUSクライアントにサーバー採番の ID を導入（D-13 r5）: §1 のキー一覧に `idx:client:`（ID → IP の索引、String）と `seq:client`（採番のカウンター）を追加。§2.B に `id` フィールドと「IDと索引」（作成・上書き・IP の変更・削除の Lua、ID からの取得、起動時の採番 `EnsureIDs`、simwifi での確認）を追加。§4 の Admin TUI / Provisioning API のアクセスパターン、§5.1 の `RadiusClient` に `ID` を追加。Auth / Acct Server の `client:{IP}` の参照は変更なし |

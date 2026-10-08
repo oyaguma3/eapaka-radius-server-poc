@@ -57,6 +57,8 @@ type Entry struct {
 	TargetType TargetType
 	// TargetKey は Valkey のキー（sub:{IMSI} 等）
 	TargetKey string
+	// TargetID は RADIUSクライアントのID（RADIUSクライアントだけ。IP を変えても変わらない）
+	TargetID string
 	// TargetIMSI は加入者・認可ポリシーの IMSI（生値。RADIUSクライアントでは空文字）
 	TargetIMSI string
 	// Details は変更内容。秘密の値そのものは含めない
@@ -82,6 +84,9 @@ func (l *Logger) Record(actor Actor, e Entry) {
 		"operation", string(e.Operation),
 		"target_type", string(e.TargetType),
 		"target_key", e.TargetKey,
+	}
+	if e.TargetID != "" {
+		attrs = append(attrs, "target_id", e.TargetID)
 	}
 	if e.TargetIMSI != "" {
 		attrs = append(attrs, "target_imsi", e.TargetIMSI)

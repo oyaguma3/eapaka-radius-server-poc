@@ -338,8 +338,8 @@ func TestBodyFormat(t *testing.T) {
 		{"no content type", http.MethodPost, "/admin/v1/subscribers", `{}`, ""},
 		{"text content type", http.MethodPost, "/admin/v1/subscribers", `{}`, "text/plain"},
 		{"merge patch on POST", http.MethodPost, "/admin/v1/subscribers", `{}`, "application/merge-patch+json"},
-		{"patch wrong type", http.MethodPatch, "/admin/v1/clients/" + testIP, `{"name":1}`, "application/merge-patch+json"},
-		{"patch unknown field", http.MethodPatch, "/admin/v1/clients/" + testIP, `{"ip":"10.0.0.1"}`, "application/merge-patch+json"},
+		{"patch wrong type", http.MethodPatch, "/admin/v1/clients/1", `{"name":1}`, "application/merge-patch+json"},
+		{"patch unknown field", http.MethodPatch, "/admin/v1/clients/1", `{"id":2}`, "application/merge-patch+json"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -354,8 +354,9 @@ func TestBodyFormat(t *testing.T) {
 	}
 
 	// PATCH は application/json でも受け付ける。charset 付きでもよい
-	e.mr.HSet(masterdata.ClientKey(testIP), "secret", "s", "name", "AP", "vendor", "")
-	req := httptest.NewRequest(http.MethodPatch, "/admin/v1/clients/"+testIP, strings.NewReader(`{"vendor":"v"}`))
+	e.mr.HSet(masterdata.ClientKey(testIP), "id", "1", "secret", "s", "name", "AP", "vendor", "")
+	e.mr.Set(masterdata.ClientIndexKey(1), testIP)
+	req := httptest.NewRequest(http.MethodPatch, "/admin/v1/clients/1", strings.NewReader(`{"vendor":"v"}`))
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
 	w := httptest.NewRecorder()
 	e.engine.ServeHTTP(w, req)
@@ -368,8 +369,11 @@ func TestClientLifecycle(t *testing.T) {
 	e := newEnv(t)
 
 	w := e.do(http.MethodPost, "/admin/v1/clients", map[string]string{"ip": testIP, "secret": testSecret, "name": "AP-OFFICE-01", "vendor": "generic"})
-	if w.Code != http.StatusCreated || w.Header().Get("Location") != "/admin/v1/clients/"+testIP {
+	if w.Code != http.StatusCreated || w.Header().Get("Location") != "/admin/v1/clients/1" {
 		t.Fatalf("create status = %d, Location = %q, body = %s", w.Code, w.Header().Get("Location"), w.Body.String())
+	}
+	if m := decode(t, w); m["id"] != float64(1) || m["ip"] != testIP {
+		t.Errorf("created = %v", m)
 	}
 	if strings.Contains(w.Body.String(), testSecret) {
 		t.Error("response has the secret")
@@ -380,34 +384,47 @@ func TestClientLifecycle(t *testing.T) {
 
 	m := decode(t, e.do(http.MethodGet, "/admin/v1/clients", nil))
 	items := m["items"].([]any)
-	if len(items) != 2 || items[0].(map[string]any)["ip"] != "10.0.0.1" {
+	if len(items) != 2 || items[0].(map[string]any)["ip"] != "10.0.0.1" || items[0].(map[string]any)["id"] != float64(2) {
 		t.Errorf("list = %v", m)
 	}
 	if strings.Contains(e.do(http.MethodGet, "/admin/v1/clients", nil).Body.String(), testSecret) {
 		t.Error("list has the secret")
 	}
+	// IP で絞り込む
+	m = decode(t, e.do(http.MethodGet, "/admin/v1/clients?ip="+testIP, nil))
+	if items := m["items"].([]any); len(items) != 1 || items[0].(map[string]any)["id"] != float64(1) {
+		t.Errorf("list by ip = %v", m)
+	}
+	expectProblem(t, e.do(http.MethodGet, "/admin/v1/clients?ip=10.0.0", nil), http.StatusBadRequest, "INVALID_QUERY_PARAM", "ip")
 
-	m = decode(t, e.do(http.MethodGet, "/admin/v1/clients/"+testIP, nil))
-	if m["name"] != "AP-OFFICE-01" || m["vendor"] != "generic" || m["secret"] != nil {
+	m = decode(t, e.do(http.MethodGet, "/admin/v1/clients/1", nil))
+	if m["name"] != "AP-OFFICE-01" || m["vendor"] != "generic" || m["ip"] != testIP || m["secret"] != nil {
 		t.Errorf("get = %v", m)
 	}
-	m = decode(t, e.do(http.MethodGet, "/admin/v1/clients/"+testIP+"/secret", nil))
+	m = decode(t, e.do(http.MethodGet, "/admin/v1/clients/1/secret", nil))
 	if m["secret"] != testSecret {
 		t.Errorf("secret = %v", m)
 	}
-	m = decode(t, e.do(http.MethodPatch, "/admin/v1/clients/"+testIP, `{"name":"AP-OFFICE-02"}`))
+	m = decode(t, e.do(http.MethodPatch, "/admin/v1/clients/1", `{"name":"AP-OFFICE-02"}`))
 	if m["name"] != "AP-OFFICE-02" || m["vendor"] != "generic" {
 		t.Errorf("patched = %v", m)
 	}
+	// IP の変更。ID は変わらない。既に使われている IP には変えられない
+	m = decode(t, e.do(http.MethodPatch, "/admin/v1/clients/1", `{"ip":"192.168.10.9"}`))
+	if m["ip"] != "192.168.10.9" || m["id"] != float64(1) {
+		t.Errorf("ip changed = %v", m)
+	}
+	expectProblem(t, e.do(http.MethodPatch, "/admin/v1/clients/1", `{"ip":"10.0.0.1"}`), http.StatusConflict, "CLIENT_ALREADY_EXISTS")
+	expectProblem(t, e.do(http.MethodPatch, "/admin/v1/clients/1", `{"ip":"192.168.010.9"}`), http.StatusBadRequest, "OPTIONAL_IE_INCORRECT", "ip")
 
-	if w = e.do(http.MethodDelete, "/admin/v1/clients/"+testIP, nil); w.Code != http.StatusNoContent {
+	if w = e.do(http.MethodDelete, "/admin/v1/clients/1", nil); w.Code != http.StatusNoContent {
 		t.Errorf("delete status = %d", w.Code)
 	}
-	expectProblem(t, e.do(http.MethodGet, "/admin/v1/clients/"+testIP, nil), http.StatusNotFound, "CLIENT_NOT_FOUND")
-	expectProblem(t, e.do(http.MethodGet, "/admin/v1/clients/"+testIP+"/secret", nil), http.StatusNotFound, "CLIENT_NOT_FOUND")
-	expectProblem(t, e.do(http.MethodPatch, "/admin/v1/clients/"+testIP, `{"name":"x"}`), http.StatusNotFound, "CLIENT_NOT_FOUND")
-	expectProblem(t, e.do(http.MethodDelete, "/admin/v1/clients/"+testIP, nil), http.StatusNotFound, "CLIENT_NOT_FOUND")
-	expectProblem(t, e.do(http.MethodGet, "/admin/v1/clients/192.168.010.1", nil), http.StatusBadRequest, "MANDATORY_IE_INCORRECT", "ip")
+	expectProblem(t, e.do(http.MethodGet, "/admin/v1/clients/1", nil), http.StatusNotFound, "CLIENT_NOT_FOUND")
+	expectProblem(t, e.do(http.MethodGet, "/admin/v1/clients/1/secret", nil), http.StatusNotFound, "CLIENT_NOT_FOUND")
+	expectProblem(t, e.do(http.MethodPatch, "/admin/v1/clients/1", `{"name":"x"}`), http.StatusNotFound, "CLIENT_NOT_FOUND")
+	expectProblem(t, e.do(http.MethodDelete, "/admin/v1/clients/1", nil), http.StatusNotFound, "CLIENT_NOT_FOUND")
+	expectProblem(t, e.do(http.MethodGet, "/admin/v1/clients/"+testIP, nil), http.StatusBadRequest, "MANDATORY_IE_INCORRECT", "clientId")
 	expectProblem(t, e.do(http.MethodPost, "/admin/v1/clients", map[string]string{"ip": testIP}), http.StatusBadRequest, "MANDATORY_IE_MISSING", "secret", "name")
 
 	if strings.Contains(e.appLog.String(), testSecret) || strings.Contains(e.auditBu.String(), testSecret) {
@@ -492,10 +509,10 @@ func TestInternalError(t *testing.T) {
 		{http.MethodDelete, "/admin/v1/subscribers/" + testIMSI, ""},
 		{http.MethodGet, "/admin/v1/subscribers/" + testIMSI + "/keys", ""},
 		{http.MethodPost, "/admin/v1/clients", `{"ip":"10.0.0.1","secret":"s","name":"AP"}`},
-		{http.MethodGet, "/admin/v1/clients/" + testIP, ""},
-		{http.MethodPatch, "/admin/v1/clients/" + testIP, `{"name":"AP"}`},
-		{http.MethodDelete, "/admin/v1/clients/" + testIP, ""},
-		{http.MethodGet, "/admin/v1/clients/" + testIP + "/secret", ""},
+		{http.MethodGet, "/admin/v1/clients/1", ""},
+		{http.MethodPatch, "/admin/v1/clients/1", `{"name":"AP"}`},
+		{http.MethodDelete, "/admin/v1/clients/1", ""},
+		{http.MethodGet, "/admin/v1/clients/1/secret", ""},
 		{http.MethodGet, "/admin/v1/policies/" + testIMSI, ""},
 		{http.MethodPut, "/admin/v1/policies/" + testIMSI, `{"default":"deny","rules":[]}`},
 		{http.MethodDelete, "/admin/v1/policies/" + testIMSI, ""},

@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/provisioning-api/internal/audit"
@@ -17,6 +19,9 @@ import (
 
 // errNonCanonicalIP は先頭に 0 のある数値等、Auth Server が送信元IPから引くキーと一致しない表記を表す。
 var errNonCanonicalIP = errors.New("must be a valid IPv4 address without leading zeros")
+
+// clientIDPattern はパスの RADIUSクライアントのID（1 以上の整数）の表記。
+var clientIDPattern = regexp.MustCompile(`^[1-9][0-9]{0,17}$`)
 
 // validateIP は IPv4 アドレスを検証する（pkg/validation の規則に加え、表記が一意であること）。
 // Auth Server は送信元IPの文字列表記で client:{IP} を引くため、"192.168.010.1" 等は受け付けない。
@@ -31,16 +36,47 @@ func validateIP(ip string) error {
 	return nil
 }
 
-// checkIP はパスの IP アドレスを検証する。
-func checkIP(ip string) error {
-	if err := validateIP(ip); err != nil {
-		return &ValidationError{Mandatory: []dto.InvalidParam{{Param: "ip", Reason: reason(err)}}}
+// parseClientID はパスの RADIUSクライアントのIDを検証して数値にする。
+func parseClientID(s string) (int64, error) {
+	if !clientIDPattern.MatchString(s) {
+		return 0, &ValidationError{Mandatory: []dto.InvalidParam{{Param: "clientId", Reason: "must be a positive integer"}}}
 	}
-	return nil
+	id, _ := strconv.ParseInt(s, 10, 64)
+	return id, nil
+}
+
+// clientEntry は RADIUSクライアントの監査ログの共通部分を返す。
+func clientEntry(op audit.Operation, c *model.RadiusClient) audit.Entry {
+	return audit.Entry{
+		Operation:  op,
+		TargetType: audit.TargetClient,
+		TargetKey:  masterdata.ClientKey(c.IP),
+		TargetID:   strconv.FormatInt(c.ID, 10),
+	}
+}
+
+// EnsureClientIDs は、ID を持たない RADIUSクライアント（ID の導入前に登録されたもの）に ID を採番し、件数を返す。
+func (s *Service) EnsureClientIDs(ctx context.Context) (int, error) {
+	return s.clients.EnsureIDs(ctx)
 }
 
 // ListClients は RADIUSクライアントの全件を IP アドレスの順（数値として比較）で返す。
-func (s *Service) ListClients(ctx context.Context) ([]*model.RadiusClient, error) {
+// ipFilter を指定した場合は、その IP のクライアントだけ（0 件または 1 件）を返す。
+func (s *Service) ListClients(ctx context.Context, ipFilter string) ([]*model.RadiusClient, error) {
+	if ipFilter != "" {
+		if err := validateIP(ipFilter); err != nil {
+			return nil, &ValidationError{Query: []dto.InvalidParam{{Param: "ip", Reason: reason(err)}}}
+		}
+		c, err := s.clients.Get(ctx, ipFilter)
+		if errors.Is(err, masterdata.ErrClientNotFound) {
+			return []*model.RadiusClient{}, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		return []*model.RadiusClient{c}, nil
+	}
+
 	clients, err := s.clients.List(ctx)
 	if err != nil {
 		return nil, err
@@ -62,7 +98,7 @@ func (s *Service) ListClients(ctx context.Context) ([]*model.RadiusClient, error
 	return clients, nil
 }
 
-// CreateClient は RADIUSクライアントを登録する。既に存在すれば masterdata.ErrClientExists を返す。
+// CreateClient は RADIUSクライアントを登録し、ID を採番する。同じ IP が既に存在すれば masterdata.ErrClientExists を返す。
 func (s *Service) CreateClient(ctx context.Context, actor audit.Actor, req dto.ClientCreate) (*model.RadiusClient, error) {
 	in := validation.NormalizeClientInput(&validation.ClientInput{
 		IP:     deref(req.IP, ""),
@@ -85,112 +121,108 @@ func (s *Service) CreateClient(ctx context.Context, actor audit.Actor, req dto.C
 		return nil, err
 	}
 
-	s.audit.Record(actor, audit.Entry{
-		Operation:  audit.OpCreate,
-		TargetType: audit.TargetClient,
-		TargetKey:  masterdata.ClientKey(c.IP),
-		Details:    clientState(c),
-	})
+	e := clientEntry(audit.OpCreate, c)
+	e.Details = clientState(c)
+	s.audit.Record(actor, e)
 	return c, nil
 }
 
 // GetClient は RADIUSクライアントを返す。存在しなければ masterdata.ErrClientNotFound を返す。
-func (s *Service) GetClient(ctx context.Context, ip string) (*model.RadiusClient, error) {
-	if err := checkIP(ip); err != nil {
-		return nil, err
-	}
-	return s.clients.Get(ctx, ip)
-}
-
-// GetClientSecret は RADIUSクライアントの共有シークレットを返し、読み出したことを監査ログに記録する。
-func (s *Service) GetClientSecret(ctx context.Context, actor audit.Actor, ip string) (*model.RadiusClient, error) {
-	c, err := s.GetClient(ctx, ip)
+func (s *Service) GetClient(ctx context.Context, id string) (*model.RadiusClient, error) {
+	n, err := parseClientID(id)
 	if err != nil {
 		return nil, err
 	}
-	s.audit.Record(actor, audit.Entry{
-		Operation:  audit.OpRead,
-		TargetType: audit.TargetClient,
-		TargetKey:  masterdata.ClientKey(ip),
-		Details:    "secret",
-	})
+	return s.clients.GetByID(ctx, n)
+}
+
+// GetClientSecret は RADIUSクライアントの共有シークレットを返し、読み出したことを監査ログに記録する。
+func (s *Service) GetClientSecret(ctx context.Context, actor audit.Actor, id string) (*model.RadiusClient, error) {
+	c, err := s.GetClient(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	e := clientEntry(audit.OpRead, c)
+	e.Details = "secret"
+	s.audit.Record(actor, e)
 	return c, nil
 }
 
 // UpdateClient は RADIUSクライアントの、指定した項目だけを書き換える（JSON Merge Patch）。
-func (s *Service) UpdateClient(ctx context.Context, actor audit.Actor, ip string, upd dto.ClientUpdate) (*model.RadiusClient, error) {
-	if err := checkIP(ip); err != nil {
+// ip を指定した場合は IP を変える（ID は変わらない）。変更後の IP のクライアントが既に存在すれば masterdata.ErrClientExists を返す。
+func (s *Service) UpdateClient(ctx context.Context, actor audit.Actor, id string, upd dto.ClientUpdate) (*model.RadiusClient, error) {
+	n, err := parseClientID(id)
+	if err != nil {
 		return nil, err
 	}
 	if upd.IsEmpty() {
 		return nil, emptyPatch()
 	}
 
-	n := validation.NormalizeClientInput(&validation.ClientInput{
-		Secret: upd.Secret.Value, Name: upd.Name.Value, Vendor: upd.Vendor.Value,
+	norm := validation.NormalizeClientInput(&validation.ClientInput{
+		IP: upd.IP.Value, Secret: upd.Secret.Value, Name: upd.Name.Value, Vendor: upd.Vendor.Value,
 	})
 	var v ValidationError
 	patch := &masterdata.ClientPatch{
-		Secret: v.patchField("secret", upd.Secret, n.Secret, validation.ValidateSecret),
-		Name:   v.patchField("name", upd.Name, n.Name, validation.ValidateClientName),
-		Vendor: v.patchField("vendor", upd.Vendor, n.Vendor, validation.ValidateVendor),
+		IP:     v.patchField("ip", upd.IP, norm.IP, validateIP),
+		Secret: v.patchField("secret", upd.Secret, norm.Secret, validation.ValidateSecret),
+		Name:   v.patchField("name", upd.Name, norm.Name, validation.ValidateClientName),
+		Vendor: v.patchField("vendor", upd.Vendor, norm.Vendor, validation.ValidateVendor),
 	}
 	if err := v.orNil(); err != nil {
 		return nil, err
 	}
 
-	// 監査ログに変更前の値を残すため、先に読む（存在しなければここで 404 になる）
-	before, err := s.clients.Get(ctx, ip)
+	// 監査ログに変更前の値を残すため、また ID から現在の IP を引くため、先に読む（存在しなければここで 404 になる）
+	before, err := s.clients.GetByID(ctx, n)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.clients.Patch(ctx, ip, patch); err != nil {
+	if err := s.clients.Patch(ctx, before.IP, patch); err != nil {
 		return nil, err
 	}
-	after, err := s.clients.Get(ctx, ip)
+	after, err := s.clients.GetByID(ctx, n)
 	if err != nil {
 		return nil, err
 	}
 
 	var c changes
+	if patch.IP != nil && *patch.IP != before.IP {
+		c.value("ip", before.IP, patch.IP)
+	}
 	c.secret("secret", before.Secret, patch.Secret)
 	c.value("name", fmt.Sprintf("%q", before.Name), quote(patch.Name))
 	c.value("vendor", fmt.Sprintf("%q", before.Vendor), quote(patch.Vendor))
-	s.audit.Record(actor, audit.Entry{
-		Operation:  audit.OpUpdate,
-		TargetType: audit.TargetClient,
-		TargetKey:  masterdata.ClientKey(ip),
-		Details:    c.String(),
-	})
+	e := clientEntry(audit.OpUpdate, after)
+	e.Details = c.String()
+	s.audit.Record(actor, e)
 	return after, nil
 }
 
 // DeleteClient は RADIUSクライアントを削除する。
-func (s *Service) DeleteClient(ctx context.Context, actor audit.Actor, ip string) error {
-	if err := checkIP(ip); err != nil {
+func (s *Service) DeleteClient(ctx context.Context, actor audit.Actor, id string) error {
+	n, err := parseClientID(id)
+	if err != nil {
 		return err
 	}
-	// 監査ログ用に削除前の値を読む。読めなくても削除は行う（存在しなければ Delete が 404 を返す）
-	before, _ := s.clients.Get(ctx, ip)
-	if err := s.clients.Delete(ctx, ip); err != nil {
+	// ID から IP を引く（存在しなければここで 404 になる）。監査ログには削除前の値を残す
+	before, err := s.clients.GetByID(ctx, n)
+	if err != nil {
+		return err
+	}
+	if err := s.clients.Delete(ctx, before.IP); err != nil {
 		return err
 	}
 
-	e := audit.Entry{
-		Operation:  audit.OpDelete,
-		TargetType: audit.TargetClient,
-		TargetKey:  masterdata.ClientKey(ip),
-	}
-	if before != nil {
-		e.Details = clientState(before)
-	}
+	e := clientEntry(audit.OpDelete, before)
+	e.Details = clientState(before)
 	s.audit.Record(actor, e)
 	return nil
 }
 
 // clientState は監査ログに残す RADIUSクライアントの状態（共有シークレットは含めない）。
 func clientState(c *model.RadiusClient) string {
-	return fmt.Sprintf("name=%q, vendor=%q", c.Name, c.Vendor)
+	return fmt.Sprintf("ip=%s, name=%q, vendor=%q", c.IP, c.Name, c.Vendor)
 }
 
 // quote はポインターの値を引用符で囲む。nil なら nil を返す。
