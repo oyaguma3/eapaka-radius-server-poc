@@ -345,17 +345,18 @@ func (s *ClientStore) Exists(ctx context.Context, ip string) (bool, error) {
 }
 
 // BulkCreate は複数のRADIUSクライアントを作成または上書きする（CSV インポート用）。
-// 既存のクライアントはIDを引き継ぎ、新しいクライアントにはIDを採番する（1件ずつ Lua スクリプトで行う）。
+// 既存のクライアントはIDを引き継ぎ、新しいクライアントにはIDを採番する（1件ずつの Lua スクリプトを、
+// 従来の一括登録と同じく MULTI / EXEC でまとめて実行し、全件を1回の操作として書き込む）。
 func (s *ClientStore) BulkCreate(ctx context.Context, clients []*model.RadiusClient) error {
 	if len(clients) == 0 {
 		return nil
 	}
 
-	pipe := s.client.Pipeline()
+	pipe := s.client.TxPipeline()
 	cmds := make([]*redis.Cmd, len(clients))
 	for i, c := range clients {
 		args := append([]any{PrefixClientIndex, c.IP}, fieldArgs(clientFields(c))...)
-		// パイプラインでは EVALSHA が NOSCRIPT のときに EVAL へ切り替えられないため、Eval でスクリプトごと送る
+		// MULTI の中では EVALSHA が NOSCRIPT のときに EVAL へ切り替えられないため、Eval でスクリプトごと送る
 		cmds[i] = putClientScript.Eval(ctx, pipe, []string{ClientKey(c.IP), KeyClientSeq}, args...)
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
