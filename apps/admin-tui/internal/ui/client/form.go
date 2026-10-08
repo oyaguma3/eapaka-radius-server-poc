@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/audit"
@@ -87,7 +88,7 @@ func (s *FormScreen) SetupEdit(ctx context.Context, ip string) error {
 	s.originalIP = ip
 
 	s.form.Clear(true)
-	s.form.SetTitle(" Edit RADIUS Client ")
+	s.form.SetTitle(fmt.Sprintf(" Edit RADIUS Client (ID %d) ", client.ID))
 
 	// 編集モードではIPは変更不可
 	s.form.AddInputField("IP Address", client.IP, 20, nil, nil)

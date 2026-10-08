@@ -46,10 +46,10 @@ func NewEngine(h *handler.Handler, clients auth.Clients, log *slog.Logger, maske
 
 	v1.GET("/clients", h.ListClients)
 	v1.POST("/clients", h.CreateClient)
-	v1.GET("/clients/:ip", h.GetClient)
-	v1.PATCH("/clients/:ip", h.UpdateClient)
-	v1.DELETE("/clients/:ip", h.DeleteClient)
-	v1.GET("/clients/:ip/secret", h.GetClientSecret)
+	v1.GET("/clients/:clientId", h.GetClient)
+	v1.PATCH("/clients/:clientId", h.UpdateClient)
+	v1.DELETE("/clients/:clientId", h.DeleteClient)
+	v1.GET("/clients/:clientId/secret", h.GetClientSecret)
 
 	v1.GET("/policies", h.ListPolicies)
 	v1.GET("/policies/:imsi", h.GetPolicy)

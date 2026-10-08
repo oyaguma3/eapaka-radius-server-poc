@@ -29,12 +29,12 @@ func TestRecord(t *testing.T) {
 
 	// IMSI と details がなければ出力しない。admin_user は空文字でも出力する
 	buf.Reset()
-	l.Record(Actor{MgmtClient: "bff-01"}, Entry{Operation: OpRead, TargetType: TargetClient, TargetKey: "client:192.168.10.1"})
+	l.Record(Actor{MgmtClient: "bff-01"}, Entry{Operation: OpRead, TargetType: TargetClient, TargetKey: "client:192.168.10.1", TargetID: "3"})
 	e = nil
 	if err := json.Unmarshal(buf.Bytes(), &e); err != nil {
 		t.Fatalf("not JSON: %s", buf.String())
 	}
-	if e["msg"] != "client secret read" || e["admin_user"] != "" {
+	if e["msg"] != "client secret read" || e["admin_user"] != "" || e["target_id"] != "3" {
 		t.Errorf("entry = %v", e)
 	}
 	for _, k := range []string{"target_imsi", "details"} {

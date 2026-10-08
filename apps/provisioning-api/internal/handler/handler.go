@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -94,7 +95,7 @@ func (h *Handler) fail(c *gin.Context, err error) {
 	case errors.Is(err, masterdata.ErrSubscriberExists):
 		WriteProblem(c, dto.NewProblem(http.StatusConflict, dto.CauseSubscriberAlreadyExists, "subscriber already exists"))
 	case errors.Is(err, masterdata.ErrClientExists):
-		WriteProblem(c, dto.NewProblem(http.StatusConflict, dto.CauseClientAlreadyExists, "client already exists"))
+		WriteProblem(c, dto.NewProblem(http.StatusConflict, dto.CauseClientAlreadyExists, "a client with the same IP address already exists"))
 	default:
 		h.log.Error("request failed",
 			"event_id", "PROV_REQUEST_ERR",
@@ -229,7 +230,7 @@ func (h *Handler) GetSubscriberKeys(c *gin.Context) {
 
 // ListClients は GET /clients を処理する。
 func (h *Handler) ListClients(c *gin.Context) {
-	clients, err := h.svc.ListClients(c.Request.Context())
+	clients, err := h.svc.ListClients(c.Request.Context(), c.Query("ip"))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -252,13 +253,13 @@ func (h *Handler) CreateClient(c *gin.Context) {
 		h.fail(c, err)
 		return
 	}
-	c.Header("Location", basePath+"/clients/"+rc.IP)
+	c.Header("Location", basePath+"/clients/"+strconv.FormatInt(rc.ID, 10))
 	c.JSON(http.StatusCreated, dto.NewClient(rc))
 }
 
-// GetClient は GET /clients/{ip} を処理する。
+// GetClient は GET /clients/{clientId} を処理する。
 func (h *Handler) GetClient(c *gin.Context) {
-	rc, err := h.svc.GetClient(c.Request.Context(), c.Param("ip"))
+	rc, err := h.svc.GetClient(c.Request.Context(), c.Param("clientId"))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -266,13 +267,13 @@ func (h *Handler) GetClient(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.NewClient(rc))
 }
 
-// UpdateClient は PATCH /clients/{ip} を処理する。
+// UpdateClient は PATCH /clients/{clientId} を処理する。
 func (h *Handler) UpdateClient(c *gin.Context) {
 	var req dto.ClientUpdate
 	if !decode(c, &req) {
 		return
 	}
-	rc, err := h.svc.UpdateClient(c.Request.Context(), actor(c), c.Param("ip"), req)
+	rc, err := h.svc.UpdateClient(c.Request.Context(), actor(c), c.Param("clientId"), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -280,18 +281,18 @@ func (h *Handler) UpdateClient(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.NewClient(rc))
 }
 
-// DeleteClient は DELETE /clients/{ip} を処理する。
+// DeleteClient は DELETE /clients/{clientId} を処理する。
 func (h *Handler) DeleteClient(c *gin.Context) {
-	if err := h.svc.DeleteClient(c.Request.Context(), actor(c), c.Param("ip")); err != nil {
+	if err := h.svc.DeleteClient(c.Request.Context(), actor(c), c.Param("clientId")); err != nil {
 		h.fail(c, err)
 		return
 	}
 	c.Status(http.StatusNoContent)
 }
 
-// GetClientSecret は GET /clients/{ip}/secret を処理する。
+// GetClientSecret は GET /clients/{clientId}/secret を処理する。
 func (h *Handler) GetClientSecret(c *gin.Context) {
-	rc, err := h.svc.GetClientSecret(c.Request.Context(), actor(c), c.Param("ip"))
+	rc, err := h.svc.GetClientSecret(c.Request.Context(), actor(c), c.Param("clientId"))
 	if err != nil {
 		h.fail(c, err)
 		return
