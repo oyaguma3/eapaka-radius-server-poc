@@ -83,7 +83,8 @@ func newEnv(t *testing.T) *env {
 
 	e := &env{t: t, mr: mr, appLog: &bytes.Buffer{}, auditBu: &bytes.Buffer{}, cert: newCert(t)}
 	log := slog.New(slog.NewJSONHandler(e.appLog, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	svc := service.New(rdb, audit.NewLogger(e.auditBu))
+	store := audit.NewStore(rdb, 1000)
+	svc := service.New(rdb, audit.NewLogger(e.auditBu).WithStore(store, log), store)
 	h := handler.New(svc, log, "0.1.0-test", "node-a", time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC))
 	clients := auth.Clients{auth.Fingerprint(e.cert): "bff-01"}
 	e.engine = server.NewEngine(h, clients, log, logging.NewMasker(true))
@@ -167,6 +168,8 @@ func TestStatus(t *testing.T) {
 	e := newEnv(t)
 	e.mr.HSet(masterdata.SubscriberKey(testIMSI), "ki", "K")
 	e.mr.HSet(masterdata.ClientKey(testIP), "secret", "s")
+	e.mr.HSet(masterdata.SessionKey("u1"), "imsi", testIMSI)
+	e.mr.HSet(masterdata.SessionKey("u2"), "imsi", testIMSI)
 
 	w := e.do(http.MethodGet, "/admin/v1/status", nil)
 	if w.Code != http.StatusOK {
@@ -175,7 +178,7 @@ func TestStatus(t *testing.T) {
 	m := decode(t, w)
 	want := map[string]any{
 		"version": "0.1.0-test", "nodeName": "node-a", "startedAt": "2026-10-07T00:00:00Z",
-		"subscriberCount": float64(1), "clientCount": float64(1), "policyCount": float64(0),
+		"subscriberCount": float64(1), "clientCount": float64(1), "policyCount": float64(0), "sessionCount": float64(2),
 	}
 	for k, v := range want {
 		if m[k] != v {
@@ -526,4 +529,128 @@ func TestInternalError(t *testing.T) {
 	if !strings.Contains(e.appLog.String(), `"event_id":"PROV_REQUEST_ERR"`) || strings.Contains(e.appLog.String(), testIMSI) {
 		t.Errorf("error log = %s", e.appLog.String())
 	}
+}
+
+func TestAuditLogs(t *testing.T) {
+	e := newEnv(t)
+	// 監査ログに残る操作を 3 つ行う（作成、Ki / OPc の読み出し、ポリシーの作成）。
+	if w := e.do(http.MethodPost, "/admin/v1/subscribers", map[string]string{"imsi": testIMSI, "ki": testKi, "opc": testOPc},
+		"X-Operator-Id", "alice", "X-Trace-ID", "trace-create"); w.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", w.Code, w.Body.String())
+	}
+	e.do(http.MethodGet, "/admin/v1/subscribers/"+testIMSI+"/keys", nil, "X-Operator-Id", "alice", "X-Trace-ID", "trace-keys")
+	e.do(http.MethodPut, "/admin/v1/policies/"+testIMSI, map[string]any{"default": "deny", "rules": []any{}}, "X-Trace-ID", "trace-policy")
+
+	w := e.do(http.MethodGet, "/admin/v1/audit-logs", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", w.Code, w.Body.String())
+	}
+	var list struct {
+		Items []struct {
+			ID, Time, Operator, MgmtClient, Action, Target, TargetKey, TraceID, Details string
+		} `json:"items"`
+		NextBefore string `json:"nextBefore"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Items) != 3 || list.NextBefore != "" {
+		t.Fatalf("items = %+v", list)
+	}
+	// 新しい順。秘密の値は含めない。
+	got := []string{}
+	for _, it := range list.Items {
+		got = append(got, it.Action+"|"+it.Target+"|"+it.TraceID+"|"+it.Operator+"|"+it.MgmtClient)
+	}
+	want := "policy.create|" + testIMSI + "|trace-policy||bff-01," +
+		"subscriber.keys.read|" + testIMSI + "|trace-keys|alice|bff-01," +
+		"subscriber.create|" + testIMSI + "|trace-create|alice|bff-01"
+	if strings.Join(got, ",") != want {
+		t.Errorf("items = %v", got)
+	}
+	if first := list.Items[2]; first.TargetKey != "sub:"+testIMSI || first.Details != "amf=8000, sqn=000000000000" || first.Time == "" || first.ID == "" {
+		t.Errorf("create entry = %+v", first)
+	}
+	if strings.Contains(w.Body.String(), testKi) {
+		t.Error("audit logs contain Ki")
+	}
+
+	// ページ送り。
+	w = e.do(http.MethodGet, "/admin/v1/audit-logs?limit=2", nil)
+	m := decode(t, w)
+	next, _ := m["nextBefore"].(string)
+	if len(m["items"].([]any)) != 2 || next == "" {
+		t.Fatalf("page 1 = %v", m)
+	}
+	m = decode(t, e.do(http.MethodGet, "/admin/v1/audit-logs?limit=2&before="+next, nil))
+	items := m["items"].([]any)
+	if len(items) != 1 || items[0].(map[string]any)["traceId"] != "trace-create" || m["nextBefore"] != nil {
+		t.Errorf("page 2 = %v", m)
+	}
+
+	expectProblem(t, e.do(http.MethodGet, "/admin/v1/audit-logs?limit=0&before=x", nil), http.StatusBadRequest, "INVALID_QUERY_PARAM", "before", "limit")
+	expectProblem(t, e.do(http.MethodGet, "/admin/v1/audit-logs?limit=501", nil), http.StatusBadRequest, "INVALID_QUERY_PARAM", "limit")
+
+	e.mr.SetError("forced error")
+	expectProblem(t, e.do(http.MethodGet, "/admin/v1/audit-logs", nil), http.StatusInternalServerError, "SYSTEM_FAILURE")
+}
+
+func TestSessions(t *testing.T) {
+	e := newEnv(t)
+	other := "001010000000002"
+	seed := func(uuid, imsi, start string) {
+		e.mr.HSet(masterdata.SessionKey(uuid), "imsi", imsi, "nas_ip", "192.0.2.1", "nas_identifier", "AP-01",
+			"start_time", start, "client_ip", "10.0.0.5", "acct_id", "A-"+uuid, "input_octets", "100", "output_octets", "200")
+		if _, err := e.mr.SetAdd(masterdata.UserIndexKey(imsi), uuid); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seed("u1", testIMSI, "1760000000")
+	seed("u2", testIMSI, "1760000300")
+	seed("u3", other, "1760000100")
+	// 索引に残った、もう存在しないセッション。API は索引を掃除しない。
+	if _, err := e.mr.SetAdd(masterdata.UserIndexKey(testIMSI), "gone"); err != nil {
+		t.Fatal(err)
+	}
+
+	ids := func(m map[string]any) string {
+		var out []string
+		for _, it := range m["items"].([]any) {
+			out = append(out, it.(map[string]any)["id"].(string))
+		}
+		return strings.Join(out, ",")
+	}
+	m := decode(t, e.do(http.MethodGet, "/admin/v1/sessions", nil))
+	if ids(m) != "u2,u3,u1" || m["total"] != float64(3) {
+		t.Errorf("all = %v", m)
+	}
+	first := m["items"].([]any)[0].(map[string]any)
+	want := map[string]any{"id": "u2", "imsi": testIMSI, "nasIp": "192.0.2.1", "nasIdentifier": "AP-01", "startTime": "2025-10-09T08:58:20Z",
+		"clientIp": "10.0.0.5", "acctSessionId": "A-u2", "inputOctets": float64(100), "outputOctets": float64(200)}
+	for k, v := range want {
+		if first[k] != v {
+			t.Errorf("%s = %v, want %v", k, first[k], v)
+		}
+	}
+
+	m = decode(t, e.do(http.MethodGet, "/admin/v1/sessions?limit=1", nil))
+	if ids(m) != "u2" || m["total"] != float64(3) {
+		t.Errorf("limit = %v", m)
+	}
+	m = decode(t, e.do(http.MethodGet, "/admin/v1/sessions?imsi="+testIMSI, nil))
+	if ids(m) != "u2,u1" || m["total"] != float64(2) {
+		t.Errorf("imsi = %v", m)
+	}
+	if ok, _ := e.mr.SIsMember(masterdata.UserIndexKey(testIMSI), "gone"); !ok {
+		t.Error("the index was cleaned by the API")
+	}
+	m = decode(t, e.do(http.MethodGet, "/admin/v1/sessions?imsi=440100000000099", nil))
+	if items := m["items"].([]any); len(items) != 0 || m["total"] != float64(0) {
+		t.Errorf("no sessions = %v", m)
+	}
+
+	expectProblem(t, e.do(http.MethodGet, "/admin/v1/sessions?imsi=123&limit=1001", nil), http.StatusBadRequest, "INVALID_QUERY_PARAM", "imsi", "limit")
+
+	e.mr.SetError("forced error")
+	expectProblem(t, e.do(http.MethodGet, "/admin/v1/sessions", nil), http.StatusInternalServerError, "SYSTEM_FAILURE")
 }

@@ -35,18 +35,23 @@ type Service struct {
 	subs     *masterdata.SubscriberStore
 	clients  *masterdata.ClientStore
 	policies *masterdata.PolicyStore
+	sessions *masterdata.SessionStore
 	audit    *audit.Logger
-	now      func() time.Time
+	// auditStore は監査ログの参照用の保存先（GET /audit-logs）
+	auditStore *audit.Store
+	now        func() time.Time
 }
 
-// New は新しい Service を生成する。
-func New(rdb *redis.Client, auditLogger *audit.Logger) *Service {
+// New は新しい Service を生成する。auditLogger は auditStore にも監査ログを保存するよう設定しておく（main）。
+func New(rdb *redis.Client, auditLogger *audit.Logger, auditStore *audit.Store) *Service {
 	return &Service{
-		subs:     masterdata.NewSubscriberStore(rdb),
-		clients:  masterdata.NewClientStore(rdb),
-		policies: masterdata.NewPolicyStore(rdb),
-		audit:    auditLogger,
-		now:      time.Now,
+		subs:       masterdata.NewSubscriberStore(rdb),
+		clients:    masterdata.NewClientStore(rdb),
+		policies:   masterdata.NewPolicyStore(rdb),
+		sessions:   masterdata.NewSessionStore(rdb),
+		audit:      auditLogger,
+		auditStore: auditStore,
+		now:        time.Now,
 	}
 }
 
@@ -55,9 +60,10 @@ type Counts struct {
 	Subscribers int64
 	Clients     int64
 	Policies    int64
+	Sessions    int64
 }
 
-// Counts は加入者・RADIUSクライアント・認可ポリシーの件数を返す。
+// Counts は加入者・RADIUSクライアント・認可ポリシー・アクティブセッションの件数を返す。
 func (s *Service) Counts(ctx context.Context) (*Counts, error) {
 	var c Counts
 	var err error
@@ -68,6 +74,9 @@ func (s *Service) Counts(ctx context.Context) (*Counts, error) {
 		return nil, err
 	}
 	if c.Policies, err = s.policies.Count(ctx); err != nil {
+		return nil, err
+	}
+	if c.Sessions, err = s.sessions.Count(ctx); err != nil {
 		return nil, err
 	}
 	return &c, nil

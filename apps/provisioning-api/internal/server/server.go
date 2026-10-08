@@ -56,6 +56,9 @@ func NewEngine(h *handler.Handler, clients auth.Clients, log *slog.Logger, maske
 	v1.PUT("/policies/:imsi", h.PutPolicy)
 	v1.DELETE("/policies/:imsi", h.DeletePolicy)
 
+	v1.GET("/audit-logs", h.ListAuditLogs)
+	v1.GET("/sessions", h.ListSessions)
+
 	return engine
 }
 

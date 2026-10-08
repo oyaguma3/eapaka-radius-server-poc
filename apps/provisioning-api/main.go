@@ -28,7 +28,7 @@ import (
 
 // version は provisioning-api のバージョン（/status の version）。
 // ビルド時に -ldflags "-X main.version=..." で上書きできる。
-var version = "0.2.0"
+var version = "0.3.0"
 
 func main() {
 	startedAt := time.Now()
@@ -55,6 +55,7 @@ func main() {
 		"log_level", cfg.LogLevel,
 		"node_name", cfg.NodeName,
 		"admin_clients", len(cfg.AdminClients),
+		"audit_max", cfg.AuditMax,
 	)
 
 	// 3. サーバー証明書の読み込み
@@ -74,7 +75,9 @@ func main() {
 	log.Info("connected to Valkey", "addr", cfg.RedisAddr())
 
 	// 5. 依存オブジェクト生成
-	svc := service.New(rdb, audit.NewLogger(out))
+	// 監査ログは標準出力（正本）に出し、参照用に Valkey の Stream にも保存する（D-13 §6.2）
+	auditStore := audit.NewStore(rdb, cfg.AuditMax)
+	svc := service.New(rdb, audit.NewLogger(out).WithStore(auditStore, log), auditStore)
 
 	// ID の導入前に登録された RADIUSクライアントに ID を採番する（何度実行しても結果は同じ）
 	assigned, err := svc.EnsureClientIDs(context.Background())

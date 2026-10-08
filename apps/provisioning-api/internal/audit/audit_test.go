@@ -11,7 +11,7 @@ func TestRecord(t *testing.T) {
 	l := NewLogger(&buf)
 	actor := Actor{Operator: "alice", MgmtClient: "bff-01", TraceID: "trace-1"}
 
-	l.Record(actor, Entry{Operation: OpCreate, TargetType: TargetSubscriber, TargetKey: "sub:001010000000001", TargetIMSI: "001010000000001", Details: "amf=8000"})
+	l.Record(t.Context(), actor, Entry{Operation: OpCreate, TargetType: TargetSubscriber, TargetKey: "sub:001010000000001", TargetIMSI: "001010000000001", Details: "amf=8000"})
 	var e map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &e); err != nil {
 		t.Fatalf("not JSON: %s", buf.String())
@@ -29,7 +29,7 @@ func TestRecord(t *testing.T) {
 
 	// IMSI と details がなければ出力しない。admin_user は空文字でも出力する
 	buf.Reset()
-	l.Record(Actor{MgmtClient: "bff-01"}, Entry{Operation: OpRead, TargetType: TargetClient, TargetKey: "client:192.168.10.1", TargetID: "3"})
+	l.Record(t.Context(), Actor{MgmtClient: "bff-01"}, Entry{Operation: OpRead, TargetType: TargetClient, TargetKey: "client:192.168.10.1", TargetID: "3"})
 	e = nil
 	if err := json.Unmarshal(buf.Bytes(), &e); err != nil {
 		t.Fatalf("not JSON: %s", buf.String())
@@ -45,7 +45,7 @@ func TestRecord(t *testing.T) {
 
 	for op, msg := range map[Operation]string{OpUpdate: "policy updated", OpDelete: "policy deleted"} {
 		buf.Reset()
-		l.Record(actor, Entry{Operation: op, TargetType: TargetPolicy})
+		l.Record(t.Context(), actor, Entry{Operation: op, TargetType: TargetPolicy})
 		if err := json.Unmarshal(buf.Bytes(), &e); err != nil || e["msg"] != msg {
 			t.Errorf("msg = %v, want %s", e["msg"], msg)
 		}
