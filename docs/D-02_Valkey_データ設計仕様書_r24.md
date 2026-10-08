@@ -1,4 +1,4 @@
-# D-02 Valkey データ設計仕様書 (r23)
+# D-02 Valkey データ設計仕様書 (r24)
 
 ## 1. 全体方針
 
@@ -16,6 +16,7 @@
 | **`sess:`**        | State        | **アクティブセッション** (認証後) | Hash     | 長期 (24h、Acct Start/Interimでリセット) |
 | **`acct:seen:`**   | State        | **Accounting重複検出キャッシュ**  | String   | 一時 (24h、書き込みごとにリセット) |
 | **`idx:user:`**    | Index        | **ユーザー検索用インデックス**    | Set      | TTLなし（Acct-Stop時にSREM、Admin TUI読み取り時に掃除） |
+| **`audit:prov`**   | Log          | **Provisioning API の監査ログ**（参照用の写し。§2.H） | Stream   | 永続（件数の上限 `PROVISIONING_API_AUDIT_MAX` を超えた古いものから消す） |
 | **`idx:client:`**  | Index        | **RADIUSクライアントのIDからIPを引く索引** | String   | 永続（クライアントの作成・IP の変更・削除と同時に更新） |
 | **`seq:client`**   | Counter      | **RADIUSクライアントのIDの採番**  | String（INCR） | 永続（減らさない） |
 
@@ -216,6 +217,30 @@ NAS-IDとSSIDのマッチング条件に加え、VLAN・セッションパラメ
    - `session_timeout` > 0 → `Session-Timeout`
    - default `allow` による許可では、VLAN・Session-Timeout は付与しない
 
+### H. Provisioning API の監査ログ (Audit Log)
+
+Provisioning API（D-13）の監査ログ（変更操作と秘密の値の読み出し）の写し。`GET /audit-logs` で参照するために保存する（D-13 §3.6。r24 で追加）。正本はログファイル（`provisioning-api.log`）で、ここにない古いものはログファイルで確かめる。Admin TUI の操作は保存しない。
+
+- **Key:** `audit:prov`
+- **Type:** `Stream`
+- **書き込み:** provisioning-api が、成功した変更操作・秘密の値の読み出しのたびに `XADD audit:prov MAXLEN ~ {PROVISIONING_API_AUDIT_MAX} * ...`（既定 10000 件。おおよその上限で、超えた古いものから消す）。失敗しても操作は成功として扱う（`PROV_AUDIT_STORE_ERR`。D-04 §3.6）
+- **読み出し:** `XREVRANGE audit:prov {終端} - COUNT {limit+1}`（新しい順。`before` の直前のIDを終端にする）
+- **エントリID:** Stream のID（`{ミリ秒}-{連番}`）。記録日時はこのミリ秒から求める
+
+| **Field** | **格納形式** | **説明** |
+| --------- | ------------ | -------- |
+| `trace_id` | String | トレースID（ログファイルの `trace_id` と同じ） |
+| `operation` | String | `create` / `update` / `delete` / `read` |
+| `target_type` | String | `subscriber` / `client` / `policy` |
+| `target_key` | String | 対象のキー（`sub:{IMSI}` 等。RADIUSクライアントの IP の変更では変更後のキー） |
+| `target_id` | String | RADIUSクライアントの ID（それ以外は空文字） |
+| `target_imsi` | String | 加入者・認可ポリシーの IMSI（生値。RADIUSクライアントでは空文字） |
+| `admin_user` | String | 操作者（`X-Operator-Id`。省略時は空文字） |
+| `mgmt_client` | String | 管理クライアントの識別名 |
+| `details` | String | 変更内容（秘密の値は含まない。D-13 §6.2 の形式） |
+
+> **メモリの目安:** 1件あたり数百バイトで、既定の 10000 件で数MB。`--maxmemory 512mb`・`noeviction` の範囲に収まる。
+
 ------
 
 ## 3. ステートデータ (一時・動的)
@@ -350,7 +375,7 @@ IMSIから現在のセッションIDを逆引きするためのセット。
 
 > **クリーンアップ方針:**
 > - `idx:user:{IMSI}` はTTLなしのSetであり、Acct-Stop未達やセッションTTL切れでゴミが残る可能性がある
-> - **クリーンアップは読み取り時（Admin TUI）に実施する**
+> - **クリーンアップは読み取り時（Admin TUI）に実施する**（Provisioning API の `GET /sessions` は読み取りだけで、掃除はしない。r24）
 >   - IMSI指定でセッションを取得する際（`SessionStore.GetByIMSI`）、SMEMBERS で得たUUIDごとに `sess:{UUID}` を取得し、存在しないUUIDは `SREM idx:user:{IMSI}` で自動削除
 >   - インデックスが空の場合は `sess:*` を SCAN して `imsi` で絞り込むフォールバックを行う
 >   - IMSIごとのセッション数（`GetSessionCount`）は SCARD のため、掃除前のゴミを含む場合がある
@@ -476,8 +501,10 @@ Acct Serverが重複パケットおよび順序異常を検出するためのキ
    - `sub:{IMSI}`, `client:{IP}`, `policy:{IMSI}` の CRUD 操作を、Admin TUI と同じ `pkg/masterdata` で行う（作成・変更は Lua スクリプトで存在確認と書き込みをまとめる。E-03 §9.3）。
    - 加入者・RADIUSクライアントの変更（PATCH）は、指定した項目だけを書き換える（`SubscriberStore.Patch` / `ClientStore.Patch`）。RADIUSクライアントの IP の変更はキーの付け替え（RENAME）と索引の更新を1回の操作で行う。RADIUSクライアントは ID（`idx:client:{ID}`）から IP を引いて操作する。起動時に ID の導入前のクライアントに ID を採番する。認可ポリシーの PUT は `default` と `rules` を1回の HSET で置き換える（`PolicyStore.Put`）。
    - 加入者・認可ポリシーの一覧は、`SCAN` で `sub:{prefix}*` / `policy:{prefix}*` のキーを集めて IMSI の昇順に並べ、そのページの分だけパイプライン HGETALL で読む（`ListPage`）。RADIUSクライアントの一覧は全件（SCAN + パイプライン HGETALL）。
-   - `/status` の件数は `sub:*` / `client:*` / `policy:*` の SCAN で数える。
-2. **連動しない操作:** 加入者を削除しても `policy:{IMSI}`・`sess:`・`idx:user:` は削除しない（D-13 §3.1）。セッション・統計は参照しない。
+   - `/status` の件数は `sub:*` / `client:*` / `policy:*` / `sess:*` の SCAN で数える（`sess:*` は r24）。
+2. **監査ログ（r24）:** 監査ログを `audit:prov`（§2.H）に XADD し、`GET /audit-logs` で XREVRANGE で読む。
+3. **セッションの参照（r24。読み取りだけ）:** `GET /sessions` は、`sess:*` を SCAN してパイプライン HGETALL で読む（Admin TUI と同じ `pkg/masterdata.SessionStore`）。`?imsi=` では `idx:user:{IMSI}` を SMEMBERS して読み、索引が空なら全セッションから絞り込む。存在しないセッションの UUID は結果から除くだけで、`idx:user:` からは消さない。
+4. **連動しない操作:** 加入者を削除しても `policy:{IMSI}`・`sess:`・`idx:user:` は削除しない（D-13 §3.1）。セッションを変更・削除する操作はない。
 
 ------
 
@@ -485,7 +512,7 @@ Acct Serverが重複パケットおよび順序異常を検出するためのキ
 
 ### 5.1 共通モデル（`pkg/model`）
 
-`pkg/model` パッケージで定義される構造体。jsonタグのみを使用し、redisタグは付与しない。現行実装で利用しているのは Admin TUI（`Subscriber` / `RadiusClient` / `Session`）であり、`Policy` / `PolicyRule` / `Stage` / `EAPContext` は定義のみで、アプリケーションからは参照されていない。
+`pkg/model` パッケージで定義される構造体。jsonタグのみを使用し、redisタグは付与しない。現行実装で利用しているのは Admin TUI と Provisioning API（`pkg/masterdata` 経由。`Subscriber` / `RadiusClient` / `Policy` / `PolicyRule` / `Session`）であり、`Stage` / `EAPContext` は定義のみで、アプリケーションからは参照されていない。
 
 ```go
 // --- Master Data ---
@@ -675,3 +702,4 @@ type Subscriber struct {
 | r21 | 2026-10-07 | Admin TUI の加入者・RADIUSクライアント・認可ポリシーの store と validation を pkg に移した実装修正（Provisioning API（D-13）と共通で使うため。E-03 r11）の反映: §2.A の Admin TUI の加入者編集の実装箇所を `pkg/masterdata/subscriber.go` に、§5.2 のストア層変換方式の補足を `pkg/masterdata` に修正し、作成・変更を Lua スクリプトで原子的に行う旨を追記。Admin TUI の `internal/model` は廃止して `pkg/model` に統合 |
 | r22 | 2026-10-08 | Provisioning API（D-13）の実装の反映: §2 の冒頭に Provisioning API も同じキー・形式で読み書きすること、§2.A に Provisioning API からの加入者の変更（`SubscriberStore.Patch`。`sqn` を指定しなければ触れない、指定した場合は比較せずに書き換える）、§4 に「Provisioning API」のアクセスパターン（CRUD、PATCH・PUT、`ListPage` による一覧、`/status` の件数、連動しない操作）を追加 |
 | r23 | 2026-10-08 | RADIUSクライアントにサーバー採番の ID を導入（D-13 r5）: §1 のキー一覧に `idx:client:`（ID → IP の索引、String）と `seq:client`（採番のカウンター）を追加。§2.B に `id` フィールドと「IDと索引」（作成・上書き・IP の変更・削除の Lua、ID からの取得、起動時の採番 `EnsureIDs`、simwifi での確認）を追加。§4 の Admin TUI / Provisioning API のアクセスパターン、§5.1 の `RadiusClient` に `ID` を追加。Auth / Acct Server の `client:{IP}` の参照は変更なし |
+| r24 | 2026-10-09 | Provisioning API の監査ログとセッションの参照（D-13 r6、API 0.3.0）: §1 のキー一覧に `audit:prov`（Stream）を追加し、§2.H（監査ログの写し。フィールド、XADD の MAXLEN、読み出し、メモリの目安）を新設。§3.F の注記に Provisioning API は索引を掃除しないことを、§5.1 の `pkg/model` の利用元に Provisioning API と `Policy` / `PolicyRule`（`pkg/masterdata` で使用。r21 以降の実態に合わせる）を、§4 の Provisioning API に監査ログの読み書きと `GET /sessions` の読み出し（`pkg/masterdata.SessionStore`）、`/status` の `sess:*` の件数を追記 |
