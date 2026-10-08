@@ -1,4 +1,4 @@
-# E-03 共通ライブラリ(pkg)設計書 (r13)
+# E-03 共通ライブラリ(pkg)設計書 (r14)
 
 ## 1. 概要
 
@@ -1244,7 +1244,8 @@ if errs := validation.ValidateSubscriber(input); len(errs) > 0 {
 
 - 加入者（`sub:{IMSI}`）・RADIUSクライアント（`client:{IP}`）・認可ポリシー（`policy:{IMSI}`）の Valkey の読み書きを提供する（キーとフィールドの形式は D-02）
 - Admin TUI と Provisioning API（D-13）が同じ処理（Lua スクリプトを含む）で書き込むようにする（2026-10-07 に Admin TUI の `internal/store` から移動）
-- セッション（`sess:`）・統計のストアは Admin TUI の `internal/store` に残す（Admin TUI だけが使うため）
+- セッション（`sess:{UUID}`）と、IMSI からセッションを引く索引（`idx:user:{IMSI}`）の読み出しを提供する（r14。Admin TUI と Provisioning API の `GET /sessions` で共通。D-13 §3.7）。マスタデータではないが、両方が同じ読み方をするためここに置く。書き込み（索引の掃除を含む）はしない（セッションは Auth / Acct Server が書き、索引の掃除は Admin TUI が行う。D-02 §3.F）
+- 統計のストアは Admin TUI の `internal/store` に残す（Admin TUI だけが使うため）
 
 ### 9.2 主要な型・関数
 
@@ -1254,7 +1255,8 @@ if errs := validation.ValidateSubscriber(input); len(errs) > 0 {
 | `ClientStore` | `Get`, `GetByID`, `Create`, `Update`, `Patch`, `Delete`, `EnsureIDs`, `List`, `Count`, `Exists`, `BulkCreate` | サーバー採番の ID を扱う（D-02 §2.B、D-13 §3.2）。`Create` は ID を採番して `RadiusClient.ID` に設定、`GetByID` は索引 `idx:client:{ID}` から引く、`Patch` は `ClientPatch` の nil でない項目だけを書き換え、`IP` を指定するとキーを付け替える（変更後の IP があれば `ErrClientExists`）、`Delete` は索引も消す、`EnsureIDs` は ID の導入前のデータに採番する（起動時に呼ぶ）、`BulkCreate`（CSV）は既存の ID を引き継ぐ |
 | `PolicyStore` | `Get`, `Create`, `Update`, `Upsert`, `Put`, `Delete`, `List`, `ListPage`, `Count`, `Exists`, `BulkCreate`, `GetIMSIsWithPolicy` | `Put` は作成したか（存在しなかったか）を返す（D-13 §3.3 の PUT の 201 / 200 用） |
 | `SubscriberPage` / `PolicyPage` | `ListPage` の戻り値（`Items`、`Total`、`NextCursor`） | `ListPage(ctx, imsiPrefix, cursor, limit)` は IMSI の前方一致のキーを `SCAN` で集めて昇順に並べ、`cursor` より後の `limit` 件だけを読む（`page.go`。D-13 §4.1 のページング用）。`Total` は前方一致に一致する件数、`NextCursor` は次のページがあるときだけそのページの最後の IMSI。Valkey に一覧用のインデックスはないため、件数に比例して `SCAN` する（PoC の件数を前提とする）。`PolicyStore.ListPage` は `rules` を解釈できないポリシーを `List` と同じく結果に含めない（`Total` には数える） |
-| キー | `SubscriberKey`, `ClientKey`, `PolicyKey`、`PrefixSubscriber` 等 | |
+| `SessionStore`（r14） | `Get`, `List`, `Count`, `ListByIMSI`, `IndexCount` | 読み出しだけ（`session.go`）。`List` / `Count` は `sess:*` の SCAN（値を解釈できないセッションは `List` から除く）。`ListByIMSI` は `idx:user:{IMSI}` から引き、索引にあるが存在しない UUID を `stale` として返す（索引からは消さない。Admin TUI はそれを SREM する）。索引が空なら全セッションから IMSI で絞り込む。`IndexCount` は索引の SCARD（掃除前の UUID を含みうる） |
+| キー | `SubscriberKey`, `ClientKey`, `PolicyKey`, `SessionKey`, `UserIndexKey`、`PrefixSubscriber` / `PrefixSession` / `PrefixUserIndex` 等 | `SessionKey` / `UserIndexKey` は r14 で Admin TUI から移した（Admin TUI の `internal/store` の同名の定数・関数はこれを参照する） |
 
 **センチネルエラー:**
 
@@ -1263,6 +1265,7 @@ if errs := validation.ValidateSubscriber(input); len(errs) > 0 {
 | `ErrSubscriberNotFound` / `ErrClientNotFound` / `ErrPolicyNotFound` | 取得・変更・削除の対象が存在しない |
 | `ErrSubscriberExists` / `ErrClientExists` / `ErrPolicyExists` | 作成の対象が既に存在する（メッセージは `subscriber already exists` 等。Admin TUI の表示は従来と同じ） |
 | `ErrSQNChanged` | `UpdateWithSQN` で、SQN が編集開始時の値から変わっていた |
+| `ErrSessionNotFound` | `SessionStore.Get` の対象のセッションが存在しない（r14） |
 
 ### 9.3 原子的な書き込み
 
@@ -1433,3 +1436,4 @@ next, err := subs.ListPage(ctx, "00101", page.NextCursor, 50) // 次のページ
 | r11 | 2026-10-07 | Admin TUI の加入者・RADIUSクライアント・認可ポリシーの store と validation を pkg に移した実装修正（Provisioning API（D-13）と共通で使うため）の反映: §8 `pkg/validation`、§9 `pkg/masterdata`（センチネルエラー `Err*Exists` の追加、作成・変更を Lua スクリプトで原子的に、`SubscriberStore.Patch`、`PolicyStore.Put` / `Count`）を新設し、旧 §8 / §9 を §10 / §11 に繰り下げ。§2.1 / §2.2 / §2.3、§6.4（`Policy.Clone`。Admin TUI の `internal/model` を廃止して `pkg/model` に統合）、§10.1〜§10.3 を更新し、§10.2 の依存ルールに `pkg/model` への依存だけを許可する例外を追加。§11.2 から実施済みの「バリデーションの共通化」を削除 |
 | r12 | 2026-10-08 | Provisioning API（D-13）の実装の反映: §2.3 の利用コンポーネント対応表に Provisioning API の列（`valkey`・`logging`・`model`・`validation`・`masterdata`）を追加し、注記を実装済みに（`httputil` は使わない旨）。§9.2 に `SubscriberStore.ListPage` / `PolicyStore.ListPage`（`SubscriberPage` / `PolicyPage`。SCAN による IMSI の前方一致・cursor のページング）と `ClientStore.Patch`（`ClientPatch`）を追加、§9.3 の原子的な変更に `ClientStore.Patch`、§9.4 に `ListPage` の使用例を追加 |
 | r13 | 2026-10-08 | RADIUSクライアントにサーバー採番の ID を導入（D-13 r5、D-02 r23）: §9.2 の `ClientStore` に `GetByID`・`EnsureIDs` を追加し、`Create`（採番）・`Patch`（IP の変更）・`Delete`（索引の削除）・`BulkCreate`（ID の引き継ぎ）の動作を追記。§9.3 に RADIUSクライアントの Lua を追記。`pkg/model.RadiusClient` に `ID` |
+| r14 | 2026-10-09 | セッションの読み出しを Admin TUI から `pkg/masterdata` に移した（Provisioning API の `GET /sessions` と共通で使うため。D-13 r6）: §9.1 の責務にセッション・索引の読み出しを加え、§9.2 に `SessionStore`（`Get` / `List` / `Count` / `ListByIMSI` / `IndexCount`）、`SessionKey` / `UserIndexKey`、`ErrSessionNotFound` を追加。索引の掃除は Admin TUI に残した |

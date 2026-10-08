@@ -123,7 +123,7 @@ func (s *Service) CreateClient(ctx context.Context, actor audit.Actor, req dto.C
 
 	e := clientEntry(audit.OpCreate, c)
 	e.Details = clientState(c)
-	s.audit.Record(actor, e)
+	s.audit.Record(ctx, actor, e)
 	return c, nil
 }
 
@@ -144,7 +144,7 @@ func (s *Service) GetClientSecret(ctx context.Context, actor audit.Actor, id str
 	}
 	e := clientEntry(audit.OpRead, c)
 	e.Details = "secret"
-	s.audit.Record(actor, e)
+	s.audit.Record(ctx, actor, e)
 	return c, nil
 }
 
@@ -195,7 +195,7 @@ func (s *Service) UpdateClient(ctx context.Context, actor audit.Actor, id string
 	c.value("vendor", fmt.Sprintf("%q", before.Vendor), quote(patch.Vendor))
 	e := clientEntry(audit.OpUpdate, after)
 	e.Details = c.String()
-	s.audit.Record(actor, e)
+	s.audit.Record(ctx, actor, e)
 	return after, nil
 }
 
@@ -216,7 +216,7 @@ func (s *Service) DeleteClient(ctx context.Context, actor audit.Actor, id string
 
 	e := clientEntry(audit.OpDelete, before)
 	e.Details = clientState(before)
-	s.audit.Record(actor, e)
+	s.audit.Record(ctx, actor, e)
 	return nil
 }
 

@@ -107,7 +107,7 @@ func TestServe(t *testing.T) {
 	clientCert := newKeyPair(t, "bff-01")
 	clients := auth.Clients{auth.Fingerprint(clientCert.Leaf): "bff-01"}
 
-	h := handler.New(service.New(rdb, audit.NewLogger(&auditBuf)), log, "0.1.0", "node-a", time.Now())
+	h := handler.New(service.New(rdb, audit.NewLogger(&auditBuf), audit.NewStore(rdb, 1000)), log, "0.1.0", "node-a", time.Now())
 	verifier := &auth.Verifier{Clients: clients, Log: log}
 	srv := New("127.0.0.1:0", NewEngine(h, clients, log, logging.NewMasker(true)), verifier.TLSConfig(serverCert), log)
 

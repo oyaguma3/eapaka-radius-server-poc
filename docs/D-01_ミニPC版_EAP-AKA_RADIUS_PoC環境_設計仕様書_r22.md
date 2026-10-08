@@ -1,4 +1,4 @@
-# D-01 ミニPC版 EAP-AKA RADIUS PoC環境 設計仕様書 (r21)
+# D-01 ミニPC版 EAP-AKA RADIUS PoC環境 設計仕様書 (r22)
 
 ## 1. システム概要
 
@@ -74,7 +74,7 @@
 | **3. Vector Gateway**  | `apps/vector-gateway`  | **[ルーティング]** ベクター取得先振分け | 1. **設定読込:** `envconfig` でロード。 2. **API提供:** REST API (`POST /api/v1/vector`)。Auth Serverとの互換性維持。`GET /health` エンドポイントでヘルスチェック応答を提供。 3. **ルーティング:** PLMNベースでバックエンド選択。接続方式ID `00`: 内部Vector API（PLMN未一致・passthroughモードの既定先）、`01`: 外部の aka-only-server（`VECTOR_GATEWAY_AKAONLY_URL` 設定時のみ。mTLSまたは平文HTTP、GenerateAv形式との変換を行う）、`02`〜`99`: 将来実装（501）。 4. **Trace ID:** Header `X-Trace-ID` を読み取り、内部APIへ伝搬（aka-only-serverへはベストエフォート）。 5. **ログ:** `slog` で構造化出力。 |
 | **4. Vector API**      | `apps/vector-api`      | **[暗号計算サービス]** AKAベクター生成  | 1. **設定読込:** `envconfig` でロード。`TEST_VECTOR_ENABLED` 環境変数（デフォルト: false）を有効にすると、テストベクターモードが有効化され、特定IMSIプレフィックス（`TEST_VECTOR_IMSI_PREFIX`、デフォルト: "00101"）に対しては Ki/OPc/AMF をテスト用固定値（3GPP TS 35.208 Test Set 1）に置き換えてベクターを計算する（加入者の登録・SQN管理は通常どおり必要）。 2. **API提供:** REST API (`POST /api/v1/vector`)。`GET /health` エンドポイントでヘルスチェック応答を提供。 3. **Trace ID:** Header `X-Trace-ID` を読み取りログコンテキストに設定。 4. **DB取得:** ValkeyからSIM鍵情報取得。 5. **計算:** `milenage` 実行。 6. **更新:** SQNインクリメントとValkey更新。 |
 | **5. Admin TUI**       | `apps/admin-tui`       | **[管理コンソール]** データ操作UI       | 1. **設定読込:** `os.Getenv("VALKEY_PASSWORD")` でDB PASS取得。 2. **UI表示:** `tview` + `tcell` 利用。 3. **DB操作:** 加入者CRUD、RADIUSクライアント管理、ポリシー管理、CSV I/O。 4. **監視:** Valkey接続確認およびセッション閲覧。 5. **監査ログ:** 操作履歴を標準出力にJSONで1行ずつ記録（`event_id`=`AUDIT_LOG`。Valkeyには保存しない）。 |
-| **6. Provisioning API** | `apps/provisioning-api` | **[管理API]** マスタデータの REST API（任意） | 1. **設定読込:** `envconfig` でロード。 2. **API提供:** `/admin/v1` の REST API（Gin）。加入者・RADIUSクライアント・認可ポリシーの CRUD、Ki / OPc・共有シークレットの読み出し（専用の経路だけ）、`/status`。 3. **認証:** mTLS（クライアント証明書の SHA-256 フィンガープリントを `PROVISIONING_API_ADMIN_CLIENTS` で固定）。 4. **DB操作:** Admin TUI と同じ `pkg/validation`・`pkg/masterdata` を使う。 5. **監査ログ:** 変更操作と秘密の値の読み出しを標準出力に JSON で記録（`event_id`=`AUDIT_LOG`）。 6. **ログ:** `slog` で構造化出力。 |
+| **6. Provisioning API** | `apps/provisioning-api` | **[管理API]** マスタデータの REST API（任意） | 1. **設定読込:** `envconfig` でロード。 2. **API提供:** `/admin/v1` の REST API（Gin）。加入者・RADIUSクライアント・認可ポリシーの CRUD、Ki / OPc・共有シークレットの読み出し（専用の経路だけ）、`/status`、監査ログとアクティブセッションの参照（`/audit-logs`、`/sessions`。読み取りだけ）。 3. **認証:** mTLS（クライアント証明書の SHA-256 フィンガープリントを `PROVISIONING_API_ADMIN_CLIENTS` で固定）。 4. **DB操作:** Admin TUI と同じ `pkg/validation`・`pkg/masterdata` を使う。 5. **監査ログ:** 変更操作と秘密の値の読み出しを標準出力に JSON で記録（`event_id`=`AUDIT_LOG`）し、参照用に Valkey の Stream（`audit:prov`）にも保存する。 6. **ログ:** `slog` で構造化出力。 |
 
 > **データモデル注記:**
 > - **RadiusClient** (`client:{IP}`): `id`, `ip`, `secret`, `name`, `vendor` の構成（`enabled` フィールドは廃止済み、`vendor` フィールドを追加）。`id` はサーバー採番の ID（D-02 §2.B。索引 `idx:client:{ID}`、カウンター `seq:client`）で、Admin TUI と Provisioning API が管理上の識別子として使う。Auth / Acct Server は従来どおり送信元IPで `client:{IP}` を引く。
@@ -454,6 +454,8 @@ services:
       # 管理クライアントの「識別名=フィンガープリント」。空なら起動しない
       PROVISIONING_API_ADMIN_CLIENTS: ${PROVISIONING_API_ADMIN_CLIENTS:-}
       PROVISIONING_API_NODE_NAME: ${PROVISIONING_API_NODE_NAME:-}
+      # GET /audit-logs で参照できる監査ログ（Valkey の Stream audit:prov）の件数の上限
+      PROVISIONING_API_AUDIT_MAX: ${PROVISIONING_API_AUDIT_MAX:-10000}
       LOG_MASK_IMSI: ${LOG_MASK_IMSI:-true}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
@@ -656,3 +658,4 @@ VECTOR_GATEWAY_PLMN_MAP=""
 | r19 | 2026-10-08 | Provisioning API（provisioning-api。D-13）の実装の反映: §2 の構成図に `8. provisioning-api`（任意）と注記、§3 の実装ノードを6つに（§3.1 に Provisioning API）、§3.2 のパッケージ利用マップに Prov 列（gin、go-redis、envconfig、slog）、§3.3 のキースキーマの使用コンポーネントに Provisioning API、§4 の公開ポートの注記に 9444/tcp（既定 127.0.0.1、`PROVISIONING_API_BIND`）、§5 のコンテナ一覧に provisioning-api（profile `provisioning`）、§6 のリポジトリ構成に `apps/provisioning-api`・`docs/openapi`・`certs/provisioning`、§7 の docker-compose.yml を実ファイルと一致させた（provisioning-api サービス）、ログレベルの注記の対象に provisioning-api |
 | r20 | 2026-10-08 | 同じホストの BFF から provisioning-api に接続するための共有ネットワーク（既定名 `eapaka-prov`。D-13 r4）の反映: §2 の provisioning-api の注記、§5 のコンテナ一覧に共有ネットワークへの参加を追記し、§7 の docker-compose.yml を実ファイルと一致させた |
 | r21 | 2026-10-08 | RADIUSクライアントにサーバー採番の ID を導入（D-02 r23、D-13 r5）: §3.1 のデータモデル注記の RadiusClient に `id`（索引 `idx:client:{ID}`、カウンター `seq:client`）を追加 |
+| r22 | 2026-10-09 | Provisioning API の監査ログとセッションの参照（D-13 r6、API 0.3.0）の反映: コンポーネント一覧の Provisioning API に `/audit-logs`・`/sessions` と、監査ログの Stream（`audit:prov`）への保存を追記。compose の抜粋に `PROVISIONING_API_AUDIT_MAX` を追加 |

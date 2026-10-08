@@ -20,7 +20,9 @@ type Config struct {
 	// AdminClientsRaw は管理クライアントの「識別名=フィンガープリント」のカンマ区切り
 	AdminClientsRaw string `envconfig:"PROVISIONING_API_ADMIN_CLIENTS" required:"true"`
 	NodeName        string `envconfig:"PROVISIONING_API_NODE_NAME"`
-	GinMode         string `envconfig:"GIN_MODE" default:"release"`
+	// AuditMax は Valkey の Stream（audit:prov）に保存する監査ログの件数の上限（D-13 §6.2）
+	AuditMax int64  `envconfig:"PROVISIONING_API_AUDIT_MAX" default:"10000"`
+	GinMode  string `envconfig:"GIN_MODE" default:"release"`
 
 	// Valkey設定
 	RedisHost string `envconfig:"REDIS_HOST" default:"valkey"`
@@ -44,6 +46,10 @@ func Load() (*Config, error) {
 	}
 	if cfg.TLSCert == "" || cfg.TLSKey == "" {
 		return nil, errors.New("PROVISIONING_API_TLS_CERT and PROVISIONING_API_TLS_KEY must not be empty")
+	}
+
+	if cfg.AuditMax < 1 {
+		return nil, errors.New("PROVISIONING_API_AUDIT_MAX must be a positive integer")
 	}
 
 	clients, err := auth.ParseClients(cfg.AdminClientsRaw)
