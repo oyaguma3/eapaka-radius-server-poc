@@ -1,4 +1,4 @@
-# EAP-AKA RADIUS PoC環境 ドキュメント一覧 (r61)
+# EAP-AKA RADIUS PoC環境 ドキュメント一覧 (r62)
 
 **作成日:** 2025-12-30
 **最終更新:** 2026-10-08
@@ -67,7 +67,7 @@
 |-----|---------------|------|---------|------|
 | T-01 | テスト戦略書 | r4 | 2026-10-04 | テストレベル定義、テスト範囲、テスト環境、モック戦略、テストデータ戦略、品質ゲート、テストベクターモード運用注記、.env例の環境変数名（RADIUS_SECRET）を実装に整合、テストベクターモードの動作を実装に整合（加入者登録必須） |
 | T-02 | 単体テスト仕様書 | r22 | 2026-10-08 | コンポーネント別テストケース（全1,474件）、モック戦略、テストデータ設計、Vector Gateway接続方式01のテストケース追加、IMSIマスク漏れ修正のテストケース追加、acct-server Interimシーケンス判定修正のテストケース反映、vector-apiテストベクターモードの加入者登録必須化のテストケース反映、auth-serverポリシーnas_idワイルドカード（`*`）のテストケース追加、auth-server trace_id引き継ぎ・LOG_LEVEL対応のテストケース反映（ParseLevel・TraceIDFromState等を追加、EngineErrorを欠番）、vector-apiログ整理のテストケース反映（LogAttributes・LogsTraceIDAndMaskedIMSI等を追加、ErrInvalidIMSIの検証を欠番）、acct-server の重複Interim分離・SYS_ERR削除・LOG_LEVEL対応のテストケース反映（TestLoadLogLevel を追加、ProcessorError を欠番）、admin-tui 監査ログの件数・検索IMSI記録修正のテストケース反映（LogExport_ZeroRecords・LogCreate_NoCounts を追加、LogSearch を4件のテーブル駆動に）、vector-gateway のタイムアウト既定値変更・起動時 WARN のテストケース反映（TestWarnBackendConfig_Timeouts を追加）、admin-tui のキー配線漏れ修正のテストケース追加（`internal/ui` 配下に初のテスト。一覧の Enter / F6、IsTextInput、入力ダイアログの Esc、Session List のソート、Session Search の検索結果の並べ替え。新カテゴリ UT-TUI-UI）、SQN競合制御のテストケース追加（store の CompareAndSetSQN、競合時のやり直し・409・再同期、同一IMSIへの並行リクエスト）、Admin TUI の加入者編集（Update / UpdateWithSQN、編集・新規作成画面）のテストケース追加、auth-server / acct-server の起動時 WARN のテストケース追加、PacketServer の UDP テストと RADIUS ライブラリのログのテストケース追加、Status-Server の正常時ログを DEBUG にしたテストケース追加、NAS-Identifier をセッションとログに加えたテストケース追加、store / validation の pkg への移動に伴うテストの移動（ID を UT-PKG-VALID / UT-PKG-MASTER に）と追加、provisioning-api の単体テスト（UT-PROV、84件）と masterdata の ListPage・ClientStore.Patch のテスト（16件）を追加、Admin TUI のフォームの高さのテスト（UT-TUI-UI-029〜031）を追加、RADIUSクライアントの ID のテスト |
-| T-03 | 結合テスト仕様書 | r17 | 2026-10-08 | コンポーネント間連携テスト、シナリオテスト、テストベクターモード検証、Valkeyデータ整合性検証、Secret体系明確化、SQN再同期手順改訂、IMSI 003専用config追加、障害系PASS条件修正、identityオーバーライドIMSIのSQNリセット運用補足、Dockerイメージ再ビルド注意事項追加、eapaka_testパス参照をsupplement配下に一般化、INT-ACCT-ON-017/INT-ACCT-OFF-018追加、aka-only-server結合シナリオ追加、INT-GW-PLMN-010の未実装IDを02に変更、テストベクターモードでも加入者登録必須（テストIMSI帯でも未登録は404）・事前準備での登録を明記、INT-006 の期待結果に Auth Server の全パケットの PKT_RECV も同一 trace_id であることを追記、INT-006-03 に Vector API の SQN_RESYNC も同一 trace_id であることを追記、G6 と INT-005 の ACCT_DUPLICATE_INTERIM、INT-FAULT の Acct Server ベストエフォート動作を現行ハンドラー（SYS_ERR なし）に整合、INT-FAULT-001（Vector API停止）の PASS 条件を VECTOR_API_ERR（502）のみに（vector-gateway のタイムアウト 3s）、G3（SQN再同期）の手順を訂正（サーバー側 SQN を IND=7 の `FF9BB4D0B587` にして確実に再同期を起こす、PASS 条件に再同期ログ）、G11 Provisioning API 結合（INT-PROV-001〜023。simwifi で全件 PASS）を追加、G11 に共有ネットワークのケース（INT-PROV-024〜029）を追加、G11 に RADIUSクライアントの ID のケース（INT-PROV-030〜036） |
+| T-03 | 結合テスト仕様書 | r18 | 2026-10-08 | コンポーネント間連携テスト、シナリオテスト、テストベクターモード検証、Valkeyデータ整合性検証、Secret体系明確化、SQN再同期手順改訂、IMSI 003専用config追加、障害系PASS条件修正、identityオーバーライドIMSIのSQNリセット運用補足、Dockerイメージ再ビルド注意事項追加、eapaka_testパス参照をsupplement配下に一般化、INT-ACCT-ON-017/INT-ACCT-OFF-018追加、aka-only-server結合シナリオ追加、INT-GW-PLMN-010の未実装IDを02に変更、テストベクターモードでも加入者登録必須（テストIMSI帯でも未登録は404）・事前準備での登録を明記、INT-006 の期待結果に Auth Server の全パケットの PKT_RECV も同一 trace_id であることを追記、INT-006-03 に Vector API の SQN_RESYNC も同一 trace_id であることを追記、G6 と INT-005 の ACCT_DUPLICATE_INTERIM、INT-FAULT の Acct Server ベストエフォート動作を現行ハンドラー（SYS_ERR なし）に整合、INT-FAULT-001（Vector API停止）の PASS 条件を VECTOR_API_ERR（502）のみに（vector-gateway のタイムアウト 3s）、G3（SQN再同期）の手順を訂正（サーバー側 SQN を IND=7 の `FF9BB4D0B587` にして確実に再同期を起こす、PASS 条件に再同期ログ）、G11 Provisioning API 結合（INT-PROV-001〜023。simwifi で全件 PASS）を追加、G11 に共有ネットワークのケース（INT-PROV-024〜029）を追加、G11 に RADIUSクライアントの ID のケース（INT-PROV-030〜036）、付録Aの件数の不一致（G9 の INT-VALKEY-005 の行の欠落）を修正し全98件 |
 | T-04 | E2Eテスト仕様書 | r8 | 2026-10-04 | 実機テスト（SIM/AP）3件、擬似E2E（eapaka_test）5件、実機異常系3件の計11シナリオ、SQN管理注意事項追加、Valkey再起動後データ残存確認追加、eapaka_testパス参照をsupplement配下に一般化、aka-only-server接続E2Eシナリオと実施結果（2026-10-04）追加、テストベクターモードのT-03との差分（加入者登録必須）を実装に整合、認可ポリシーのnas_id `*`（任意のNASに一致）を反映、E2E-002 のログ確認に ACCT_DUPLICATE_INTERIM を追加 |
 
 ### 3.2 未作成
@@ -156,7 +156,7 @@
     │                                                                   │
     ├─ T-01: テスト戦略書 (r4) ✓                                        │
     ├─ T-02: 単体テスト仕様書 (r22) ✓                                    │
-    ├─ T-03: 結合テスト仕様書 (r17) ✓                                   │
+    ├─ T-03: 結合テスト仕様書 (r18) ✓                                   │
     └─ T-04: E2Eテスト仕様書 (r8) ✓                                    │
                     │                                                   │
                     ▼                                                   │
@@ -205,7 +205,7 @@
 | 順序 | ドキュメントID | ドキュメント名 | ステータス |
 |-----|---------------|---------------|-----------|
 | 11 | T-02 | 単体テスト仕様書 | **完了 (r22)** |
-| 12 | T-03 | 結合テスト仕様書 | **完了 (r17)** |
+| 12 | T-03 | 結合テスト仕様書 | **完了 (r18)** |
 | 13 | T-04 | E2Eテスト仕様書 | **完了 (r8)** |
 
 ### フェーズ4: 構築・デプロイ
@@ -309,3 +309,4 @@
 | r59 | 2026-10-08 | Admin TUI の RADIUS クライアントの登録・編集画面で Save / Cancel ボタンが枠外に出て表示されなかった不具合の修正（フォームの高さを入力欄の数から `ui.FormHeight` で計算）に伴う版数更新: D-05(r13→r14)、T-02(r20→r21。テストケース 1,461→1,464件) |
 | r60 | 2026-10-08 | 同じホストの BFF（別の compose。web-gui-for-eapaka-radius）から provisioning-api に接続するための共有ネットワーク（docker-compose.yml の `provisioning-shared`、既定名 `eapaka-prov`。provisioning-api だけが参加）の追加に伴う版数更新: D-01(r19→r20)、D-08(r23→r24)、D-13(r3→r4)、T-03(r15→r16。G11 に INT-PROV-024〜029 を追加し全90件)、B-02(r20→r21。§15.11 を新設、サーバー証明書の SAN に DNS:provisioning-api)、O-05(r21→r22)。simwifi 実機で確認 |
 | r61 | 2026-10-08 | RADIUSクライアントにサーバー採番の ID を導入した実装修正（`client:{IP}` に `id`、索引 `idx:client:{ID}`、採番の `seq:client`。Provisioning API 0.2.0 はパスを `/clients/{clientId}` に、IP は PATCH で変更可、`?ip=` で検索。Admin TUI は一覧と編集画面に ID。起動時に既存データへ採番）に伴う版数更新: D-01(r20→r21)、D-02(r22→r23)、D-04(r34→r35)、D-05(r14→r15)、D-13(r4→r5)、E-03(r12→r13)、T-02(r21→r22。テストケース 1,464→1,474件)、T-03(r16→r17。G11 に INT-PROV-030〜036 を追加し全97件)。OpenAPI 定義を 0.1.0→0.2.0 に。simwifi 実機で確認 |
+| r62 | 2026-10-08 | T-03(r17→r18): 付録Aの全シナリオ一覧に G9 の INT-VALKEY-005（インデックスクリーンアップ）の行が欠けており、4.1 グループ一覧の合計（98件）と付録A（97件）が一致していなかったのを修正（付録Aを全98件に） |
