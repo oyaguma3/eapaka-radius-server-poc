@@ -1,4 +1,4 @@
-# E-03 共通ライブラリ(pkg)設計書 (r12)
+# E-03 共通ライブラリ(pkg)設計書 (r13)
 
 ## 1. 概要
 
@@ -1251,7 +1251,7 @@ if errs := validation.ValidateSubscriber(input); len(errs) > 0 {
 | 型 | 主なメソッド | 備考 |
 |----|------------|------|
 | `SubscriberStore` | `Get`, `Create`, `Update`, `UpdateWithSQN`, `Patch`, `Delete`, `List`, `ListPage`, `Count`, `Exists`, `BulkCreate` | `Update` は SQN を書き換えない。`UpdateWithSQN` は編集開始時の SQN との比較・置き換え（D-02 §2.A）。`Patch` は `SubscriberPatch` の nil でない項目だけを書き換える（SQN を指定しなければ触れない。D-13 §3.1） |
-| `ClientStore` | `Get`, `Create`, `Update`, `Patch`, `Delete`, `List`, `Count`, `Exists`, `BulkCreate` | `Patch` は `ClientPatch` の nil でない項目だけを書き換える（D-13 §3.2 の PATCH 用） |
+| `ClientStore` | `Get`, `GetByID`, `Create`, `Update`, `Patch`, `Delete`, `EnsureIDs`, `List`, `Count`, `Exists`, `BulkCreate` | サーバー採番の ID を扱う（D-02 §2.B、D-13 §3.2）。`Create` は ID を採番して `RadiusClient.ID` に設定、`GetByID` は索引 `idx:client:{ID}` から引く、`Patch` は `ClientPatch` の nil でない項目だけを書き換え、`IP` を指定するとキーを付け替える（変更後の IP があれば `ErrClientExists`）、`Delete` は索引も消す、`EnsureIDs` は ID の導入前のデータに採番する（起動時に呼ぶ）、`BulkCreate`（CSV）は既存の ID を引き継ぐ |
 | `PolicyStore` | `Get`, `Create`, `Update`, `Upsert`, `Put`, `Delete`, `List`, `ListPage`, `Count`, `Exists`, `BulkCreate`, `GetIMSIsWithPolicy` | `Put` は作成したか（存在しなかったか）を返す（D-13 §3.3 の PUT の 201 / 200 用） |
 | `SubscriberPage` / `PolicyPage` | `ListPage` の戻り値（`Items`、`Total`、`NextCursor`） | `ListPage(ctx, imsiPrefix, cursor, limit)` は IMSI の前方一致のキーを `SCAN` で集めて昇順に並べ、`cursor` より後の `limit` 件だけを読む（`page.go`。D-13 §4.1 のページング用）。`Total` は前方一致に一致する件数、`NextCursor` は次のページがあるときだけそのページの最後の IMSI。Valkey に一覧用のインデックスはないため、件数に比例して `SCAN` する（PoC の件数を前提とする）。`PolicyStore.ListPage` は `rules` を解釈できないポリシーを `List` と同じく結果に含めない（`Total` には数える） |
 | キー | `SubscriberKey`, `ClientKey`, `PolicyKey`、`PrefixSubscriber` 等 | |
@@ -1266,7 +1266,7 @@ if errs := validation.ValidateSubscriber(input); len(errs) > 0 {
 
 ### 9.3 原子的な書き込み
 
-作成（`Create`）と変更（`Update`、`Patch`（加入者・RADIUSクライアント））は、存在確認と書き込みを1つの Lua スクリプトで行う（`hash.go`）。Admin TUI と Provisioning API を同時に使った場合（D-13 §2.3）にも、次を保証する。
+作成（`Create`）と変更（`Update`、`Patch`（加入者・RADIUSクライアント））は、存在確認と書き込みを1つの Lua スクリプトで行う（`hash.go`。RADIUSクライアントの作成・変更・削除・採番は `client.go` の Lua で、ID の採番と索引の更新も同じ操作の中で行う）。Admin TUI と Provisioning API を同時に使った場合（D-13 §2.3）にも、次を保証する。
 
 | 操作 | 保証 |
 |------|------|
@@ -1432,3 +1432,4 @@ next, err := subs.ListPage(ctx, "00101", page.NextCursor, 50) // 次のページ
 | r10 | 2026-10-06 | `model.Session` に `NasIdentifier`（`json:"nas_identifier"`。Valkey の `sess:{UUID}` の `nas_identifier`。D-02 r20）を追加。radsecproxy 等のプロキシ経由では `NasIP` がプロキシのIPになり NAS を区別できないため。`NewSession` の引数は変えない |
 | r11 | 2026-10-07 | Admin TUI の加入者・RADIUSクライアント・認可ポリシーの store と validation を pkg に移した実装修正（Provisioning API（D-13）と共通で使うため）の反映: §8 `pkg/validation`、§9 `pkg/masterdata`（センチネルエラー `Err*Exists` の追加、作成・変更を Lua スクリプトで原子的に、`SubscriberStore.Patch`、`PolicyStore.Put` / `Count`）を新設し、旧 §8 / §9 を §10 / §11 に繰り下げ。§2.1 / §2.2 / §2.3、§6.4（`Policy.Clone`。Admin TUI の `internal/model` を廃止して `pkg/model` に統合）、§10.1〜§10.3 を更新し、§10.2 の依存ルールに `pkg/model` への依存だけを許可する例外を追加。§11.2 から実施済みの「バリデーションの共通化」を削除 |
 | r12 | 2026-10-08 | Provisioning API（D-13）の実装の反映: §2.3 の利用コンポーネント対応表に Provisioning API の列（`valkey`・`logging`・`model`・`validation`・`masterdata`）を追加し、注記を実装済みに（`httputil` は使わない旨）。§9.2 に `SubscriberStore.ListPage` / `PolicyStore.ListPage`（`SubscriberPage` / `PolicyPage`。SCAN による IMSI の前方一致・cursor のページング）と `ClientStore.Patch`（`ClientPatch`）を追加、§9.3 の原子的な変更に `ClientStore.Patch`、§9.4 に `ListPage` の使用例を追加 |
+| r13 | 2026-10-08 | RADIUSクライアントにサーバー採番の ID を導入（D-13 r5、D-02 r23）: §9.2 の `ClientStore` に `GetByID`・`EnsureIDs` を追加し、`Create`（採番）・`Patch`（IP の変更）・`Delete`（索引の削除）・`BulkCreate`（ID の引き継ぎ）の動作を追記。§9.3 に RADIUSクライアントの Lua を追記。`pkg/model.RadiusClient` に `ID` |
