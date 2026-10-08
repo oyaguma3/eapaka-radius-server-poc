@@ -18,7 +18,7 @@ func setRequired(t *testing.T) {
 
 func TestLoad_Defaults(t *testing.T) {
 	setRequired(t)
-	for _, k := range []string{"PROVISIONING_API_LISTEN_ADDR", "PROVISIONING_API_NODE_NAME", "REDIS_HOST", "REDIS_PORT", "REDIS_PASS", "LOG_LEVEL", "LOG_MASK_IMSI", "GIN_MODE"} {
+	for _, k := range []string{"PROVISIONING_API_LISTEN_ADDR", "PROVISIONING_API_NODE_NAME", "REDIS_HOST", "REDIS_PORT", "REDIS_PASS", "LOG_LEVEL", "LOG_MASK_IMSI", "GIN_MODE", "PROVISIONING_API_AUDIT_MAX"} {
 		t.Setenv(k, "")
 		_ = os.Unsetenv(k)
 	}
@@ -33,6 +33,9 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.AdminClients[testFingerprint] != "bff-01" {
 		t.Errorf("AdminClients = %v", cfg.AdminClients)
 	}
+	if cfg.AuditMax != 10000 {
+		t.Errorf("AuditMax = %d", cfg.AuditMax)
+	}
 	if host, _ := os.Hostname(); cfg.NodeName != host {
 		t.Errorf("NodeName = %q, want hostname %q", cfg.NodeName, host)
 	}
@@ -45,12 +48,14 @@ func TestLoad_Values(t *testing.T) {
 	t.Setenv("REDIS_HOST", "localhost")
 	t.Setenv("REDIS_PORT", "16379")
 	t.Setenv("LOG_MASK_IMSI", "false")
+	t.Setenv("PROVISIONING_API_AUDIT_MAX", "500")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if cfg.ListenAddr != "127.0.0.1:19444" || cfg.NodeName != "minipc-01" || cfg.RedisAddr() != "localhost:16379" || cfg.LogMaskIMSI {
+	if cfg.ListenAddr != "127.0.0.1:19444" || cfg.NodeName != "minipc-01" || cfg.RedisAddr() != "localhost:16379" || cfg.LogMaskIMSI ||
+		cfg.AuditMax != 500 {
 		t.Errorf("cfg = %+v", cfg)
 	}
 }
@@ -64,6 +69,8 @@ func TestLoad_Errors(t *testing.T) {
 		{"bad admin clients", map[string]string{"PROVISIONING_API_ADMIN_CLIENTS": "bff-01=xyz"}},
 		{"empty cert", map[string]string{"PROVISIONING_API_TLS_CERT": ""}},
 		{"bad bool", map[string]string{"LOG_MASK_IMSI": "maybe"}},
+		{"zero audit max", map[string]string{"PROVISIONING_API_AUDIT_MAX": "0"}},
+		{"bad audit max", map[string]string{"PROVISIONING_API_AUDIT_MAX": "many"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

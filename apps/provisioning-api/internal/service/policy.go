@@ -109,7 +109,7 @@ func (s *Service) PutPolicy(ctx context.Context, actor audit.Actor, imsi string,
 	} else {
 		e.Details = policyChanges(before, policy)
 	}
-	s.audit.Record(actor, e)
+	s.audit.Record(ctx, actor, e)
 	return policy, created, nil
 }
 
@@ -133,7 +133,7 @@ func (s *Service) DeletePolicy(ctx context.Context, actor audit.Actor, imsi stri
 	if before != nil {
 		e.Details = policyState(before)
 	}
-	s.audit.Record(actor, e)
+	s.audit.Record(ctx, actor, e)
 	return nil
 }
 

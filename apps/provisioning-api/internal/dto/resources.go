@@ -183,6 +183,8 @@ type Status struct {
 	SubscriberCount int64     `json:"subscriberCount"`
 	ClientCount     int64     `json:"clientCount"`
 	PolicyCount     int64     `json:"policyCount"`
+	// SessionCount はアクティブセッション（sess:*）の件数（0.3.0 で追加）
+	SessionCount int64 `json:"sessionCount"`
 }
 
 // formatTime は Valkey の日時（RFC 3339）を UTC の RFC 3339 にする。解釈できなければ空文字（応答では省略）を返す。

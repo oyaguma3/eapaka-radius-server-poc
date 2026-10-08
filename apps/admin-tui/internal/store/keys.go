@@ -1,24 +1,26 @@
 // Package store はValkeyアクセス層を提供する。
 package store
 
-// キープレフィックス定義（加入者・RADIUSクライアント・認可ポリシーのキーは pkg/masterdata）
+import "github.com/oyaguma3/eapaka-radius-server-poc/pkg/masterdata"
+
+// キープレフィックス定義（加入者・RADIUSクライアント・認可ポリシー・セッションのキーは pkg/masterdata）
 const (
 	// PrefixSession はセッションキーのプレフィックス
-	PrefixSession = "sess:"
+	PrefixSession = masterdata.PrefixSession
 	// PrefixEAPContext はEAPコンテキストキーのプレフィックス
 	PrefixEAPContext = "eap:"
 	// PrefixUserIndex はユーザーインデックスキーのプレフィックス
-	PrefixUserIndex = "idx:user:"
+	PrefixUserIndex = masterdata.PrefixUserIndex
 	// KeyStatistics は統計情報キー
 	KeyStatistics = "stats:global"
 )
 
 // SessionKey はセッションのValkeyキーを生成する。
 func SessionKey(uuid string) string {
-	return PrefixSession + uuid
+	return masterdata.SessionKey(uuid)
 }
 
 // UserIndexKey はユーザーインデックスのValkeyキーを生成する。
 func UserIndexKey(imsi string) string {
-	return PrefixUserIndex + imsi
+	return masterdata.UserIndexKey(imsi)
 }

@@ -1,4 +1,4 @@
-# D-07 Admin TUI 詳細設計書【後半】(r12)
+# D-07 Admin TUI 詳細設計書【後半】(r13)
 
 ## 1. 概要
 
@@ -27,7 +27,7 @@
 | ドキュメント | 参照内容 |
 |-------------|---------|
 | D-05_Admin_TUI詳細設計書_前半_r11 | 共通仕様、キーバインド規約、ページネーション仕様、ページライフサイクル管理、tview Table Selectable状態管理、非同期データ取得パターン |
-| D-02_Valkeyデータ設計仕様書 (r20) | `sess:{UUID}`, `idx:user:{IMSI}` のデータ構造 |
+| D-02_Valkeyデータ設計仕様書 (r24) | `sess:{UUID}`, `idx:user:{IMSI}` のデータ構造 |
 | D-06_エラーハンドリング詳細設計書 (r13) | TUIエラー表示仕様 |
 
 ### 1.4 PoC対象外機能
@@ -351,7 +351,7 @@ if len(uuidDisplay) > 8 {
 ```
 1. SCAN コマンドで sess:* パターンのキーを取得（COUNT 100 で分割取得）
 2. 各キーに対して Pipeline で HGETALL を実行（N+1問題回避）
-3. 取得した map[string]string を mapToSession で `model.Session` に変換（Hash が空、または数値フィールドが不正なセッションはスキップ）
+3. 取得した map[string]string を `sessionFromHash`（§5.8.3）で `model.Session` に変換（Hash が空、または数値フィールドが不正なセッションはスキップ）
 4. メモリ上で現在のソート項目・向きに従いソート（§5.2）
 5. ページ分割して該当ページを表示
 ```
@@ -373,13 +373,13 @@ Auth Server / Acct Server はセッションを **Redis Hash型** で保存す�
 
 **注記：** `UUID` はHashフィールドには含まれない。Redis キー `sess:{UUID}` から `sess:` プレフィックスを除去して取得する。
 
-#### 5.8.3 mapToSession ヘルパー関数
+#### 5.8.3 セッションの Hash の変換
 
-`HGETALL` で取得した `map[string]string` から `model.Session`（`pkg/model`）構造体へ変換するヘルパー関数を使用する（実装: `apps/admin-tui/internal/store/session.go`）。
+`HGETALL` で取得した `map[string]string` から `model.Session`（`pkg/model`）構造体へ変換する（実装: `pkg/masterdata/session.go` の `sessionFromHash`。r13 で Admin TUI の `mapToSession` を Provisioning API と共通の `pkg/masterdata` に移した。D-13 §7.2）。数値のフィールドが空なら 0 とし、数値として解釈できない場合はエラーにする（一覧ではそのセッションを除く）。
 
 ```go
-func mapToSession(uuid string, m map[string]string) (*model.Session, error) {
-    session := &model.Session{
+func sessionFromHash(uuid string, m map[string]string) (*model.Session, error) {
+    sess := &model.Session{
         UUID:          uuid,
         IMSI:          m["imsi"],
         NasIP:         m["nas_ip"],
@@ -387,80 +387,51 @@ func mapToSession(uuid string, m map[string]string) (*model.Session, error) {
         ClientIP:      m["client_ip"],
         AcctSessionID: m["acct_id"],
     }
-
-    if v, ok := m["start_time"]; ok && v != "" {
+    for _, f := range []struct {
+        name string
+        dst  *int64
+    }{
+        {"start_time", &sess.StartTime},
+        {"input_octets", &sess.InputOctets},
+        {"output_octets", &sess.OutputOctets},
+    } {
+        v := m[f.name]
+        if v == "" {
+            continue
+        }
         n, err := strconv.ParseInt(v, 10, 64)
         if err != nil {
-            return nil, fmt.Errorf("invalid start_time: %w", err)
+            return nil, fmt.Errorf("invalid %s: %w", f.name, err)
         }
-        session.StartTime = n
+        *f.dst = n
     }
-
-    if v, ok := m["input_octets"]; ok && v != "" {
-        n, err := strconv.ParseInt(v, 10, 64)
-        if err != nil {
-            return nil, fmt.Errorf("invalid input_octets: %w", err)
-        }
-        session.InputOctets = n
-    }
-
-    if v, ok := m["output_octets"]; ok && v != "" {
-        n, err := strconv.ParseInt(v, 10, 64)
-        if err != nil {
-            return nil, fmt.Errorf("invalid output_octets: %w", err)
-        }
-        session.OutputOctets = n
-    }
-
-    return session, nil
+    return sess, nil
 }
 ```
 
 #### 5.8.4 セッション一覧取得
 
-実装: `apps/admin-tui/internal/store/session.go` の `SessionStore.List`（抜粋）。取得結果は `SessionListScreen.Load` で `s.sessions` に保持し、`sortSessions`（§5.8.5）で並べ替えてから描画する。
+実装: `apps/admin-tui/internal/store/session.go` の `SessionStore.List`。読み出しは `pkg/masterdata.SessionStore.List`（Provisioning API の `GET /sessions` と共通。r13）に任せる。取得結果は `SessionListScreen.Load` で `s.sessions` に保持し、`sortSessions`（§5.8.5）で並べ替えてから描画する。
 
 ```go
-// List は全セッションのリストを取得する（SCAN使用）。
+// apps/admin-tui/internal/store/session.go
 func (s *SessionStore) List(ctx context.Context) ([]*model.Session, error) {
-    var sessions []*model.Session
-    var keys []string
+    return s.read.List(ctx) // s.read は *masterdata.SessionStore
+}
 
-    // SCANで全キーを取得
+// pkg/masterdata/session.go（抜粋）
+// List は全セッションを取得する（SCAN）。値を解釈できないセッションは除く。
+func (s *SessionStore) List(ctx context.Context) ([]*model.Session, error) {
+    var uuids []string
     iter := s.client.Scan(ctx, 0, PrefixSession+"*", 100).Iterator()
     for iter.Next(ctx) {
-        keys = append(keys, iter.Val())
+        uuids = append(uuids, strings.TrimPrefix(iter.Val(), PrefixSession))
     }
     if err := iter.Err(); err != nil {
         return nil, err
     }
-    if len(keys) == 0 {
-        return sessions, nil
-    }
-
-    // Pipelineで一括取得
-    pipe := s.client.Pipeline()
-    cmds := make([]*redis.MapStringStringCmd, len(keys))
-    for i, key := range keys {
-        cmds[i] = pipe.HGetAll(ctx, key)
-    }
-    if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-        return nil, err
-    }
-
-    for i, cmd := range cmds {
-        m, err := cmd.Result()
-        if err != nil || len(m) == 0 {
-            continue
-        }
-        uuid := strings.TrimPrefix(keys[i], PrefixSession)
-        session, err := mapToSession(uuid, m)
-        if err != nil {
-            continue // 不正なデータはスキップ
-        }
-        sessions = append(sessions, session)
-    }
-    return sessions, nil
+    sessions, _, err := s.getMany(ctx, uuids) // Pipeline で一括 HGETALL
+    return sessions, err
 }
 ```
 
@@ -709,31 +680,28 @@ go func() {
 - auth-server が認証フローを完了していない場合
 - テスト環境でセッションを手動作成した場合
 
-このため、`GetByIMSI()` は `idx:user` インデックスが空の場合に全セッション SCAN によるフォールバック検索を行う。
+このため、IMSI での読み出し（`pkg/masterdata.SessionStore.ListByIMSI`。r13）は `idx:user` インデックスが空の場合に全セッション SCAN によるフォールバック検索を行う。
 
 ```go
-func (s *SessionStore) GetByIMSI(ctx context.Context, imsi string) ([]*model.Session, error) {
-    // idx:user:{IMSI} からUUID取得を試行
-    uuids, err := s.client.SMembers(ctx, indexKey).Result()
-    // ...
-
-    // インデックスが空の場合は SCAN フォールバック
+// pkg/masterdata/session.go（抜粋）
+func (s *SessionStore) ListByIMSI(ctx context.Context, imsi string) (sessions []*model.Session, stale []string, err error) {
+    uuids, err := s.client.SMembers(ctx, UserIndexKey(imsi)).Result()
+    if err != nil {
+        return nil, nil, err
+    }
+    // インデックスが空の場合は SCAN フォールバック（全セッションを走査して IMSI で絞り込む）
     if len(uuids) == 0 {
-        return s.getByIMSIScan(ctx, imsi)
-    }
-
-    // インデックス経由の通常取得...
-}
-
-func (s *SessionStore) getByIMSIScan(ctx context.Context, imsi string) ([]*model.Session, error) {
-    allSessions, err := s.List(ctx)  // SCAN + Pipeline で全セッション取得
-    // IMSI フィールドで完全一致フィルタリング
-    for _, sess := range allSessions {
-        if sess.IMSI == imsi {
-            sessions = append(sessions, sess)
+        all, err := s.List(ctx)
+        // ...
+        for _, sess := range all {
+            if sess.IMSI == imsi {
+                sessions = append(sessions, sess)
+            }
         }
+        return sessions, nil, nil
     }
-    return sessions, nil
+    // インデックス経由の通常取得。存在しない UUID は stale として返す（消さない）
+    return s.getMany(ctx, uuids)
 }
 ```
 
@@ -768,60 +736,25 @@ func sortByStartTimeDesc(sessions []*model.Session) []*model.Session {
 
 #### 6.10.1 処理フロー
 
-実装: `apps/admin-tui/internal/store/session.go` の `SessionStore.GetByIMSI`（抜粋）
+実装: `apps/admin-tui/internal/store/session.go` の `SessionStore.GetByIMSI`。読み出しは `pkg/masterdata.SessionStore.ListByIMSI`（§6.9.3）で行い、存在しないセッションの UUID（stale）だけを受け取って、Admin TUI がインデックスから消す（r13。Provisioning API の `GET /sessions` は同じ読み出しを使うが、消さない）。
 
 ```go
 // GetByIMSI は指定されたIMSIのセッションリストを取得する（idx:user経由）。
 // 存在しないセッションはインデックスからクリーンアップする。
 func (s *SessionStore) GetByIMSI(ctx context.Context, imsi string) ([]*model.Session, error) {
-    indexKey := UserIndexKey(imsi)
-
-    // 1. idx:user:{IMSI} から全セッションUUIDを取得
-    uuids, err := s.client.SMembers(ctx, indexKey).Result()
+    // 1〜2. idx:user:{IMSI} の UUID を Pipeline で読み、存在しない UUID を stale として受け取る
+    //       （インデックスが空なら SCAN フォールバック。§6.9.3）
+    sessions, stale, err := s.read.ListByIMSI(ctx, imsi)
     if err != nil {
         return nil, err
     }
-
-    // インデックスが空の場合は SCAN フォールバック（全セッションを走査してIMSIで絞り込む）
-    if len(uuids) == 0 {
-        return s.getByIMSIScan(ctx, imsi)
-    }
-
-    // 2. Pipeline で各セッションを取得し、存在しないUUIDを stale として分類
-    var sessions []*model.Session
-    var staleUUIDs []string
-    pipe := s.client.Pipeline()
-    cmds := make([]*redis.MapStringStringCmd, len(uuids))
-    for i, uuid := range uuids {
-        cmds[i] = pipe.HGetAll(ctx, SessionKey(uuid))
-    }
-    if _, err = pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-        return nil, err
-    }
-    for i, cmd := range cmds {
-        m, err := cmd.Result()
-        if err != nil {
-            continue
-        }
-        if len(m) == 0 {
-            // セッションが存在しない（TTL切れ等）→ クリーンアップ対象
-            staleUUIDs = append(staleUUIDs, uuids[i])
-            continue
-        }
-        session, err := mapToSession(uuids[i], m)
-        if err != nil {
-            continue
-        }
-        sessions = append(sessions, session)
-    }
-
     // 3. 存在しないセッションをインデックスから削除（UUIDごとに SREM。失敗はログのみで表示は継続）
-    for _, uuid := range staleUUIDs {
+    indexKey := UserIndexKey(imsi)
+    for _, uuid := range stale {
         if err := s.client.SRem(ctx, indexKey, uuid).Err(); err != nil {
             log.Printf("failed to cleanup stale session from index: imsi=%s, uuid=%s, err=%v", imsi, uuid, err)
         }
     }
-
     return sessions, nil
 }
 ```
@@ -1196,3 +1129,4 @@ Admin TUIの監査ログでは、**IMSIを常に生値（マスキングなし�
 | r10 | 2026-10-04 | Admin TUI のキー配線漏れを修正した実装修正の反映: §5.1 / §5.2 Session List のソートを、元設計の2モード（start_time 降順 / IMSI 昇順、`i` / `t` キーで切替、表示カラム順が変わる）から現行の `s` キーによる3項目の切り替え（Start Time ▼ → NAS IP ▲ → IMSI ▲。向きは項目ごとに固定、表示カラム順は固定、同値は start_time 降順 → UUID 昇順）に修正。§5.3 / §5.5 ソートインジケータを `▼`（降順）/ `▲`（昇順）に修正（緑色の記述を削除）。§5.8.4 のソート関数例（`sortByStartTimeDesc` / `sortByIMSIAsc`）を削除し、§5.8.5 ソート処理（`ToggleSort` / `nextSortField` / `sortSessions`）を新設。§8.2 の `SortMode` を実装の `SortField`（IMSI / StartTime / NasIP）に修正。§5.4 フィルタダイアログを `F6` でも開けること、`Cancel` ボタンまたは `Esc` で閉じることを追記。§6.2 / §6.5 IMSI検索ダイアログの `Cancel` に `Esc` を追加。§4.7 Statistics の `?` を `F1` / `?`（グローバルキー）に、`Esc` を `Esc` / `q` に修正。§5.9 に `s` キーを追加。§7.1 ヘルプは `F1` / `?` で開き、入力欄では `?` が文字として入力される旨を追記。§1.3 関連ドキュメントの版数を更新（D-05 r11）。あわせて、キー操作・画面遷移の記述を実装（`main.go`、`internal/ui/monitoring`）に合わせて修正: §2.2 / §3.1 Session List から Session Search への遷移キーを `/` から `Enter` に修正（`/` はフィルタ）。§3.2 モニタリングメニューの `(q) Back` を追記。§4.8 Statistics のエラー表示を実装（画面に `Error loading statistics`、ステータスバーに `Failed to load` / `Failed to refresh`。`---` 表示・前回値の維持はない）に修正。§5.7 ページネーションのナビゲーションを `←` / `→` から `PgUp` / `PgDn` に、UI形式をボーダータイトルのページ情報に修正。§5.9 に `↑` / `↓` と `Enter`（Session Search へ遷移）を追加。§5.10 エラー表示のメッセージを実装に修正。§6.2 / §6.5 IMSI検索ダイアログのタイトル・入力欄・表示タイミングと、入力値を検証しないことを追記。§6.4 結果なしの表示を `No sessions found` に修正。§6.8 Session Search はページ分割しない（全件を1テーブル）ことに修正し、§6.9.2 の処理フローも合わせて修正。§6.11 Session Search のキーから実装にない `PgUp` / `PgDn`（ページ切替）・`r` / `F5`（再取得）を削除し、`Tab`・`Esc`（テーブル→サマリ、サマリ→Session List）・`q`（Session List へ）に修正。§6.12 / §6.13 の IMSI 形式検証（`IMSI must be 15 digits`）を削除し、検索失敗時の表示（`Search failed`）に修正。Session Search の検索結果を画面側で開始時刻の新しい順に並べる実装修正（`session_detail.go` に `sortByStartTimeDesc` を追加。`GetByIMSI` は並べ替えない）の反映: §6.9.1 のコード例を検索後に `sortByStartTimeDesc` を適用する形に、§6.9.2 の手順4を画面側での並べ替え（start_time 降順、同値は UUID 昇順）に修正し、§6.9.3 の設計初期の実装イメージ（`SessionDetailSummary`・`fetchSessionsByIMSI`。通信量合計の計算・取得側でのソート）を `sortByStartTimeDesc` に差し替え。§1.4 PoC対象外の「NAS-IP / Client-IP フィルタ」を、Session List のフィルタで IMSI・NAS IP・Client IP の部分一致の絞り込みを提供していることに合わせて「項目を指定した条件検索」に改め、§11 No.5 も同様に修正。§4 Statistics Dashboard を実装（`store/statistics.go`）に合わせて修正: §4.1 概要を件数のサマリに、§4.3 にデータ取得方法（SCAN）と Last updated を追記し、§4.4 通信量は表示しないことを明記、§4.5 キャッシュ仕様を要求時更新の1分キャッシュ（バックグラウンド定期更新なし、`r` で `ClearCache`、失敗時はキャッシュを更新しない）と実装イメージに差し替え、§8.1 を実装の `Statistics` / `StatisticsStore` に差し替え。設計初期のまま残っていたコード片・型名を実装に合わせて修正: §5.3 / §5.5 Duration の表示色を Teal に、Traffic の表記を `format.BytesShort` の `1.2K` / `5.3M` 形式に修正。§5.6 実装にない Acct-ID の切り詰め（`truncateAcctID`）を削除し、Session Search の UUID の短縮表示に差し替え。§5.8.4 `fetchAllSessions`（`SessionListItem`）を実装の `SessionStore.List` に差し替え。§8.2 / §8.3 の設計初期の構造体（`SessionListItem` / `SessionDetailItem` / `SessionDetailSummary`、上限値の定数）を、実装の `pkg/model.Session`、`SessionListScreen`・`SortField`、`SessionDetailScreen` に差し替え。§9 の KB 単位・カンマ区切りのフォーマット関数（`FormatWithCommas` / `FormatTrafficKB` / `FormatSessionTrafficKB` / `FormatErrorPlaceholder`）を、実装の `internal/format`（`DateTime` / `DateTimeShort` / `Elapsed`・`Duration` / `BytesShort`）に差し替え |
 | r11 | 2026-10-06 | セッションに NAS-Identifier（`nas_identifier`）を記録した実装修正の反映（radsecproxy 等のプロキシ経由では NAS IP がプロキシのIPになり NAS を区別できないため）: Session List（§5.2 注記、§5.3 レイアウト、§5.5 表示項目）と Session Search（§6.3 レイアウト、§6.7 表示項目）に NAS-ID カラムを追加（IMSI / UUID の次。値がなければ `-`、24文字を超えれば省略）。§5.4 フィルタの対象に NAS-ID を追加しラベルを `IMSI/NAS-ID/IP contains:` に変更。§5.8.2 の Hash フィールド対応、§5.8.3 の mapToSession、構造体定義に `nas_identifier` / `NasIdentifier` を追加。NAS-ID はソート項目にしない。§1.3 の D-02 の版数を r20 に更新 |
 | r12 | 2026-10-07 | Admin TUI の加入者・RADIUSクライアント・認可ポリシーの store と validation を pkg に移した実装修正（Provisioning API（D-13）と共通で使うため。E-03 r11）の反映: §8.1 の StatisticsStore の構造体で、加入者・クライアント・ポリシーのストアを `pkg/masterdata` の型に修正（ポリシーの件数は `PolicyStore.Count`） |
+| r13 | 2026-10-09 | セッションの読み出しを Provisioning API（D-13 r6 の `GET /sessions`）と共通の `pkg/masterdata.SessionStore` に移した実装修正の反映: §5.8.3（Hash の変換。`sessionFromHash`）、§5.8.4（一覧の取得）、§6.9.3（SCAN フォールバック。`ListByIMSI`）、§6.10.1（インデックスのクリーンアップ。stale を受け取って Admin TUI が SREM する）の説明と抜粋、§5.8.1 の手順の関数名を更新。§1.3 の D-02 の版数を r24 に更新。Admin TUI の動作は変えていない |

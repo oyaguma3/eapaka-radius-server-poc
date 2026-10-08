@@ -60,7 +60,7 @@ func (s *Service) CreateSubscriber(ctx context.Context, actor audit.Actor, req d
 		return nil, err
 	}
 
-	s.audit.Record(actor, audit.Entry{
+	s.audit.Record(ctx, actor, audit.Entry{
 		Operation:  audit.OpCreate,
 		TargetType: audit.TargetSubscriber,
 		TargetKey:  masterdata.SubscriberKey(sub.IMSI),
@@ -84,7 +84,7 @@ func (s *Service) GetSubscriberKeys(ctx context.Context, actor audit.Actor, imsi
 	if err != nil {
 		return nil, err
 	}
-	s.audit.Record(actor, audit.Entry{
+	s.audit.Record(ctx, actor, audit.Entry{
 		Operation:  audit.OpRead,
 		TargetType: audit.TargetSubscriber,
 		TargetKey:  masterdata.SubscriberKey(imsi),
@@ -136,7 +136,7 @@ func (s *Service) UpdateSubscriber(ctx context.Context, actor audit.Actor, imsi 
 	c.secret("opc", before.OPc, patch.OPc)
 	c.value("amf", strings.ToLower(before.AMF), lower(patch.AMF))
 	c.value("sqn", strings.ToLower(before.SQN), lower(patch.SQN))
-	s.audit.Record(actor, audit.Entry{
+	s.audit.Record(ctx, actor, audit.Entry{
 		Operation:  audit.OpUpdate,
 		TargetType: audit.TargetSubscriber,
 		TargetKey:  masterdata.SubscriberKey(imsi),
@@ -167,7 +167,7 @@ func (s *Service) DeleteSubscriber(ctx context.Context, actor audit.Actor, imsi 
 	if before != nil {
 		e.Details = subscriberState(before)
 	}
-	s.audit.Record(actor, e)
+	s.audit.Record(ctx, actor, e)
 	return nil
 }
 

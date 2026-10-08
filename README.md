@@ -21,7 +21,7 @@ Wi-Fi 認証 (WPA2/WPA3-Enterprise) 向けの RADIUS 認証・課金機能、AKA
 | **vector-gateway** | 認証ベクター生成リクエストのルーティング（PLMN 単位で接続方式 00: vector-api / 01: aka-only-server に振り分け） | HTTP 8080（コンテナ内のみ） |
 | **vector-api** | Milenage アルゴリズム計算 + SQN 管理 | HTTP 8080（コンテナ内のみ） |
 | **admin-tui** | 加入者・セッション管理用ターミナル UI | - |
-| **provisioning-api**（任意） | 加入者・RADIUSクライアント・認可ポリシーの REST API（`/admin/v1`）。本PoCの外の BFF から mTLS で操作する。compose の profile `provisioning` で起動 | HTTPS 9444（既定 127.0.0.1 のみ） |
+| **provisioning-api**（任意） | 加入者・RADIUSクライアント・認可ポリシーの REST API（`/admin/v1`。監査ログ・セッションの参照も）。本PoCの外の BFF から mTLS で操作する。compose の profile `provisioning` で起動 | HTTPS 9444（既定 127.0.0.1 のみ） |
 | **valkey** | データストア (加入者情報・セッション等) | 6379（127.0.0.1 のみ） |
 | **fluent-bit** | ログ収集・転送 | 24224（127.0.0.1 のみ） |
 | **aka-only-server**（外部・任意） | 接続方式01。指定 PLMN の AKA 認証ベクターを払い出す外部サーバー（3GPP TS 29.503 Nudm_UEAU GenerateAv ベース、[aka-only-server](https://github.com/oyaguma3/aka-only-server)）。mTLS で接続 | HTTPS 8443（平文 HTTP 8080） |
@@ -113,6 +113,7 @@ docker compose up -d
 | `PROVISIONING_API_ADMIN_CLIENTS` | No | Provisioning API の管理クライアント（`識別名=クライアント証明書のSHA-256フィンガープリント` のカンマ区切り。provisioning-api を使う場合は必須） |
 | `PROVISIONING_API_BIND` | No | Provisioning API の 9444/tcp を公開するアドレス (デフォルト: `127.0.0.1`) |
 | `PROVISIONING_API_NODE_NAME` | No | Provisioning API の `/status` が返すノード名 |
+| `PROVISIONING_API_AUDIT_MAX` | No | Provisioning API の監査ログを Valkey に保持する件数の上限（おおよそ。デフォルト: `10000`。`GET /audit-logs` で参照する） |
 | `PROVISIONING_SHARED_NETWORK` | No | 同じホストの BFF と共有する Docker ネットワークの名前 (デフォルト: `eapaka-prov`) |
 
 詳細は `deployments/.env.example` を参照してください。
@@ -231,7 +232,7 @@ go test ./apps/auth-server/...
 |---|---|---|
 | S-01 | eapaka_test 利用ノウハウ | eapaka_test の設定・テストケース解説・トラブルシューティング |
 
-詳細は [ドキュメント一覧](docs/EAP-AKA_RADIUS_PoC環境_ドキュメント一覧_r62.md) を参照してください。
+詳細は [ドキュメント一覧](docs/EAP-AKA_RADIUS_PoC環境_ドキュメント一覧_r63.md) を参照してください。
 
 ## ライセンス
 

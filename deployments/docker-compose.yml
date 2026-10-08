@@ -181,6 +181,8 @@ services:
       # 管理クライアントの「識別名=フィンガープリント」。空なら起動しない
       PROVISIONING_API_ADMIN_CLIENTS: ${PROVISIONING_API_ADMIN_CLIENTS:-}
       PROVISIONING_API_NODE_NAME: ${PROVISIONING_API_NODE_NAME:-}
+      # GET /audit-logs で参照できる監査ログ（Valkey の Stream audit:prov）の件数の上限
+      PROVISIONING_API_AUDIT_MAX: ${PROVISIONING_API_AUDIT_MAX:-10000}
       LOG_MASK_IMSI: ${LOG_MASK_IMSI:-true}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:

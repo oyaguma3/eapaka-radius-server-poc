@@ -3,9 +3,14 @@
 package audit
 
 import (
+	"context"
 	"io"
 	"log/slog"
+	"time"
 )
+
+// storeTimeout は監査ログを Stream に保存するときの上限時間。
+const storeTimeout = 2 * time.Second
 
 // Operation は監査ログの操作種別を表す。
 type Operation string
@@ -66,8 +71,13 @@ type Entry struct {
 }
 
 // Logger は監査ログを出力する。
+// 標準出力（fluent-bit が provisioning-api.log に書く。正本）に出し、Store があれば Valkey の Stream にも保存する。
 type Logger struct {
 	log *slog.Logger
+	// store は監査ログの保存先（参照用。nil なら保存しない）
+	store *Store
+	// errLog は Stream への保存の失敗を記録するアプリケーションログ
+	errLog *slog.Logger
 }
 
 // NewLogger は w に JSON で出力する Logger を生成する。
@@ -77,8 +87,35 @@ func NewLogger(w io.Writer) *Logger {
 	return &Logger{log: slog.New(h).With("app", "provisioning-api", "event_id", "AUDIT_LOG")}
 }
 
+// WithStore は、監査ログを Stream にも保存するようにする。保存の失敗は errLog に記録する。
+func (l *Logger) WithStore(store *Store, errLog *slog.Logger) *Logger {
+	l.store, l.errLog = store, errLog
+	return l
+}
+
 // Record は監査ログを1件出力する。
-func (l *Logger) Record(actor Actor, e Entry) {
+// Stream への保存に失敗しても、操作は成功として扱う（PROV_AUDIT_STORE_ERR を記録する。D-13 §6.1）。
+func (l *Logger) Record(ctx context.Context, actor Actor, e Entry) {
+	l.write(actor, e)
+	if l.store == nil {
+		return
+	}
+	// 要求が途中で切れても保存は試みる。
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), storeTimeout)
+	defer cancel()
+	if err := l.store.add(ctx, actor, e); err != nil {
+		l.errLog.Error("failed to store audit log",
+			"event_id", "PROV_AUDIT_STORE_ERR",
+			"trace_id", actor.TraceID,
+			"operation", string(e.Operation),
+			"target_type", string(e.TargetType),
+			"error", err.Error(),
+		)
+	}
+}
+
+// write は監査ログを標準出力に1件出力する。
+func (l *Logger) write(actor Actor, e Entry) {
 	attrs := []any{
 		"trace_id", actor.TraceID,
 		"operation", string(e.Operation),

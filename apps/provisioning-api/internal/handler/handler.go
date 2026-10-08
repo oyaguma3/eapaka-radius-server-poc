@@ -149,7 +149,38 @@ func (h *Handler) GetStatus(c *gin.Context) {
 		SubscriberCount: counts.Subscribers,
 		ClientCount:     counts.Clients,
 		PolicyCount:     counts.Policies,
+		SessionCount:    counts.Sessions,
 	})
+}
+
+// ---- 監査ログ・セッション（D-13 §3.6・§3.7） ----
+
+// ListAuditLogs は GET /audit-logs を処理する。
+func (h *Handler) ListAuditLogs(c *gin.Context) {
+	entries, next, err := h.svc.AuditLogs(c.Request.Context(), dto.AuditLogQuery{Before: c.Query("before"), Limit: c.Query("limit")})
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	out := dto.AuditLogList{Items: make([]dto.AuditLogEntry, len(entries)), NextBefore: next}
+	for i, e := range entries {
+		out.Items[i] = dto.NewAuditLogEntry(e)
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+// ListSessions は GET /sessions を処理する。
+func (h *Handler) ListSessions(c *gin.Context) {
+	sessions, total, err := h.svc.Sessions(c.Request.Context(), dto.SessionQuery{IMSI: c.Query("imsi"), Limit: c.Query("limit")})
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	out := dto.SessionList{Items: make([]dto.Session, len(sessions)), Total: total}
+	for i, s := range sessions {
+		out.Items[i] = dto.NewSession(s)
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 // ---- 加入者 ----

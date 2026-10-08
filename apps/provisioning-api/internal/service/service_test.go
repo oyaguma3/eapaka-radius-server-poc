@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
@@ -33,7 +35,8 @@ func newTestService(t *testing.T) (*Service, *miniredis.Miniredis, *bytes.Buffer
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
 	var buf bytes.Buffer
-	svc := New(rdb, audit.NewLogger(&buf))
+	store := audit.NewStore(rdb, 1000)
+	svc := New(rdb, audit.NewLogger(&buf).WithStore(store, slog.New(slog.NewJSONHandler(io.Discard, nil))), store)
 	svc.now = func() time.Time { return time.Date(2026, 10, 7, 12, 0, 0, 0, time.FixedZone("JST", 9*3600)) }
 	return svc, mr, &buf
 }
@@ -170,5 +173,58 @@ func TestCounts(t *testing.T) {
 func TestReason(t *testing.T) {
 	if got := reason(errors.New("plain")); got != "plain" {
 		t.Errorf("reason() = %q", got)
+	}
+}
+
+func TestAuditLogsAndSessions(t *testing.T) {
+	svc, mr, _ := newTestService(t)
+	ctx := context.Background()
+
+	// 監査ログ: 変更操作が Stream にも保存され、新しい順に読める。
+	if _, err := svc.CreateSubscriber(ctx, testActor, dto.SubscriberCreate{IMSI: ptr(testIMSI), Ki: ptr(testKi), OPc: ptr(testOPc)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DeleteSubscriber(ctx, testActor, testIMSI); err != nil {
+		t.Fatal(err)
+	}
+	entries, next, err := svc.AuditLogs(ctx, dto.AuditLogQuery{Limit: "1"})
+	if err != nil || len(entries) != 1 || entries[0].Operation != audit.OpDelete || next == "" {
+		t.Fatalf("AuditLogs(limit=1) = %+v, %q, %v", entries, next, err)
+	}
+	entries, next, err = svc.AuditLogs(ctx, dto.AuditLogQuery{Before: next})
+	if err != nil || len(entries) != 1 || entries[0].Operation != audit.OpCreate || entries[0].Operator != "alice" || next != "" {
+		t.Errorf("AuditLogs(before) = %+v, %q, %v", entries, next, err)
+	}
+	var ve *ValidationError
+	if _, _, err := svc.AuditLogs(ctx, dto.AuditLogQuery{Before: "x", Limit: "abc"}); !errors.As(err, &ve) || len(ve.Query) != 2 {
+		t.Errorf("AuditLogs(invalid) error = %v", err)
+	}
+
+	// セッション: 接続開始の新しい順、limit と total、IMSI での絞り込み。
+	mr.HSet(masterdata.SessionKey("u1"), "imsi", testIMSI, "start_time", "100")
+	mr.HSet(masterdata.SessionKey("u2"), "imsi", "001010000000002", "start_time", "300")
+	mr.HSet(masterdata.SessionKey("u3"), "imsi", testIMSI, "start_time", "200")
+	sessions, total, err := svc.Sessions(ctx, dto.SessionQuery{Limit: "2"})
+	if err != nil || total != 3 || len(sessions) != 2 || sessions[0].UUID != "u2" || sessions[1].UUID != "u3" {
+		t.Errorf("Sessions(limit=2) = %v, %d, %v", sessions, total, err)
+	}
+	sessions, total, err = svc.Sessions(ctx, dto.SessionQuery{IMSI: testIMSI})
+	if err != nil || total != 2 || sessions[0].UUID != "u3" || sessions[1].UUID != "u1" {
+		t.Errorf("Sessions(imsi) = %v, %d, %v", sessions, total, err)
+	}
+	if _, _, err := svc.Sessions(ctx, dto.SessionQuery{IMSI: "1", Limit: "0"}); !errors.As(err, &ve) || len(ve.Query) != 2 {
+		t.Errorf("Sessions(invalid) error = %v", err)
+	}
+	c, err := svc.Counts(ctx)
+	if err != nil || c.Sessions != 3 {
+		t.Errorf("Counts() = %+v, %v", c, err)
+	}
+
+	mr.SetError("forced error")
+	if _, _, err := svc.Sessions(ctx, dto.SessionQuery{IMSI: testIMSI}); err == nil {
+		t.Error("Sessions(error) want error")
+	}
+	if _, err := svc.Counts(ctx); err == nil {
+		t.Error("Counts(error) want error")
 	}
 }

@@ -1,7 +1,7 @@
-# D-13 Provisioning API 詳細設計書 (r5)
+# D-13 Provisioning API 詳細設計書 (r6)
 
 **作成日:** 2026-10-07
-**更新日:** 2026-10-08
+**更新日:** 2026-10-09
 **ステータス:** 実装済み（`apps/provisioning-api`。simwifi 実機での結合確認済み。§9）
 
 ## 1. 概要
@@ -14,7 +14,8 @@
 
 - 加入者（`sub:{IMSI}`）・RADIUSクライアント（`client:{IP}`）・認可ポリシー（`policy:{IMSI}`）の作成・参照・変更・削除
 - 秘密の値（Ki / OPc、共有シークレット）の読み出しを専用の経路に限り、監査ログに記録する
-- 変更操作の監査ログの出力
+- 変更操作の監査ログの出力と、その参照（r6）
+- アクティブセッションの参照（読み取りだけ。r6）
 - mTLS によるクライアント（BFF 等）の認証
 
 ### 1.2 背景と位置づけ
@@ -54,8 +55,8 @@ Provisioning API は「1ノード分のマスタデータを操作する薄い A
 
 | 区分 | 内容 |
 |------|------|
-| 対象 | 加入者・RADIUSクライアント・認可ポリシーの CRUD、秘密の値の読み出し、状態取得（`/status`）、監査ログの出力、mTLS 認証 |
-| 対象外（将来検討。§10） | 一括インポート / エクスポート、セッション（`sess:`）・統計の参照、監査ログの参照 API、操作者ごとの権限、IPv6 の RADIUSクライアント |
+| 対象 | 加入者・RADIUSクライアント・認可ポリシーの CRUD、秘密の値の読み出し、状態取得（`/status`。セッション数を含む）、監査ログの出力と参照（`/audit-logs`。r6）、アクティブセッションの参照（`/sessions`。r6）、mTLS 認証 |
+| 対象外 | 一括インポート / エクスポート（CSV。Admin TUI だけで行う。§10）、セッションの切断、操作者ごとの権限、IPv6 の RADIUSクライアント（将来検討。§10） |
 
 ### 1.5 関連ドキュメント
 
@@ -197,6 +198,50 @@ API のリソースと Valkey のキーの対応は次のとおり。
 | 日時 | RFC 3339 形式の UTC |
 | JSON の項目名 | camelCase（Valkey のフィールド名は snake_case のまま。DTO で変換する） |
 
+### 3.6 監査ログ（r6）
+
+本APIの監査ログ（§6.2）を、`GET /audit-logs` で新しい順に返す。BFF の画面や `eapaka-node-provisioner` が、ホストのログファイルを読まずに本APIの操作を追えるようにするためである。
+
+- **保存先:** 監査ログは従来どおり標準出力に出し（fluent-bit が `provisioning-api.log` に書く。これが正本）、あわせて Valkey の Stream `audit:prov`（D-02 §2.H）に保存する。件数の上限は `PROVISIONING_API_AUDIT_MAX`（既定 10000。§8.1.1）で、超えた古いものから消す（`XADD MAXLEN ~`。おおよその上限）。
+- **保存の失敗:** Stream への保存に失敗しても、操作自体は成功として扱い、`PROV_AUDIT_STORE_ERR`（ERROR）を記録する（§6.1）。ログファイルには残るので、そちらで確かめる。
+- **対象:** 本APIの操作だけである。Admin TUI の操作は含まない（Admin TUI の監査ログはログファイルだけ。D-04 §3.5）。
+- **作法:** aka-only-server の管理API の `GET /audit-logs`（`before` / `limit`、`nextBefore`、新しい順）に揃える。
+
+| API の項目 | 内容 | Stream のフィールド |
+|-----------|------|-------------------|
+| `id` | エントリID（Stream のID。`before` に渡せる） | （ID） |
+| `time` | 記録日時（ミリ秒まで。エントリID から求める） | （ID） |
+| `operator` | 操作者（`X-Operator-Id`。省略された操作では空文字） | `admin_user` |
+| `mgmtClient` | 管理クライアントの識別名 | `mgmt_client` |
+| `action` | 操作（下表） | `target_type` と `operation` から求める |
+| `target` | 対象。加入者・認可ポリシーは IMSI、RADIUSクライアントは ID | `target_imsi` / `target_id` |
+| `targetKey` | 対象の Valkey のキー | `target_key` |
+| `traceId` | トレースID（ログファイルの `trace_id` と同じ） | `trace_id` |
+| `details` | 変更内容（ログファイルの `details` と同じ。秘密の値は含まない。ない場合は省略） | `details` |
+
+`action` は aka-only-server と同じ命名にする: `subscriber.create` / `subscriber.update` / `subscriber.delete` / `subscriber.keys.read`、`client.create` / `client.update` / `client.delete` / `client.secret.read`、`policy.create` / `policy.update` / `policy.delete`。
+
+### 3.7 セッション（r6）
+
+アクティブセッション（`sess:{UUID}`。D-02 §3.E）を、`GET /sessions` で読み取りだけで返す（Admin TUI のセッション一覧・検索と同じ情報。D-07 §5・§6）。
+
+| API の項目 | Valkey のフィールド | 内容 |
+|-----------|-------------------|------|
+| `id` | キー `sess:{UUID}` | セッションの UUID（RADIUS の Class 属性の値） |
+| `imsi` | `imsi` | IMSI（生値） |
+| `nasIp` | `nas_ip` | NAS の IP アドレス |
+| `nasIdentifier` | `nas_identifier` | NAS-Identifier（ない場合は空文字） |
+| `startTime` | `start_time`（Unix 秒） | 接続開始日時（RFC 3339、UTC。値がなければ省略） |
+| `clientIp` | `client_ip` | 端末の IP アドレス（Accounting-Request を受けるまでは空文字） |
+| `acctSessionId` | `acct_id` | Acct-Session-Id |
+| `inputOctets` / `outputOctets` | `input_octets` / `output_octets` | 通信量（Interim で更新） |
+
+- **並び順と件数:** 接続開始の新しい順（同じ時刻は UUID の順）。`limit`（1〜1000、既定 100）件まで返し、`total` に条件に一致する件数を返す。セッションの件数は少ない前提で、ページング（cursor）はしない。
+- **IMSI での絞り込み:** `?imsi=` を指定すると、`idx:user:{IMSI}` で引く。索引が空なら、全セッションを SCAN して絞り込む（Admin TUI と同じ）。索引に残った、もう存在しないセッションの UUID は結果に含めず、**索引の掃除（SREM）はしない**（読み取りだけの API とし、掃除は Admin TUI が行う。D-02 §3.F）。
+- **件数:** `/status` の `sessionCount` に、`sess:*` の件数（SCAN）を返す（Admin TUI の統計と同じ）。
+- **読み出しの実装:** Admin TUI のセッションの読み出しを `pkg/masterdata` の `SessionStore` に移し、両方で使う（§7.2）。
+- セッションの切断（RADIUS の Disconnect / CoA）は扱わない（Admin TUI にもない）。
+
 ---
 
 ## 4. API 仕様（概要）
@@ -217,6 +262,7 @@ API のリソースと Valkey のキーの対応は次のとおり。
 | 操作者 | 任意のヘッダー `X-Operator-Id`（`^[A-Za-z0-9._@-]{1,64}$`）を監査ログに記録する |
 | トレース | 任意のヘッダー `X-Trace-ID`（印字可能ASCII 1〜64文字）を受け取り、ログの `trace_id` に使う。ない場合・形式が違う場合は採番する（16バイトの乱数の16進32桁）。使った値を応答の `X-Trace-ID` ヘッダーで返す |
 | ページング | 加入者・認可ポリシーの一覧は `cursor` / `limit`（1〜500、既定50）/ `prefix`（IMSI の前方一致。数字1〜15桁）。応答は `items`、`total`（`prefix` に一致する件数）、次のページがあるときだけ `nextCursor`（そのページの最後の IMSI）。IMSI の昇順。Valkey に一覧用のインデックスはないため、`SCAN` でキーを集めて並べ、そのページの分だけ読む（`pkg/masterdata` の `ListPage`。PoC の件数を前提とする） |
+| 監査ログ・セッションの一覧（r6） | 監査ログは `before`（エントリID）/ `limit`（1〜500、既定100）で、新しい順。続きがあれば `nextBefore`（そのページの最後のエントリID）。セッションは `imsi` / `limit`（1〜1000、既定100）で、ページングせず `total` を返す（§3.6・§3.7）。値の不正は `INVALID_QUERY_PARAM` |
 | 該当しないパス・メソッド | `404` / `405` の ProblemDetails（`cause` なし） |
 
 ### 4.2 エンドポイント一覧
@@ -240,6 +286,8 @@ API のリソースと Valkey のキーの対応は次のとおり。
 | GET | `/policies/{imsi}` | 認可ポリシーの取得 | 200 | - |
 | PUT | `/policies/{imsi}` | 認可ポリシーの作成・置き換え | 201 / 200 | create / update |
 | DELETE | `/policies/{imsi}` | 認可ポリシーの削除 | 204 | delete |
+| GET | `/audit-logs` | 監査ログの取得（r6） | 200 | - |
+| GET | `/sessions` | アクティブセッションの取得（r6） | 200 | - |
 
 RADIUSクライアントの一覧は件数が少ないため、ページングせず全件を IP アドレスの順（数値として比較）で返す（aka-only-server の AVクライアントの一覧と同じ）。IP アドレスとして解釈できないキーは後ろに置く。
 
@@ -276,6 +324,7 @@ ProblemDetails（RFC 7807）の `title` / `status` / `detail` に、aka-only-ser
 | `nodeName` | ノードの識別名（環境変数 `PROVISIONING_API_NODE_NAME`。BFF / provisioner がノードを区別するため） |
 | `startedAt` | 起動日時 |
 | `subscriberCount` / `clientCount` / `policyCount` | 各キーの件数 |
+| `sessionCount` | アクティブセッション（`sess:*`）の件数（r6。API 0.3.0） |
 
 Valkey に接続できない場合は `500`（`SYSTEM_FAILURE`）を返す。
 
@@ -310,11 +359,12 @@ Valkey に接続できない場合は `500`（`SYSTEM_FAILURE`）を返す。
 
 | ログ | Level | event_id | 内容 |
 |------|-------|----------|------|
-| `starting provisioning-api` | INFO | - | 起動時に `version`、`listen_addr`、`log_level`、`node_name`、`admin_clients`（登録クライアントの件数）を出す（フィンガープリントは出さない）。続いて `connected to Valkey`（`addr`）、`starting server`（`addr`） |
+| `starting provisioning-api` | INFO | - | 起動時に `version`、`listen_addr`、`log_level`、`node_name`、`admin_clients`（登録クライアントの件数）、`audit_max`（Stream に保存する監査ログの件数の上限。r6）を出す（フィンガープリントは出さない）。続いて `connected to Valkey`（`addr`）、`starting server`（`addr`） |
 | `assigned client ids` | INFO | - | 起動時に ID の導入前の RADIUSクライアントに ID を採番したとき（`count`。採番がなければ出さない）。採番に失敗したら `failed to assign client ids`（ERROR）を出して終了する |
 | `request completed` | INFO | - | `trace_id`、`method`、`path`、`http_status`、`latency_ms`、`mgmt_client`（クライアントの識別名）、`src_ip`。パスのうち7桁を超える数字だけのセグメント（IMSI。15桁でない誤った IMSI も含む）は `LOG_MASK_IMSI` に従ってマスクする。クエリパラメーター（`prefix` 等）は出さない |
 | `request failed` | ERROR | `PROV_REQUEST_ERR` | 500 を返したとき（Valkey のエラー等）。`trace_id`、`method`、`path`（マスク済み）、`error` |
 | `panic recovered` | ERROR | `PROV_REQUEST_ERR` | ハンドラーのパニックから復旧して 500 を返したとき |
+| `failed to store audit log` | ERROR | `PROV_AUDIT_STORE_ERR` | 監査ログを Valkey の Stream（`audit:prov`）に保存できなかったとき（r6。§3.6）。`trace_id`、`operation`、`target_type`、`error`。操作自体は成功として応答し、監査ログはログファイルには出ている |
 | `admin client certificate rejected` | WARN | `PROV_CLIENT_REJECTED` | TLS ハンドシェイクでクライアント証明書を拒否したとき。`reason`（`no client certificate` / `not configured` / `outside validity period`）、`fingerprint`（証明書なしでは空文字。未登録の証明書を登録するときに確かめられる）、`src_ip` |
 | `http: TLS handshake error ...` | DEBUG | - | `http.Server` の `ErrorLog`（TLS ハンドシェイクの失敗等）。拒否の記録は上の WARN で足りるため DEBUG にする |
 | 設定エラー等 | ERROR | - | `failed to load config`、`failed to load server certificate`、`failed to connect to Valkey`（いずれも終了する） |
@@ -352,7 +402,7 @@ Valkey に接続できない場合は `500`（`SYSTEM_FAILURE`）を返す。
 - 失敗した操作（400 / 404 / 409 / 500）は監査ログに記録しない（`request completed` には記録する）。
 - 監査ログは `LOG_LEVEL` によらず出力する（アプリケーションログとは別のロガーで、同じ標準出力に1行ずつ書く）。`time` の形式は他のコンポーネントの `log/slog` と同じ（Admin TUI の監査ログの秒精度・UTC とは異なる）。
 - 変更前の値が読めない場合（認可ポリシーの `rules` が壊れている等）でも書き込みは行い、`details` は作成と同じ形式にする。
-- 監査ログの参照 API は本書の対象外とする（ホストOSのログファイルを参照する）。
+- 監査ログは、参照用に Valkey の Stream `audit:prov` にも保存し、`GET /audit-logs` で返す（r6。§3.6）。正本はログファイルで、Stream は件数の上限（`PROVISIONING_API_AUDIT_MAX`）を超えた古いものから消える。r5 までは参照 API はなく、ホストOSのログファイルを参照していた。
 
 ### 6.3 D-04 への反映
 
@@ -376,13 +426,13 @@ apps/provisioning-api/
     ├── handler/            # HTTP ハンドラー（要求の読み込み、エラーの対応付け、応答）
     ├── dto/                # 要求・応答の JSON（camelCase）、ProblemDetails、JSON Merge Patch の項目（Optional）
     ├── service/            # 検証・正規化、ストア呼び出し、監査ログ
-    └── audit/              # 監査ログの出力
+    └── audit/              # 監査ログの出力と、Stream（audit:prov）への保存・読み出し（r6）
 ```
 
 - Vector API と同じく Gin と envconfig を使う（D-11）。新しい外部パッケージは追加していない。
 - ハンドラーは DTO と HTTP の変換だけを行い、検証・正規化・監査ログは service 層で行う。service は検証エラーを `ValidationError`（`cause` と `invalidParams` を持つ）で、存在しない・既に存在するを `pkg/masterdata` のセンチネルエラーで返し、handler が HTTP のステータスに対応付ける。
 - アプリケーションログと監査ログは、同じ標準出力に排他して書き込む（1行が混ざらないようにする）。
-- `version` は `main.version`（既定 `0.1.0`。`-ldflags "-X main.version=..."` で上書きできる）。
+- `version` は `main.version`（r6 で `0.3.0`。`-ldflags "-X main.version=..."` で上書きできる）。
 - Go Workspace（`go.work`）にモジュールを加えたため、他のアプリの Dockerfile も `apps/provisioning-api/go.mod` / `go.sum` をコピーする（`go.work` の `use` の解決に全モジュールの go.mod が要る）。Makefile と CI の対象にも加えた。
 
 **共通ライブラリに追加したもの（2026-10-08）:**
@@ -391,6 +441,7 @@ apps/provisioning-api/
 |------|------|
 | `SubscriberStore.ListPage` / `PolicyStore.ListPage`（`pkg/masterdata/page.go`） | IMSI の前方一致・cursor・件数で1ページを返す（§4.1 のページング）。`rules` を解釈できないポリシーは `List` と同じく結果に含めない（`total` には数える） |
 | `ClientStore.Patch` | 指定した項目だけを書き換える（PATCH 用。存在確認と書き込みを1回の操作で行う）。r5 で IP の変更（キーの付け替え）に対応 |
+| `SessionStore`（`pkg/masterdata/session.go`。r6） | セッションの読み出し（`Get` / `List` / `Count` / `ListByIMSI` / `IndexCount`）。Admin TUI から移した（§7.2）。`ListByIMSI` は索引に残った古い UUID を返すだけで、索引からは消さない |
 | `ClientStore.GetByID` / `EnsureIDs`、`Create` の採番（r5） | ID からの取得（索引 `idx:client:{ID}` を引き、Hash の `id` と一致するときだけ返す）、ID の導入前のデータへの採番、作成時の採番（`model.RadiusClient.ID` に設定）。`BulkCreate`（CSV）は既存の ID を引き継ぐ |
 
 ### 7.2 共通ライブラリへの移動
@@ -402,7 +453,7 @@ Admin TUI と provisioning-api が同じ検証規則と同じ Valkey 操作を�
 | `internal/validation`（加入者・クライアント・ポリシー） | `pkg/validation` | 検証規則、正規化（16進の大文字化等） |
 | `internal/store` の加入者・クライアント・ポリシー（`subscriber.go`、`client.go`、`policy.go`、`keys.go` の該当部分） | `pkg/masterdata` | Valkey の読み書き（Lua スクリプトを含む） |
 
-- セッション・統計のストア（`session.go`、`statistics.go`）と CSV は Admin TUI に残す。
+- 統計のストア（`statistics.go`）と CSV は Admin TUI に残す。セッションのストア（`session.go`）は、r6 で読み出しを `pkg/masterdata.SessionStore` に移し、Admin TUI には IMSI で読むときの索引の掃除（存在しないセッションの UUID の SREM）だけを残した（Admin TUI の動作は変えていない。既存のテストで確認）。
 | `internal/model`（`Policy`。`pkg/model` と同じ構造） | `pkg/model` | Admin TUI 専用の `Clone` を `pkg/model.Policy` に移し、`internal/model` は廃止した |
 
 - 移すときに、作成（加入者・クライアント・ポリシー）と変更（クライアント・ポリシー）を Lua スクリプトによる1回の操作に改めた（§2.3）。あわせて、provisioning-api 用に、加入者の指定した項目だけを書き換える操作（`SubscriberStore.Patch`。PATCH 用）、作成したかを返すポリシーの書き込み（`PolicyStore.Put`。PUT の 201 / 200 用）、ポリシーの件数（`PolicyStore.Count`。`/status` 用）を追加した。
@@ -427,6 +478,7 @@ provisioning-api のプロセスが読む環境変数。
 | `PROVISIONING_API_TLS_KEY` | - | ○ | サーバー証明書の秘密鍵（PEM）のパス |
 | `PROVISIONING_API_ADMIN_CLIENTS` | - | ○ | 管理クライアントの `name=fingerprint`（SHA-256、16進）のカンマ区切り。空なら起動しない |
 | `PROVISIONING_API_NODE_NAME` | ホスト名 | - | `/status` の `nodeName`。コンテナでは既定のホスト名がコンテナIDになるため、§8.1.2 の `.env` で指定することを推奨する |
+| `PROVISIONING_API_AUDIT_MAX` | `10000` | - | Valkey の Stream（`audit:prov`）に保存する監査ログの件数の上限（r6。§3.6）。1 以上。0 以下や数字でなければ起動しない |
 | `GIN_MODE` | `release` | - | Gin の動作モード（Vector API と同じ） |
 | `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASS` | `valkey` / `6379` / - | - | Valkey の接続先（他のコンポーネントと同じ） |
 | `LOG_LEVEL` | `INFO` | - | ログレベル（`pkg/logging.ParseLevel`） |
@@ -441,6 +493,7 @@ provisioning-api のプロセスが読む環境変数。
 | `PROVISIONING_API_BIND` | `127.0.0.1` | ホスト側で 9444/tcp を公開するアドレス（compose の `ports` の展開にだけ使い、コンテナには渡さない）。別ノードの BFF から使う場合は、受け付けるインターフェースのアドレス（WireGuard のアドレス等）または `0.0.0.0` にする |
 | `PROVISIONING_API_ADMIN_CLIENTS` | （空） | そのままコンテナの `PROVISIONING_API_ADMIN_CLIENTS` に渡す（§8.1.1。空なら provisioning-api は起動しない） |
 | `PROVISIONING_API_NODE_NAME` | （空） | そのままコンテナの `PROVISIONING_API_NODE_NAME` に渡す（空ならコンテナのホスト名） |
+| `PROVISIONING_API_AUDIT_MAX` | `10000` | そのままコンテナの `PROVISIONING_API_AUDIT_MAX` に渡す（r6） |
 | `PROVISIONING_SHARED_NETWORK` | `eapaka-prov` | 同じホストの BFF との共有ネットワークの名前（compose の `networks` の展開にだけ使う。§8.2）。通常は変えない |
 | `VALKEY_PASSWORD` | - | コンテナの `REDIS_PASS` に渡す（他のコンポーネントと同じ） |
 | `LOG_LEVEL` / `LOG_MASK_IMSI` | `INFO` / `true` | 他のコンポーネントと同じく、コンテナに渡す |
@@ -478,6 +531,11 @@ compose では、`PROVISIONING_API_LISTEN_ADDR` は既定値（`:9444`）のま�
 - 単体: パッケージごとのカバレッジは audit 100%、auth 98.4%、config 100%、dto 100%、handler 98.6%、server 95.6%、service 97.6%（`main.go` は対象外。他のアプリと同じ）。ケースは T-02 を参照。
 - 結合: simwifi で compose（profile `provisioning`）を起動し、curl とクライアント証明書で全エンドポイントを操作した。provisioning-api で登録した加入者・ポリシー・RADIUSクライアントで eapaka_test の EAP-AKA / AKA' が Access-Accept になること、ポリシーの置き換え・共有シークレットの変更が認証に反映されること、PATCH で SQN が巻き戻らないこと、未登録・証明書なしの接続が拒否されること、`PROVISIONING_API_BIND` を Tailscale のアドレスにして別ノード（WSL）から使えること、Admin TUI との相互参照（双方向）、監査ログの内容と、ログに秘密の値が出ないことを確認した。手順と結果は T-03 を参照。
 
+**実施結果（2026-10-09。r6 の監査ログ・セッションの参照）:**
+
+- 単体: パッケージごとのカバレッジは audit 98.4%、auth 98.4%、config 100%、dto 100%、handler 98.7%、server 96.3%、service 97.6%、`pkg/masterdata` 90.0%（`SessionStore` を含む）。Admin TUI の store（SessionStore を `pkg/masterdata` に委ねた後）の既存のテストもそのまま通る。ケースは T-02（r23）を参照。
+- 結合: simwifi で、作業ツリーを profile `provisioning` で起動し、`GET /audit-logs`（新しい順、ページ送り、400、ログファイルの `trace_id` との対応、再起動後の保持、`PROVISIONING_API_AUDIT_MAX`=50 での件数の抑制（254件の記録で 62件））と、eapaka_test の認証で作られたセッションの `GET /sessions`（新しい順、`total`、`?imsi=`、400、`/status` の `sessionCount`）、索引を API は掃除せず Admin TUI の Session Search が掃除すること（セッションの読み出しを移した版の Admin TUI の Statistics・Session List・Session Search の表示を含む）を確認した。手順と結果は T-03（r19）の INT-PROV-037〜043 を参照。
+
 ---
 
 ## 10. 将来拡張
@@ -485,9 +543,9 @@ compose では、`PROVISIONING_API_LISTEN_ADDR` は既定値（`:9444`）のま�
 | 項目 | 内容 |
 |------|------|
 | eapaka-node-provisioner | 加入者を「IMSI＋鍵の置き場所（本PoCの Vector API / aka-only-server）＋認可ポリシー」として扱い、本APIと aka-only-server の管理API を組み合わせて操作する。複数ノードへの操作の失敗時は、補償（作成したものを消す等）で戻す。本APIは、作成の 409、ポリシーの PUT（置き換え）により、やり直しやすい形にしておく |
-| 一括操作 | Admin TUI の CSV インポート / エクスポートに相当する操作 |
-| 参照系 | セッション（`sess:`）・統計の参照（読み取りのみ） |
-| 監査ログの参照 | aka-only-server の `/audit-logs` に相当する API（監査ログを Valkey Stream 等に保存する必要がある） |
+| 一括操作 | **本APIでは扱わない**（2026-10-09 決定）。CSV のインポート / エクスポートは Admin TUI だけで行う。エクスポートには Ki / OPc が含まれ、秘密の値を API でまとめて返すことになるため |
+| 参照系 | セッション（`sess:`）・統計の参照は r6 で実装済み（§3.7、`/status` の `sessionCount`）。セッションの切断（Disconnect / CoA）は扱わない |
+| 監査ログの参照 | r6 で実装済み（§3.6。Valkey の Stream `audit:prov` に保存し、`/audit-logs` で返す）。Admin TUI の操作の監査ログも参照できるようにするかは未定（現状はログファイルだけ） |
 | 権限 | 管理クライアントごとの読み取り専用等 |
 | IPv6 | RADIUSクライアントの IPv6 アドレス（Admin TUI・Auth Server を含めた対応が必要）。r5 で識別子を ID にしたため、API のパスへの影響はない。サブネット単位の登録も同様 |
 
@@ -498,7 +556,8 @@ compose では、`PROVISIONING_API_LISTEN_ADDR` は既定値（`:9444`）のま�
 1. 本書と OpenAPI 定義の作成（本書 r1）
 2. 共通ライブラリへの移動（§7.2。`pkg/validation`、`pkg/masterdata`。Admin TUI の動作は変えない）… 実装済み（本書 r2）
 3. provisioning-api の実装（§4〜§8）、D-01 / D-04 / D-08 / E-03 / T-02 / T-03 / B-02 等の更新、simwifi での結合確認 … 実装済み（本書 r3）
-4. 将来拡張（§10）は別途検討
+4. 監査ログ・セッションの参照（§3.6・§3.7。API 0.3.0）、セッションの読み出しの `pkg/masterdata` への移動、D-02 / D-04 / D-07 / D-08 / E-03 / B-02 / O-05 / T-02 / T-03 等の更新、simwifi での結合確認 … 実装済み（本書 r6）
+5. そのほかの将来拡張（§10）は別途検討
 
 ---
 
@@ -511,3 +570,4 @@ compose では、`PROVISIONING_API_LISTEN_ADDR` は既定値（`:9444`）のま�
 | r3 | 2026-10-08 | provisioning-api の実装の反映: ステータスを実装済みに。§3.2 に IP アドレスの表記の規則（先頭の 0 を不可）、§3.3 に `vlanId` は数字だけ・正規化・`rules` の検証エラーの区分、§4.1 に PATCH の `application/json`・本文の上限・要求の解釈（未知の項目等は `INVALID_MSG_FORMAT`）・トレースIDの形式・ページングの実装（SCAN）・404/405、§4.2 に書き込み前の読み出しと PATCH の応答、§4.3 に `cause` の優先順・`X-Operator-Id`・500 の扱い、§5 に有効期間外の拒否と実装（`RequestClientCert` + `VerifyConnection`、`GetConfigForClient`）、§6.1 をログの表に（`PROV_REQUEST_ERR`、`PROV_CLIENT_REJECTED`、`src_ip` がゲートウェイIPになる注記と O-05 §11.6 への参照）、§6.2 に `trace_id`・`msg`・`details` の形式・ログレベルによらない出力、§6.3 を反映済みに、§7.1 を実装の構成に（`pkg/masterdata` の `ListPage`・`ClientStore.Patch` の追加、Dockerfile・Makefile・CI）、§8.1.1 に `GIN_MODE`、§8.2 にヘルスチェック（`pgrep -f`）・終了条件・鍵のパーミッション、§9 に実施結果、§11 の手順3を実装済みに |
 | r4 | 2026-10-08 | 同じホストの BFF（別の compose。web-gui-for-eapaka-radius）から接続するための共有ネットワークの追加: §2.2 の公開範囲を、同じホストの BFF は共有ネットワーク（既定名 `eapaka-prov`）経由で `https://provisioning-api:9444` に接続する形に改め（コンテナからはホストの 127.0.0.1 に届かないため）、注記を追加。§6.1 の `src_ip` の注記に共有ネットワーク経由では BFF のコンテナの IP になることを追記。§8.1.2 に `PROVISIONING_SHARED_NETWORK`、§8.2 に共有ネットワークの定義・起動と停止の順序、サーバー証明書の SAN（`DNS:provisioning-api`）を追加。いずれも simwifi で確認 |
 | r5 | 2026-10-08 | RADIUSクライアントにサーバー採番の ID を導入（API 0.2.0。provisioning-api のバージョン 0.2.0）: §3 の識別子を ID に、§3.2 に `id` と、識別子の設計（`client:{IP}` の Hash の `id`、索引 `idx:client:{ID}`、カウンター `seq:client`、Lua による作成・IP の変更・削除、起動時の採番 `EnsureIDs`、`?ip=` による検索、ID に改めた理由）、PATCH での IP の変更（キーの付け替え、409）を追記。§3.4・§4.2 のパスを `/clients/{clientId}` に、§4.3 の `CLIENT_ALREADY_EXISTS` の条件に PATCH を追加。§6.1 に `assigned client ids`、§6.2 に `target_id` と details の `ip`。§10 の IPv6 に注記。simwifi で、変更前の版で登録したクライアントへの採番、IP の変更の認証への反映、Admin TUI の ID 表示を確認 |
+| r6 | 2026-10-09 | 監査ログとセッションの参照を追加（API 0.3.0。provisioning-api のバージョン 0.3.0）: §1.1・§1.4 の対象に監査ログの参照とセッションの参照を加え、一括操作（CSV）は Admin TUI だけで行い本APIでは扱わないことにした。§3.6（監査ログ。Valkey の Stream `audit:prov` への保存、上限 `PROVISIONING_API_AUDIT_MAX`、保存の失敗の扱い、aka-only-server に揃えた項目と `action` の命名）と §3.7（セッション。読み取りだけ、新しい順・`limit`・`total`、`?imsi=` と索引を掃除しないこと）を新設。§4.1 に一覧の作法、§4.2 に `GET /audit-logs`・`GET /sessions`、§4.4 に `sessionCount`、§6.1 に `audit_max` と `PROV_AUDIT_STORE_ERR`、§6.2 に Stream への保存、§7.1 に `SessionStore` と `audit` の Stream、§7.2 にセッションの読み出しの `pkg/masterdata` への移動、§8.1 に `PROVISIONING_API_AUDIT_MAX`、§9 に実施結果、§10・§11 を更新 |
