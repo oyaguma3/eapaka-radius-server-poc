@@ -77,8 +77,9 @@ type ClientCreate struct {
 	Vendor *string `json:"vendor"`
 }
 
-// ClientUpdate は RADIUSクライアントの変更の要求（JSON Merge Patch）。
+// ClientUpdate は RADIUSクライアントの変更の要求（JSON Merge Patch）。IP も変更できる（ID は変わらない）。
 type ClientUpdate struct {
+	IP     Optional[string] `json:"ip"`
 	Secret Optional[string] `json:"secret"`
 	Name   Optional[string] `json:"name"`
 	Vendor Optional[string] `json:"vendor"`
@@ -86,11 +87,12 @@ type ClientUpdate struct {
 
 // IsEmpty は項目が1つも指定されていないかを返す。
 func (u *ClientUpdate) IsEmpty() bool {
-	return !u.Secret.Set && !u.Name.Set && !u.Vendor.Set
+	return !u.IP.Set && !u.Secret.Set && !u.Name.Set && !u.Vendor.Set
 }
 
 // Client は RADIUSクライアントの応答。共有シークレットは含めない。
 type Client struct {
+	ID     int64  `json:"id"`
 	IP     string `json:"ip"`
 	Name   string `json:"name"`
 	Vendor string `json:"vendor"`
@@ -98,7 +100,7 @@ type Client struct {
 
 // NewClient は応答用の RADIUSクライアントを作る。
 func NewClient(c *model.RadiusClient) Client {
-	return Client{IP: c.IP, Name: c.Name, Vendor: c.Vendor}
+	return Client{ID: c.ID, IP: c.IP, Name: c.Name, Vendor: c.Vendor}
 }
 
 // ClientSecret は共有シークレットの応答。

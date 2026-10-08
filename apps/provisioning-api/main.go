@@ -28,7 +28,7 @@ import (
 
 // version は provisioning-api のバージョン（/status の version）。
 // ビルド時に -ldflags "-X main.version=..." で上書きできる。
-var version = "0.1.0"
+var version = "0.2.0"
 
 func main() {
 	startedAt := time.Now()
@@ -75,6 +75,16 @@ func main() {
 
 	// 5. 依存オブジェクト生成
 	svc := service.New(rdb, audit.NewLogger(out))
+
+	// ID の導入前に登録された RADIUSクライアントに ID を採番する（何度実行しても結果は同じ）
+	assigned, err := svc.EnsureClientIDs(context.Background())
+	if err != nil {
+		log.Error("failed to assign client ids", "error", err)
+		os.Exit(1)
+	}
+	if assigned > 0 {
+		log.Info("assigned client ids", "count", assigned)
+	}
 	h := handler.New(svc, log, version, cfg.NodeName, startedAt)
 	gin.SetMode(cfg.GinMode)
 	engine := server.NewEngine(h, cfg.AdminClients, log, logging.NewMasker(cfg.LogMaskIMSI))

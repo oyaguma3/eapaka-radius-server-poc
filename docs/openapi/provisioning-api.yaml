@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: EAP-AKA RADIUS PoC Provisioning API
-  version: 0.1.0
+  version: 0.2.0
   description: |
     EAP-AKA RADIUS PoC環境の加入者、RADIUSクライアント、認可ポリシーを操作する API（D-13）。
     本PoCの外に置く BFF や、将来の統合API（eapaka-node-provisioner）から使う。
@@ -27,6 +27,10 @@ info:
       それ以外の Content-Type は 400（`INVALID_MSG_FORMAT`）。本文の上限は 256KiB。
     - 未知の項目、型の違う値、JSON の後ろに続くデータは 400（`INVALID_MSG_FORMAT`）。
     - 該当しないパスは 404、メソッドは 405 を ProblemDetails（`cause` なし）で返す。
+
+    RADIUSクライアントの識別子（0.2.0 で変更）:
+    - RADIUSクライアントはサーバー採番の ID（1 からの連番。再利用しない）で識別する。IP アドレスは変更できる項目で、
+      `GET /clients?ip=` で IP から探せる。0.1.0 ではパスに IP アドレスを使っていた。
 
     Admin TUI との関係:
     - Admin TUI と同じ Valkey のキー・形式を読み書きする。原則として Admin TUI と同時には使わない。
@@ -233,7 +237,15 @@ paths:
       tags: [clients]
       summary: RADIUSクライアントの一覧を取得する
       operationId: listClients
-      description: 全件を IP アドレスの順（数値として比較）で返す。共有シークレットは含まない。
+      description: |
+        全件を IP アドレスの順（数値として比較）で返す。共有シークレットは含まない。
+        `ip` を指定した場合は、その IP アドレスのクライアントだけ（0 件または 1 件）を返す。
+      parameters:
+        - name: ip
+          in: query
+          description: IP アドレスで絞り込む。
+          schema:
+            $ref: '#/components/schemas/Ipv4'
       responses:
         '200':
           description: RADIUSクライアントの一覧
@@ -241,6 +253,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ClientList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '500':
           $ref: '#/components/responses/InternalError'
     post:
@@ -260,10 +274,10 @@ paths:
               vendor: generic
       responses:
         '201':
-          description: 登録した RADIUSクライアント。共有シークレットは含まない。
+          description: 登録した RADIUSクライアント（採番した `id` を含む）。共有シークレットは含まない。
           headers:
             Location:
-              description: 登録した RADIUSクライアントの URI（例 `/admin/v1/clients/192.168.10.1`）
+              description: 登録した RADIUSクライアントの URI（例 `/admin/v1/clients/1`）
               schema:
                 type: string
           content:
@@ -281,9 +295,9 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
-  /clients/{ip}:
+  /clients/{clientId}:
     parameters:
-      - $ref: '#/components/parameters/ClientIp'
+      - $ref: '#/components/parameters/ClientId'
       - $ref: '#/components/parameters/OperatorId'
       - $ref: '#/components/parameters/TraceId'
     get:
@@ -310,7 +324,7 @@ paths:
       operationId: updateClient
       description: |
         指定した項目だけを変更する（JSON Merge Patch）。
-        IP アドレスは変更できない（削除して登録し直す）。
+        `ip` を指定すると IP アドレスを変更する（ID は変わらない）。他のクライアントが使っている IP アドレスには変更できない（409）。
       requestBody:
         required: true
         content:
@@ -330,6 +344,12 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/ClientNotFound'
+        '409':
+          description: 変更後の IP アドレスのクライアントが既に存在する。`cause` は `CLIENT_ALREADY_EXISTS`。
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
         '500':
           $ref: '#/components/responses/InternalError'
     delete:
@@ -346,9 +366,9 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
-  /clients/{ip}/secret:
+  /clients/{clientId}/secret:
     parameters:
-      - $ref: '#/components/parameters/ClientIp'
+      - $ref: '#/components/parameters/ClientId'
       - $ref: '#/components/parameters/OperatorId'
       - $ref: '#/components/parameters/TraceId'
     get:
@@ -483,12 +503,13 @@ components:
       required: true
       schema:
         $ref: '#/components/schemas/Imsi'
-    ClientIp:
-      name: ip
+    ClientId:
+      name: clientId
       in: path
       required: true
+      description: RADIUSクライアントの ID。
       schema:
-        $ref: '#/components/schemas/Ipv4'
+        $ref: '#/components/schemas/ClientId'
     ImsiPrefix:
       name: prefix
       in: query
@@ -536,7 +557,7 @@ components:
         - `INVALID_MSG_FORMAT`: JSON として解釈できない、Content-Type が違う
         - `INVALID_QUERY_PARAM`: クエリパラメーターの値が不正
         - `MANDATORY_IE_MISSING`: 必須項目がない
-        - `MANDATORY_IE_INCORRECT`: 必須項目の値が不正（パスの IMSI / IP を含む）
+        - `MANDATORY_IE_INCORRECT`: 必須項目の値が不正（パスの IMSI / clientId を含む）
         - `OPTIONAL_IE_INCORRECT`: 任意項目の値が不正（PATCH の項目の `null`、`X-Operator-Id` の形式を含む）
       content:
         application/problem+json:
@@ -676,6 +697,13 @@ components:
           type: string
           description: 次のページがある場合だけ返す。
 
+    ClientId:
+      type: integer
+      format: int64
+      minimum: 1
+      description: サーバー採番の ID（1 からの連番。再利用しない）。
+      example: 1
+
     ClientSecretValue:
       type: string
       description: 共有シークレット。印字可能ASCII（空白を除く）1〜128文字。
@@ -692,10 +720,13 @@ components:
     Client:
       type: object
       required:
+        - id
         - ip
         - name
         - vendor
       properties:
+        id:
+          $ref: '#/components/schemas/ClientId'
         ip:
           $ref: '#/components/schemas/Ipv4'
         name:
@@ -726,6 +757,8 @@ components:
       description: 変更する項目だけを指定する。`null` は指定できない。
       minProperties: 1
       properties:
+        ip:
+          $ref: '#/components/schemas/Ipv4'
         secret:
           $ref: '#/components/schemas/ClientSecretValue'
         name:

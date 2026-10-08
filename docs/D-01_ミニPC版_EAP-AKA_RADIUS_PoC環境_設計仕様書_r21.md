@@ -1,4 +1,4 @@
-# D-01 ミニPC版 EAP-AKA RADIUS PoC環境 設計仕様書 (r20)
+# D-01 ミニPC版 EAP-AKA RADIUS PoC環境 設計仕様書 (r21)
 
 ## 1. システム概要
 
@@ -77,7 +77,7 @@
 | **6. Provisioning API** | `apps/provisioning-api` | **[管理API]** マスタデータの REST API（任意） | 1. **設定読込:** `envconfig` でロード。 2. **API提供:** `/admin/v1` の REST API（Gin）。加入者・RADIUSクライアント・認可ポリシーの CRUD、Ki / OPc・共有シークレットの読み出し（専用の経路だけ）、`/status`。 3. **認証:** mTLS（クライアント証明書の SHA-256 フィンガープリントを `PROVISIONING_API_ADMIN_CLIENTS` で固定）。 4. **DB操作:** Admin TUI と同じ `pkg/validation`・`pkg/masterdata` を使う。 5. **監査ログ:** 変更操作と秘密の値の読み出しを標準出力に JSON で記録（`event_id`=`AUDIT_LOG`）。 6. **ログ:** `slog` で構造化出力。 |
 
 > **データモデル注記:**
-> - **RadiusClient** (`client:{IP}`): `ip`, `secret`, `name`, `vendor` の4フィールド構成（`enabled` フィールドは廃止済み、`vendor` フィールドを追加）。
+> - **RadiusClient** (`client:{IP}`): `id`, `ip`, `secret`, `name`, `vendor` の構成（`enabled` フィールドは廃止済み、`vendor` フィールドを追加）。`id` はサーバー採番の ID（D-02 §2.B。索引 `idx:client:{ID}`、カウンター `seq:client`）で、Admin TUI と Provisioning API が管理上の識別子として使う。Auth / Acct Server は従来どおり送信元IPで `client:{IP}` を引く。
 > - **Subscriber** (`sub:{IMSI}`): `imsi`, `ki`, `opc`, `amf`, `sqn`, `created_at` の6フィールド構成（`enabled` フィールドは廃止済み、`created_at` フィールドを追加）。
 > - **ポリシー機能:** Policy構造体（`imsi`, `default`, `rules_json`）とPolicyRule構造体（`ssid`, `action`, `time_min`, `time_max`）によるIMSI単位のアクセス制御を提供。詳細はD-09「Auth Server詳細設計書」を参照。
 
@@ -655,3 +655,4 @@ VECTOR_GATEWAY_PLMN_MAP=""
 | r18 | 2026-10-07 | Admin TUI の加入者・RADIUSクライアント・認可ポリシーの store と validation を pkg に移した実装修正（Provisioning API（D-13）と共通で使うため。E-03 r11）の反映: §6 開発リポジトリ構成の pkg に `validation/`・`masterdata/` を追加 |
 | r19 | 2026-10-08 | Provisioning API（provisioning-api。D-13）の実装の反映: §2 の構成図に `8. provisioning-api`（任意）と注記、§3 の実装ノードを6つに（§3.1 に Provisioning API）、§3.2 のパッケージ利用マップに Prov 列（gin、go-redis、envconfig、slog）、§3.3 のキースキーマの使用コンポーネントに Provisioning API、§4 の公開ポートの注記に 9444/tcp（既定 127.0.0.1、`PROVISIONING_API_BIND`）、§5 のコンテナ一覧に provisioning-api（profile `provisioning`）、§6 のリポジトリ構成に `apps/provisioning-api`・`docs/openapi`・`certs/provisioning`、§7 の docker-compose.yml を実ファイルと一致させた（provisioning-api サービス）、ログレベルの注記の対象に provisioning-api |
 | r20 | 2026-10-08 | 同じホストの BFF から provisioning-api に接続するための共有ネットワーク（既定名 `eapaka-prov`。D-13 r4）の反映: §2 の provisioning-api の注記、§5 のコンテナ一覧に共有ネットワークへの参加を追記し、§7 の docker-compose.yml を実ファイルと一致させた |
+| r21 | 2026-10-08 | RADIUSクライアントにサーバー採番の ID を導入（D-02 r23、D-13 r5）: §3.1 のデータモデル注記の RadiusClient に `id`（索引 `idx:client:{ID}`、カウンター `seq:client`）を追加 |
