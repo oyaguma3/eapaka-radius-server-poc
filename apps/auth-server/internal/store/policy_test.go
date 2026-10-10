@@ -182,3 +182,50 @@ func TestGetPolicyValkeyError(t *testing.T) {
 		t.Errorf("expected ErrValkeyUnavailable, got: %v", err)
 	}
 }
+
+func TestGetPolicyStatus(t *testing.T) {
+	tests := []struct {
+		name       string
+		status     string // 空文字は status フィールドなし
+		wantStatus string
+		wantErr    error
+	}{
+		{"no status", "", policy.StatusActive, nil},
+		{"active", "active", policy.StatusActive, nil},
+		{"suspended", "suspended", policy.StatusSuspended, nil},
+		{"unknown", "stopped", "", policy.ErrPolicyInvalid},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mr := miniredis.RunT(t)
+			mr.HSet("policy:001010123456789", "default", "allow", "rules", "[]")
+			if tt.status != "" {
+				mr.HSet("policy:001010123456789", "status", tt.status)
+			}
+
+			vc, err := NewValkeyClient(newTestConfig(mr.Addr()))
+			if err != nil {
+				t.Fatalf("NewValkeyClient failed: %v", err)
+			}
+			defer vc.Close()
+
+			p, err := NewPolicyStore(vc).GetPolicy(context.Background(), "001010123456789")
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("error = %v, want %v", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("GetPolicy failed: %v", err)
+			}
+			if p.Status != tt.wantStatus {
+				t.Errorf("Status = %q, want %q", p.Status, tt.wantStatus)
+			}
+			if p.IsSuspended() != (tt.wantStatus == policy.StatusSuspended) {
+				t.Errorf("IsSuspended() = %v", p.IsSuspended())
+			}
+		})
+	}
+}

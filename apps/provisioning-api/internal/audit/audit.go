@@ -24,6 +24,10 @@ const (
 	OpDelete Operation = "delete"
 	// OpRead は秘密の値（Ki / OPc、共有シークレット）の読み出し
 	OpRead Operation = "read"
+	// OpSuspend は加入者の停止（認可ポリシーの status を suspended にする）
+	OpSuspend Operation = "suspend"
+	// OpResume は加入者の再開（認可ポリシーの status を active にする）
+	OpResume Operation = "resume"
 )
 
 // TargetType は監査ログの対象種別を表す。
@@ -40,10 +44,12 @@ const (
 
 // msgSuffix は操作種別ごとの msg の末尾（msg は「{target_type} {末尾}」。例: subscriber created）。
 var msgSuffix = map[Operation]string{
-	OpCreate: "created",
-	OpUpdate: "updated",
-	OpDelete: "deleted",
-	OpRead:   "secret read",
+	OpCreate:  "created",
+	OpUpdate:  "updated",
+	OpDelete:  "deleted",
+	OpRead:    "secret read",
+	OpSuspend: "suspended",
+	OpResume:  "resumed",
 }
 
 // Actor は操作した者を表す。

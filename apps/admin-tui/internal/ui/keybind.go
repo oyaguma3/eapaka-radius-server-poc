@@ -27,6 +27,7 @@ var (
 	KeyDelete  = tcell.KeyF4
 	KeyRefresh = tcell.KeyF5
 	KeyFilter  = tcell.KeyF6
+	KeyStatus  = tcell.KeyF7 // 認可ポリシー一覧での停止・再開
 	KeyHelp    = tcell.KeyF1
 	KeyQuit    = tcell.KeyCtrlQ
 )
@@ -38,6 +39,7 @@ const (
 	RuneDelete  = 'd'
 	RuneRefresh = 'r'
 	RuneFilter  = '/'
+	RuneStatus  = 's' // 認可ポリシー一覧での停止・再開
 	RuneHelp    = '?'
 	RuneQuit    = 'q'
 	RuneYes     = 'y'

@@ -216,3 +216,21 @@ func TestPolicyClone(t *testing.T) {
 		t.Errorf("original AllowedSSIDs was modified")
 	}
 }
+
+func TestPolicyStatus(t *testing.T) {
+	policy := NewPolicy("440101234567890", "deny")
+	if policy.Status != PolicyStatusActive {
+		t.Errorf("NewPolicy().Status = %q, want %q", policy.Status, PolicyStatusActive)
+	}
+	if policy.IsSuspended() {
+		t.Error("IsSuspended() = true, want false for active")
+	}
+
+	policy.Status = PolicyStatusSuspended
+	if !policy.IsSuspended() {
+		t.Error("IsSuspended() = false, want true for suspended")
+	}
+	if clone := policy.Clone(); clone.Status != PolicyStatusSuspended {
+		t.Errorf("Clone().Status = %q, want %q", clone.Status, PolicyStatusSuspended)
+	}
+}

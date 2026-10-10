@@ -84,15 +84,45 @@ func (s *PolicyStore) Upsert(ctx context.Context, policy *model.Policy) error {
 }
 
 // Put はポリシーを作成または置き換え、作成した（存在しなかった）かを返す（D-13 §3.3 の PUT 用）。
+// status は変えず、書き込んだ後の状態を policy.Status に入れる（新規なら active）。
 func (s *PolicyStore) Put(ctx context.Context, policy *model.Policy) (created bool, err error) {
 	fields, err := policyFields(policy)
 	if err != nil {
 		return false, err
 	}
-	return runHashScript(ctx, s.client, putHashScript, PolicyKey(policy.IMSI), fields)
+	res, err := putPolicyScript.Run(ctx, s.client, []string{PolicyKey(policy.IMSI)}, fieldArgs(fields)...).Slice()
+	if err != nil {
+		return false, err
+	}
+	if len(res) != 2 {
+		return false, errors.New("unexpected result of put policy script")
+	}
+	n, _ := res[0].(int64)
+	status, _ := res[1].(string)
+	policy.Status = policyStatus(map[string]string{"status": status})
+	return n == 1, nil
+}
+
+// SetStatus は既存のポリシーの状態（status）を変え、変更前の状態を返す（D-13 §3.3 の PUT /policies/{imsi}/status 用）。
+// 存在確認・変更前の値の読み出し・書き込みを1回の操作で行い、存在しなければ何も書き込まずに ErrPolicyNotFound を返す。
+// 変更前と同じ状態なら書き込まない。status の値の検証は呼び出し側で行う。
+func (s *PolicyStore) SetStatus(ctx context.Context, imsi, status string) (prev string, err error) {
+	res, err := setStatusScript.Run(ctx, s.client, []string{PolicyKey(imsi)}, status).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return "", ErrPolicyNotFound
+		}
+		return "", err
+	}
+	prev, _ = res.(string)
+	if prev == "" {
+		prev = model.PolicyStatusActive
+	}
+	return prev, nil
 }
 
 // policyFields はポリシーのHashフィールドを返す（Auth Serverと互換性のある形式。D-02）。
+// status は含めない（作成・更新・置き換えで停止の状態を変えないため。変更は SetStatus で行う）。
 func policyFields(policy *model.Policy) (map[string]any, error) {
 	// RulesをJSONにエンコード
 	rulesJSON := "[]"
@@ -190,6 +220,7 @@ func (s *PolicyStore) List(ctx context.Context) ([]*model.Policy, error) {
 			policy.RulesJSON = "[]"
 			policy.Rules = []model.PolicyRule{}
 		}
+		policy.Status = policyStatus(result)
 
 		policies = append(policies, policy)
 	}
@@ -244,11 +275,15 @@ func (s *PolicyStore) BulkCreate(ctx context.Context, policies []*model.Policy) 
 			rulesJSON = policy.RulesJSON
 		}
 
-		// Hash形式で保存
-		pipe.HSet(ctx, key, map[string]interface{}{
+		// Hash形式で保存。status は指定があるときだけ書き込む（空なら既存の状態を変えない。新規なら active）
+		fields := map[string]interface{}{
 			"default": policy.Default,
 			"rules":   rulesJSON,
-		})
+		}
+		if policy.Status != "" {
+			fields["status"] = policy.Status
+		}
+		pipe.HSet(ctx, key, fields)
 	}
 
 	_, err := pipe.Exec(ctx)
@@ -298,6 +333,15 @@ func policyFromHash(imsi string, fields map[string]string) (*model.Policy, error
 		policy.RulesJSON = "[]"
 		policy.Rules = []model.PolicyRule{}
 	}
+	policy.Status = policyStatus(fields)
 
 	return policy, nil
+}
+
+// policyStatus は Hash の status を返す。ない（空）ときは active とみなす（D-02）。
+func policyStatus(fields map[string]string) string {
+	if status := fields["status"]; status != "" {
+		return status
+	}
+	return model.PolicyStatusActive
 }

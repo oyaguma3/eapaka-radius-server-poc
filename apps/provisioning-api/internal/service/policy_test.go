@@ -155,3 +155,84 @@ func TestGetDeleteListPolicies(t *testing.T) {
 		t.Errorf("DeletePolicy() bad imsi error = %v", err)
 	}
 }
+
+func TestSetPolicyStatus(t *testing.T) {
+	svc, mr, buf := newTestService(t)
+	ctx := context.Background()
+	key := masterdata.PolicyKey(testIMSI)
+
+	// 認可ポリシーがなければ ErrPolicyNotFound
+	if _, err := svc.SetPolicyStatus(ctx, testActor, testIMSI, dto.PolicyStatusPut{Status: ptr("suspended")}); !errors.Is(err, masterdata.ErrPolicyNotFound) {
+		t.Fatalf("SetPolicyStatus() error = %v, want ErrPolicyNotFound", err)
+	}
+	if _, _, err := svc.PutPolicy(ctx, testActor, testIMSI, testPolicy()); err != nil {
+		t.Fatalf("PutPolicy() error = %v", err)
+	}
+	n := len(auditEntries(t, buf))
+
+	// 停止（大文字・前後の空白は正規化する）
+	p, err := svc.SetPolicyStatus(ctx, testActor, testIMSI, dto.PolicyStatusPut{Status: ptr(" SUSPENDED ")})
+	if err != nil || p.Status != "suspended" || len(p.Rules) != 2 {
+		t.Fatalf("SetPolicyStatus() = %+v, %v", p, err)
+	}
+	if mr.HGet(key, "status") != "suspended" {
+		t.Errorf("stored status = %q", mr.HGet(key, "status"))
+	}
+	if e := lastAudit(t, buf); e["operation"] != "suspend" || e["msg"] != "policy suspended" || e["details"] != "status: active -> suspended" || e["target_imsi"] != testIMSI {
+		t.Errorf("audit = %v", e)
+	}
+
+	// 同じ状態への変更は監査ログに残さない
+	if p, err = svc.SetPolicyStatus(ctx, testActor, testIMSI, dto.PolicyStatusPut{Status: ptr("suspended")}); err != nil || p.Status != "suspended" {
+		t.Fatalf("SetPolicyStatus() again = %+v, %v", p, err)
+	}
+	if got := len(auditEntries(t, buf)); got != n+1 {
+		t.Errorf("audit entries = %d, want %d", got, n+1)
+	}
+
+	// 置き換えでは状態は変わらず、応答に今の状態が入る
+	p, _, err = svc.PutPolicy(ctx, testActor, testIMSI, testPolicy())
+	if err != nil || p.Status != "suspended" {
+		t.Fatalf("PutPolicy() = %+v, %v", p, err)
+	}
+
+	// 再開
+	if p, err = svc.SetPolicyStatus(ctx, testActor, testIMSI, dto.PolicyStatusPut{Status: ptr("active")}); err != nil || p.Status != "active" {
+		t.Fatalf("SetPolicyStatus(active) = %+v, %v", p, err)
+	}
+	if e := lastAudit(t, buf); e["operation"] != "resume" || e["msg"] != "policy resumed" || e["details"] != "status: suspended -> active" {
+		t.Errorf("audit = %v", e)
+	}
+
+	mr.SetError("forced error")
+	if _, err := svc.SetPolicyStatus(ctx, testActor, testIMSI, dto.PolicyStatusPut{Status: ptr("active")}); err == nil {
+		t.Error("SetPolicyStatus() expected error")
+	}
+}
+
+func TestSetPolicyStatus_Validation(t *testing.T) {
+	tests := []struct {
+		name      string
+		imsi      string
+		req       dto.PolicyStatusPut
+		wantCause string
+	}{
+		{"bad imsi", "x", dto.PolicyStatusPut{Status: ptr("active")}, dto.CauseMandatoryIEIncorrect},
+		{"missing", testIMSI, dto.PolicyStatusPut{}, dto.CauseMandatoryIEMissing},
+		{"empty", testIMSI, dto.PolicyStatusPut{Status: ptr("")}, dto.CauseMandatoryIEIncorrect},
+		{"unknown", testIMSI, dto.PolicyStatusPut{Status: ptr("stopped")}, dto.CauseMandatoryIEIncorrect},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, mr, buf := newTestService(t)
+			mr.HSet(masterdata.PolicyKey(testIMSI), "default", "deny", "rules", "[]")
+			_, err := svc.SetPolicyStatus(context.Background(), testActor, tt.imsi, tt.req)
+			if ve := validationError(t, err); ve.Cause() != tt.wantCause {
+				t.Errorf("cause = %s, want %s", ve.Cause(), tt.wantCause)
+			}
+			if mr.HGet(masterdata.PolicyKey(testIMSI), "status") != "" || buf.Len() != 0 {
+				t.Errorf("status = %q, audit = %q", mr.HGet(masterdata.PolicyKey(testIMSI), "status"), buf.String())
+			}
+		})
+	}
+}

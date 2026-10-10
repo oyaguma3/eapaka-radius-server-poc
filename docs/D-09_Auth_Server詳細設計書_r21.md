@@ -1,4 +1,4 @@
-﻿# D-09 Auth Server詳細設計書 (r20)
+﻿# D-09 Auth Server詳細設計書 (r21)
 
 ## ■セクション1: 概要
 
@@ -740,6 +740,7 @@ Auth Serverにおいて、以下のevent_idを含むログ出力時にマスキ�
 | `VECTOR_API_ERR` / `VECTOR_CONN_ERR` / `VECTOR_CB_OPEN` / `VECTOR_UNKNOWN_ERR` | Vector Gateway呼び出しエラー時（認証エンジン出力分。§7.8.3参照） | マスキング対象 |
 | `AUTH_POLICY_NOT_FOUND` | ポリシー未設定時 | マスキング対象 |
 | `AUTH_POLICY_DENIED` | ポリシー拒否時 | マスキング対象 |
+| `AUTH_SUBSCRIBER_SUSPENDED` | 停止中の加入者の拒否時（r21） | マスキング対象 |
 | `AUTH_RESYNC_LIMIT` | 再同期上限超過時 | マスキング対象 |
 | `EAP_UNSUPPORTED_TYPE` / `EAP_IDENTITY_INVALID` | 非対応のIdentity種別 / Identity解析失敗 / 永続ID要求への応答が仮名・再認証ID（初回Identity・AKA-Identity応答とも） | `imsi` なし。`user_name` を `MaskUserName` でマスキング |
 
@@ -2701,6 +2702,8 @@ Challenge応答検証成功
     │       │
     │       ├── [不在] → Access-Reject
     │       │
+    │       ├── [status=suspended] → Access-Reject（停止中。r21）
+    │       │
     │       └── [存在] → ルール評価
     │               │
     │               ├── [一致ルールあり] → AVP生成 → Access-Accept
@@ -2722,6 +2725,7 @@ Challenge応答検証成功
 | ---------- | ------------- | ---- | ----------------------------------- |
 | `rules`    | String (JSON) | Yes  | 認可ルール配列                      |
 | `default`  | String        | Yes  | デフォルト動作（`allow` or `deny`） |
+| `status`   | String        | No   | 加入者の状態（`active` or `suspended`）。ないときは `active`（r21。D-02 r25） |
 
 #### 8.3.2 rulesフィールド構造
 
@@ -2762,6 +2766,7 @@ Challenge応答検証成功
 - キー不在の場合は `ErrPolicyNotFound` を返却
 - `rules` フィールドをJSONパース
 - パースエラーは `ErrPolicyInvalid` として処理
+- `status` フィールドを読む（r21）。欠落・空文字は `active`、`active` / `suspended` 以外は `ErrPolicyInvalid`（安全側に倒して拒否する）
 
 #### 8.4.2 主要型
 
@@ -2769,7 +2774,15 @@ Challenge応答検証成功
 type Policy struct {
     Rules   []PolicyRule
     Default string  // "allow" or "deny"
+    Status  string  // "active" or "suspended"（r21）
 }
+
+const (
+    StatusActive    = "active"
+    StatusSuspended = "suspended"
+)
+
+func (p *Policy) IsSuspended() bool  // Status が suspended か
 
 type PolicyRule struct {
     NasID          string   `json:"nas_id"`
@@ -2784,6 +2797,18 @@ type PolicyRule struct {
 - `default` フィールドの値は小文字で統一（`allow`/`deny`）
 - 不正な `default` 値は `deny` として扱う
 - `rules` が空配列の場合は `default` に従う
+
+#### 8.4.4 停止の判定（r21）
+
+**ファイル:** `internal/engine/engine.go`（`handleChallengeResponse`）
+
+加入者を登録したまま一時的に認証できなくする「停止の印」（D-02 §2.C の `status`）を、ポリシーの取得に成功した後、ルールの評価（§8.5）の前に判定する。
+
+- `status` が `suspended` なら、ルールを評価せずに `AUTH_SUBSCRIBER_SUSPENDED`（WARN。`trace_id`・`imsi`（マスク）・`nas_identifier`）を出し、EAP コンテキストを削除して、EAP-Failure を含む Access-Reject を返す（今の認可の拒否と同じ形。Reply-Message は付けない）。セッションは作らない。
+- 判定は鍵の置き場所によらない（本PoCの Vector API でも aka-only-server（接続方式 `01`）でも同じ）。
+- 判定の位置は Challenge の検証の後なので、停止中の加入者の認証の試みでも認証ベクターは取得され、SQN は進む。認証ベクターの取得の前に判定する案は、認証の流れを大きく変えるので採らない（停止中に SQN が進むことは許容する）。
+- 効くのは次の認証から。接続中のセッションは切らない（Disconnect / CoA は扱わない）。再認証・Session-Timeout の後の認証で拒否される。
+- `status` を書き換えるのは Provisioning API の `PUT /policies/{imsi}/status`（D-13 §3.3）と Admin TUI の認可ポリシー一覧の停止・再開（D-05 §4.4.1）。auth-server は読むだけで、キャッシュしない（§8.11）。
 
 ### 8.5 ルール評価
 
@@ -2972,7 +2997,8 @@ func generateMPPEKeys(
 | エラー種別          | 検出条件                        | 対処        | ログ                          |
 | ------------------- | ------------------------------- | ----------- | ----------------------------- |
 | ポリシー未設定      | `policy:{IMSI}` 不在            | Reject      | WARN: `AUTH_POLICY_NOT_FOUND` |
-| ポリシー不正        | JSONパース失敗                  | Reject      | WARN: `AUTH_POLICY_NOT_FOUND`（`error` 属性で区別） |
+| ポリシー不正        | JSONパース失敗・`status` の不正値（r21） | Reject      | WARN: `AUTH_POLICY_NOT_FOUND`（`error` 属性で区別） |
+| 加入者停止中（r21） | `status` が `suspended`         | Reject（ルールを評価しない） | WARN: `AUTH_SUBSCRIBER_SUSPENDED` |
 | Valkeyエラー        | ポリシー取得時のValkeyエラー    | Reject      | WARN: `AUTH_POLICY_NOT_FOUND`（`error` 属性で区別） |
 | ルール不一致        | 全ルール評価後マッチなし + deny | Reject      | WARN: `AUTH_POLICY_DENIED`    |
 | NAS-ID/SSID取得失敗 | AVP不在                         | 空文字として評価（`nas_id` `"*"`・`allowed_ssids` `["*"]` のルールには一致。一致しなければdefault判定） | なし |
@@ -2995,6 +3021,15 @@ Challenge応答検証成功
     │       │       └── → Access-Reject
     │       │
     │       └── [成功] → Policy取得
+    │
+    ├── 停止の判定（r21。§8.4.4）
+    │       │
+    │       ├── [status=suspended]
+    │       │       │
+    │       │       ├── ログ: AUTH_SUBSCRIBER_SUSPENDED
+    │       │       └── → Access-Reject
+    │       │
+    │       └── [active] → 次へ
     │
     ├── NAS-Identifier/SSID抽出
     │       │
@@ -3027,6 +3062,7 @@ Challenge応答検証成功
 | --------------------- | ----------------------- | ------ | ----------------------------------- |
 | ポリシー未設定・パースエラー・Valkeyエラー | `AUTH_POLICY_NOT_FOUND` | WARN   | `trace_id`, `imsi`, `nas_identifier`, `error` |
 | ルール不一致でDeny    | `AUTH_POLICY_DENIED`    | WARN   | `trace_id`, `imsi`, `nas_identifier`, `reason` |
+| 加入者停止中でReject（r21） | `AUTH_SUBSCRIBER_SUSPENDED` | WARN | `trace_id`, `imsi`, `nas_identifier` |
 | ルール一致でAccept    | -（`AUTH_SUCCESS` のみ。`nas_identifier` を含む）| -      | -                                   |
 | default=allowでAccept | -（`AUTH_SUCCESS` のみ）| -      | -                                   |
 
@@ -4689,3 +4725,4 @@ Auth Server内で直接参照する外部パッケージの型：
 | r18 | 2026-10-04 | §3.4 の main.go の例で、RADIUS サーバーの生成を実装どおり `server.NewServer(cfg.ListenAddr, handler, secretSource)` に訂正（r17 までは `server.New(cfg.ListenAddr, secretSource, handler)` と、関数名と引数の順序が実装と異なっていた） |
 | r19 | 2026-10-05 | Status-Server に正常に応答したときのログを DEBUG に下げた実装修正（D-04 r32）の反映: §4.6 / §5.10 の `PKT_RECV` を Status-Server のときだけ DEBUG、§5.10 の `RADIUS_STATUS_OK` を DEBUG に変更。§5.8 の注意点に、DEBUG とする理由（radsecproxy 等の複数のプロキシが定期的に送る構成で INFO ログが埋まる）と `PKT_SEND_ERR` を追記。検証失敗の `RADIUS_STATUS_AUTH_FAIL`（WARN）は変更なし |
 | r20 | 2026-10-06 | NAS-Identifier を NAS の識別情報としてセッションとログに加えた実装修正（D-04 r33、D-02 r20）の反映（radsecproxy 等のプロキシ経由では送信元IPがプロキシのIPになり NAS を区別できないため）: §4.6 / §5.10 の `PKT_RECV` に `nas_identifier`（Access-Request のとき）、§8.10 の `AUTH_POLICY_NOT_FOUND`・`AUTH_POLICY_DENIED`、§3.5 の `AUTH_SUCCESS` の例に `nas_identifier` を追加。§9.3 / §9.7.3 / §10.4.2 のセッション構造体・初期値・作成処理に `nas_identifier`（ポリシー評価に使った NAS-Identifier）を追加 |
+| r21 | 2026-10-10 | 加入者の停止の印（D-02 r25 の `policy:{IMSI}` の `status`）の反映: §8.2 の処理フロー、§8.3.1 のフィールド定義、§8.4.1 の取得（`status` の読み込み、不正値は `ErrPolicyInvalid`）、§8.4.2 の主要型（`Status`、`IsSuspended`）を更新し、§8.4.4（停止の判定。ポリシー取得の後・ルール評価の前に判定し、`suspended` なら `AUTH_SUBSCRIBER_SUSPENDED`（WARN）で EAP-Failure を含む Access-Reject。停止中も SQN は進む、次の認証から効く）を新設。§8.8 のエラー表、§8.9 の処理フロー図、§8.10 のログ出力仕様、§3.5.4 の IMSI マスキングの適用箇所の表に `AUTH_SUBSCRIBER_SUSPENDED` を追加 |

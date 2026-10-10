@@ -2,6 +2,14 @@ package model
 
 import "encoding/json"
 
+// 認可ポリシーの状態（policy:{IMSI} の status フィールド。D-02）
+const (
+	// PolicyStatusActive は利用中（status がないときもこれとみなす）
+	PolicyStatusActive = "active"
+	// PolicyStatusSuspended は停止中（Auth Server は認証を拒否する）
+	PolicyStatusSuspended = "suspended"
+)
+
 // Policy は加入者のアクセスポリシーを表す。
 // Valkeyキー: policy:{IMSI}
 type Policy struct {
@@ -9,6 +17,9 @@ type Policy struct {
 	Default   string       `json:"default"`    // デフォルトアクション（"allow" or "deny"）
 	RulesJSON string       `json:"rules_json"` // ルールのJSON文字列（Valkey保存用）
 	Rules     []PolicyRule `json:"-"`          // パース済みルール（メモリ上のみ）
+	// Status は状態（"active" or "suspended"）。読み出しでは status がなければ "active"。
+	// 作成・更新（Create / Update / Put）では書き込まない。変更は PolicyStore.SetStatus で行う
+	Status string `json:"status"`
 }
 
 // PolicyRule はポリシールールを表す。
@@ -26,6 +37,7 @@ func NewPolicy(imsi, defaultAction string) *Policy {
 		Default:   defaultAction,
 		RulesJSON: "[]",
 		Rules:     []PolicyRule{},
+		Status:    PolicyStatusActive,
 	}
 }
 
@@ -53,6 +65,11 @@ func (p *Policy) IsAllowByDefault() bool {
 	return p.Default == "allow"
 }
 
+// IsSuspended は停止中かどうかを返す。
+func (p *Policy) IsSuspended() bool {
+	return p.Status == PolicyStatusSuspended
+}
+
 // Clone はポリシーのディープコピーを作成する。
 func (p *Policy) Clone() *Policy {
 	clone := &Policy{
@@ -60,6 +77,7 @@ func (p *Policy) Clone() *Policy {
 		Default:   p.Default,
 		RulesJSON: p.RulesJSON,
 		Rules:     make([]PolicyRule, len(p.Rules)),
+		Status:    p.Status,
 	}
 	for i, rule := range p.Rules {
 		clone.Rules[i] = PolicyRule{

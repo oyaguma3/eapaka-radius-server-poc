@@ -581,6 +581,53 @@ func TestEngine_PolicyDenied_Reject(t *testing.T) {
 	}
 }
 
+// TestEngine_SubscriberSuspended_Reject は停止中の加入者をルールの評価の前に拒否することを確認する（D-09 セクション8.4.4）
+func TestEngine_SubscriberSuspended_Reject(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	defer slog.SetDefault(prev)
+
+	// Evaluate は呼ばれない（呼ばれれば gomock が失敗にする）
+	eng, _, mockCtxStore, _, mockPolicyStore, _ := newChallengeTestEngine(ctrl)
+
+	keys := eapaka.DeriveKeysAKA("0"+testIMSI+"@realm", testCK, testIK)
+	eapCtx := makeChallengeContext(eapaka.TypeAKA, keys.K_aut, testXRES, keys.MSK)
+	challengeResp := buildChallengeResponseEAPMessage(2, eapaka.TypeAKA, keys.K_aut, testXRES)
+
+	mockCtxStore.EXPECT().Get(gomock.Any(), testTraceID).Return(eapCtx, nil)
+	mockPolicyStore.EXPECT().GetPolicy(gomock.Any(), testIMSI).
+		Return(&policy.Policy{Default: "allow", Status: policy.StatusSuspended}, nil)
+	mockCtxStore.EXPECT().Delete(gomock.Any(), testTraceID).Return(nil)
+
+	req := &eap.Request{
+		TraceID:       testTraceID,
+		NASIdentifier: testNASID,
+		CalledStation: "AA-BB-CC-DD-EE-FF:" + testSSID,
+		UserName:      "0" + testIMSI + "@realm",
+		State:         []byte(testTraceID),
+		EAPMessage:    challengeResp,
+	}
+
+	result := eng.Process(context.Background(), req)
+	if result.Action != eap.ActionReject {
+		t.Errorf("Action: got %v, want %v", result.Action, eap.ActionReject)
+	}
+	if len(result.EAPMessage) < 1 || result.EAPMessage[0] != 4 {
+		t.Errorf("EAPMessage: got %x, want EAP-Failure", result.EAPMessage)
+	}
+	logs := buf.String()
+	if !strings.Contains(logs, `"event_id":"AUTH_SUBSCRIBER_SUSPENDED"`) || !strings.Contains(logs, `"level":"WARN"`) {
+		t.Errorf("AUTH_SUBSCRIBER_SUSPENDED（WARN）が出力されていない: %s", logs)
+	}
+	if strings.Contains(logs, testIMSI) {
+		t.Errorf("ログにマスクされていないIMSIが含まれる: %s", logs)
+	}
+}
+
 func TestEngine_ContextNotFound_Reject(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -1826,6 +1873,7 @@ func TestEngine_NASIdentifier(t *testing.T) {
 		{"accept", &policy.Policy{Default: "allow"}, nil, true, "AUTH_SUCCESS", eap.ActionAccept},
 		{"policy denied", &policy.Policy{Default: "deny"}, nil, false, "AUTH_POLICY_DENIED", eap.ActionReject},
 		{"policy not found", nil, policy.ErrPolicyNotFound, false, "AUTH_POLICY_NOT_FOUND", eap.ActionReject},
+		{"subscriber suspended", &policy.Policy{Default: "allow", Status: policy.StatusSuspended}, nil, false, "AUTH_SUBSCRIBER_SUSPENDED", eap.ActionReject},
 	}
 
 	for _, tt := range tests {
@@ -1845,7 +1893,7 @@ func TestEngine_NASIdentifier(t *testing.T) {
 			mockCtxStore.EXPECT().Get(gomock.Any(), testTraceID).Return(eapCtx, nil)
 			mockCtxStore.EXPECT().Delete(gomock.Any(), testTraceID).Return(nil)
 			mockPolicyStore.EXPECT().GetPolicy(gomock.Any(), testIMSI).Return(tt.policy, tt.policyErr)
-			if tt.policyErr == nil {
+			if tt.policyErr == nil && !tt.policy.IsSuspended() {
 				mockEvaluator.EXPECT().Evaluate(gomock.Any(), testNASID, testSSID).
 					Return(&policy.EvaluationResult{Allowed: tt.allowed, DenyReason: "no matching rule"})
 			}

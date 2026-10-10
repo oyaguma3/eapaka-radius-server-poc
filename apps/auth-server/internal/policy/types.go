@@ -1,9 +1,23 @@
 package policy
 
+// 認可ポリシーの状態（policy:{IMSI} の status フィールド。D-02）
+const (
+	// StatusActive は利用中（status がないときもこれとみなす）
+	StatusActive = "active"
+	// StatusSuspended は停止中（認証を拒否する。D-09 セクション8.4.4）
+	StatusSuspended = "suspended"
+)
+
 // Policy は認可ポリシーを表す（D-09 セクション8.3/8.4.2準拠）。
 type Policy struct {
 	Rules   []PolicyRule
 	Default string // "allow" or "deny"
+	Status  string // "active" or "suspended"
+}
+
+// IsSuspended は加入者が停止中かどうかを返す。
+func (p *Policy) IsSuspended() bool {
+	return p.Status == StatusSuspended
 }
 
 // PolicyRule は個別の認可ルールを表す（D-09 セクション8.3.3準拠）。

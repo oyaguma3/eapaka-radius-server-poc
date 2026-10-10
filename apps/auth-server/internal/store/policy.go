@@ -53,5 +53,15 @@ func (s *policyStore) GetPolicy(ctx context.Context, imsi string) (*policy.Polic
 		p.Rules = []policy.PolicyRule{}
 	}
 
+	// statusフィールドの取得（ないときは active。未知の値は安全側に倒して不正として扱う）
+	switch status := result["status"]; status {
+	case "", policy.StatusActive:
+		p.Status = policy.StatusActive
+	case policy.StatusSuspended:
+		p.Status = status
+	default:
+		return nil, fmt.Errorf("%w: unknown status %q", policy.ErrPolicyInvalid, status)
+	}
+
 	return p, nil
 }

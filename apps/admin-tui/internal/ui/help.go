@@ -53,7 +53,9 @@ func NewHelpModal(sections []HelpSection, onClose func()) *HelpModal {
 		}
 	}
 
-	// Policy Form用のF6キーバインド情報を右カラムに追記
+	// Policy List の停止・再開と、Policy Form の F6 のキーバインド情報を右カラムに追記
+	rightContent += "\n[yellow::b]Policy List[::-]\n"
+	rightContent += fmt.Sprintf("  [cyan]%-10s[-] %s\n", "F7 / s", "Suspend/Resume selected")
 	rightContent += "\n[yellow::b]Policy Form[::-]\n"
 	rightContent += fmt.Sprintf("  [cyan]%-10s[-] %s\n", "F6", "Toggle Form/Rules focus")
 

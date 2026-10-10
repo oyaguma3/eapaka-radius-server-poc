@@ -237,3 +237,24 @@ func TestNormalizePolicyInput(t *testing.T) {
 		t.Errorf("expected AllowedSSIDs[0] 'ssid1', got '%s'", normalized.Rules[0].AllowedSSIDs[0])
 	}
 }
+
+func TestValidatePolicyStatus(t *testing.T) {
+	tests := []struct {
+		status  string
+		wantErr bool
+	}{
+		{"active", false},
+		{"suspended", false},
+		{"", true},
+		{"Active", true},
+		{"stopped", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.status, func(t *testing.T) {
+			err := ValidatePolicyStatus(tt.status)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidatePolicyStatus(%q) error = %v, wantErr %v", tt.status, err, tt.wantErr)
+			}
+		})
+	}
+}
