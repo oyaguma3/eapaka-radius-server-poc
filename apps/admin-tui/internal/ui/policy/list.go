@@ -24,6 +24,7 @@ type ListScreen struct {
 	onCreate    func()
 	onEdit      func(imsi string)
 	onDelete    func(imsi string)
+	onStatus    func(policy *model.Policy)
 	onBack      func()
 }
 
@@ -69,6 +70,11 @@ func (s *ListScreen) SetOnEdit(handler func(imsi string)) {
 // SetOnDelete は削除時のコールバックを設定する。
 func (s *ListScreen) SetOnDelete(handler func(imsi string)) {
 	s.onDelete = handler
+}
+
+// SetOnToggleStatus は停止・再開（F7 / s）時のコールバックを設定する。
+func (s *ListScreen) SetOnToggleStatus(handler func(policy *model.Policy)) {
+	s.onStatus = handler
 }
 
 // SetOnBack は戻る時のコールバックを設定する。
@@ -119,18 +125,37 @@ func (s *ListScreen) ClearFilter() {
 
 // GetSelectedIMSI は選択されているIMSIを返す。
 func (s *ListScreen) GetSelectedIMSI() string {
+	if p := s.GetSelectedPolicy(); p != nil {
+		return p.IMSI
+	}
+	return ""
+}
+
+// GetSelectedPolicy は選択されているポリシーを返す。選択がなければ nil を返す。
+func (s *ListScreen) GetSelectedPolicy() *model.Policy {
 	row, _ := s.table.GetSelection()
 	if row < 1 || row > len(s.getFilteredPolicies()) {
-		return ""
+		return nil
 	}
 
 	filtered := s.getFilteredPolicies()
 	pageItems := ui.GetPageItems(filtered, s.pagination)
 	idx := row - 1
 	if idx < 0 || idx >= len(pageItems) {
-		return ""
+		return nil
 	}
-	return pageItems[idx].IMSI
+	return pageItems[idx]
+}
+
+// SelectIMSI は表示中のページにあるIMSIの行を選択する（停止・再開の後に選択を保つため）。
+func (s *ListScreen) SelectIMSI(imsi string) {
+	pageItems := ui.GetPageItems(s.getFilteredPolicies(), s.pagination)
+	for i, p := range pageItems {
+		if p.IMSI == imsi {
+			s.table.Select(i+1, 0)
+			return
+		}
+	}
 }
 
 func (s *ListScreen) getFilteredPolicies() []*model.Policy {
@@ -143,7 +168,7 @@ func (s *ListScreen) render() {
 	s.table.Clear()
 
 	// ヘッダー
-	headers := []string{"IMSI", "Default", "Rules"}
+	headers := []string{"IMSI", "Default", "Rules", "Status"}
 	for col, header := range headers {
 		cell := tview.NewTableCell(header).
 			SetTextColor(tcell.ColorYellow).
@@ -190,6 +215,16 @@ func (s *ListScreen) render() {
 		}
 		s.table.SetCell(row, 2, tview.NewTableCell(rulesDisplay).
 			SetTextColor(tcell.ColorGray).
+			SetAlign(tview.AlignLeft).
+			SetExpansion(1))
+
+		// Status（停止中は赤）
+		statusColor := tcell.ColorGray
+		if policy.Status != model.PolicyStatusActive {
+			statusColor = tcell.ColorRed
+		}
+		s.table.SetCell(row, 3, tview.NewTableCell(policy.Status).
+			SetTextColor(statusColor).
 			SetAlign(tview.AlignLeft).
 			SetExpansion(1))
 	}
@@ -257,6 +292,9 @@ func (s *ListScreen) setupKeyBindings() {
 		case tcell.KeyF6:
 			s.showFilterDialog()
 			return nil
+		case ui.KeyStatus:
+			s.toggleStatus()
+			return nil
 		case tcell.KeyPgUp:
 			if s.pagination.PrevPage() {
 				s.render()
@@ -304,6 +342,9 @@ func (s *ListScreen) setupKeyBindings() {
 		case '/':
 			s.showFilterDialog()
 			return nil
+		case ui.RuneStatus:
+			s.toggleStatus()
+			return nil
 		case 'q':
 			if s.onBack != nil {
 				s.onBack()
@@ -313,6 +354,13 @@ func (s *ListScreen) setupKeyBindings() {
 
 		return event
 	})
+}
+
+// toggleStatus は選択しているポリシーの停止・再開のコールバックを呼ぶ。
+func (s *ListScreen) toggleStatus() {
+	if p := s.GetSelectedPolicy(); p != nil && s.onStatus != nil {
+		s.onStatus(p)
+	}
 }
 
 func (s *ListScreen) showFilterDialog() {

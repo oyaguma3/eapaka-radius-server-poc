@@ -1,4 +1,4 @@
-# D-02 Valkey データ設計仕様書 (r24)
+# D-02 Valkey データ設計仕様書 (r25)
 
 ## 1. 全体方針
 
@@ -165,12 +165,26 @@ RADIUS の照合は送信元IPで行うため、キーは `client:{IP}` のま�
 | --------- | -------- | ------------------------- | --------------------- |
 | `rules`   | Yes      | **認可ルール (JSON配列の文字列)** | 詳細は後述。Admin TUIはルール0件でも `[]` を書き込む |
 | `default` | Yes      | デフォルト動作            | `allow` または `deny`（小文字） |
+| `status`  | No       | 加入者の状態（停止の印。r25） | `active`（利用中）または `suspended`（停止中）。ないときは `active` とみなす |
 
 > **キー・フィールドの欠落と不正値の扱い（Auth Server）:**
 > - `policy:{IMSI}` が存在しない → **Access-Reject**（`AUTH_POLICY_NOT_FOUND` WARN）。認証成功にはポリシー登録が必須
 > - `rules` が欠落または空文字 → ルール0件として扱う（`null` も0件）
 > - `rules` の JSON パースに失敗（型不一致を含む） → **Access-Reject**（ログの event_id は `AUTH_POLICY_NOT_FOUND`、error に `policy invalid` を含む）
 > - `default` が欠落、または `allow` / `deny` 以外（`ALLOW` 等の大文字や空文字を含む） → `deny` として扱う
+> - `status` が `suspended` → ルールを評価せずに **Access-Reject**（`AUTH_SUBSCRIBER_SUSPENDED` WARN。D-09 §8.4.4）
+> - `status` が欠落または空文字 → `active` として扱う。`active` / `suspended` 以外（大文字を含む） → 安全側に倒して **Access-Reject**（ログの event_id は `AUTH_POLICY_NOT_FOUND`、error に `policy invalid: unknown status` を含む）
+
+#### 停止の印（`status` フィールド。r25）
+
+加入者を登録したまま一時的に認証できなくする（停止）・戻す（再開）ための印。認可ポリシーは鍵（Ki / OPc）の置き場所によらず本PoCにあるので、本PoCに鍵を置く加入者にも aka-only-server（接続方式 `01`）に鍵を置く加入者にも同じように効く。
+
+- **書き込み:** 停止・再開の操作（Provisioning API の `PUT /policies/{imsi}/status`、Admin TUI の認可ポリシー一覧の `F7` / `s`）だけが `status` を書き換える（`pkg/masterdata` の `PolicyStore.SetStatus`。Lua で存在確認・変更前の値の読み出し・HSET を1回の操作で行い、ポリシーがなければ何も書き込まない。変更前と同じ値なら書き込まない）。
+- **残す:** 認可ポリシーの作成・変更・置き換え（Admin TUI の保存、Provisioning API の `PUT /policies/{imsi}`）は `default` と `rules` だけを HSET し、`status` には触れない。停止中にポリシーを編集しても停止は解けない。
+- **CSV の取り込み:** 末尾の任意の列 `status` に値があるときだけ HSET する。列がない、または値が空なら書き込まない（新しいポリシーは `status` なし＝`active`、既存のポリシーは今の状態のまま。D-05 §6.4）。
+- **削除:** ポリシーを削除（DEL）すると `status` も消える。同じ IMSI のポリシーを作り直すと `active` になる。ポリシーのない加入者は停止できない（もともと認証は拒否される）。
+- **効く時点:** 次の認証から効く。接続中のセッションは切れない（Disconnect / CoA は扱わない）。再認証や Session-Timeout の後の認証で拒否される。
+- **SQN:** 停止の判定は認証ベクターの取得と Challenge の検証の後に行うので、停止中の認証の試みでも SQN は進む（D-09 §8.4.4）。
 
 #### JSON構造 (`rules` フィールド)
 
@@ -448,7 +462,8 @@ Acct Serverが重複パケットおよび順序異常を検出するためのキ
    - State属性から `eap:{UUID}` を取得（存在しなければ `EAP_CTX_NOT_FOUND` で Reject）。stage が `CHALLENGE_SENT` であることを確認。
    - `k_aut` を使用して `AT_MAC` を検証、`XRES` と `AT_RES` を比較検証。不一致なら Reject（`AUTH_MAC_INVALID` / `AUTH_RES_MISMATCH`）。
    - **【Post-Auth Policy Check】**
-     - `HGETALL policy:{IMSI}` を取得・パース。不在・JSON不正なら Reject（`AUTH_POLICY_NOT_FOUND`）。
+     - `HGETALL policy:{IMSI}` を取得・パース。不在・JSON不正・`status` の不正値なら Reject（`AUTH_POLICY_NOT_FOUND`）。
+     - `status` が `suspended` なら、ルールを評価せずに Reject（`AUTH_SUBSCRIBER_SUSPENDED`。r25）。
      - RADIUSリクエスト内の `NAS-Identifier` / `Called-Station-Id`(SSID) とルールを照合（セクション2.C）。
      - **拒否:** `Access-Reject` を返却（`AUTH_POLICY_DENIED`）。
      - **許可:** `Access-Accept` を返却。
@@ -491,6 +506,7 @@ Acct Serverが重複パケットおよび順序異常を検出するためのキ
    - `sub:{IMSI}`, `client:{IP}`, `policy:{IMSI}` の CRUD操作（一覧は SCAN + パイプライン HGETALL、一括登録は TxPipeline。RADIUSクライアントの一括登録は ID を採番・引き継ぐ Lua を MULTI / EXEC の中でまとめて実行）。
    - RADIUSクライアントの作成・削除で、ID の採番と索引（`idx:client:`）の作成・削除を同時に行う（セクション2.B）。起動時に ID の導入前のクライアントに ID を採番する。
    - `sub:{IMSI}` の編集は Lua スクリプトで存在チェックと更新をまとめて行い、`sqn` は SQN を変更したときだけ、編集開始時の値との比較・置き換えで書き換える（セクション2.A）。
+   - 認可ポリシーの停止・再開（一覧の `F7` / `s`）は `PolicyStore.SetStatus` で `status` だけを書き換える。ポリシーの保存・CSV の取り込みの扱いはセクション2.C（r25）。
 2. **モニタリング:**
    - セッション一覧: `sess:*` を SCAN して表示。
    - IMSI指定: `idx:user:{IMSI}` から `sess:{UUID}` を取得して表示（セクション3.F のクリーンアップを実施）。
@@ -502,6 +518,7 @@ Acct Serverが重複パケットおよび順序異常を検出するためのキ
    - 加入者・RADIUSクライアントの変更（PATCH）は、指定した項目だけを書き換える（`SubscriberStore.Patch` / `ClientStore.Patch`）。RADIUSクライアントの IP の変更はキーの付け替え（RENAME）と索引の更新を1回の操作で行う。RADIUSクライアントは ID（`idx:client:{ID}`）から IP を引いて操作する。起動時に ID の導入前のクライアントに ID を採番する。認可ポリシーの PUT は `default` と `rules` を1回の HSET で置き換える（`PolicyStore.Put`）。
    - 加入者・認可ポリシーの一覧は、`SCAN` で `sub:{prefix}*` / `policy:{prefix}*` のキーを集めて IMSI の昇順に並べ、そのページの分だけパイプライン HGETALL で読む（`ListPage`）。RADIUSクライアントの一覧は全件（SCAN + パイプライン HGETALL）。
    - `/status` の件数は `sub:*` / `client:*` / `policy:*` / `sess:*` の SCAN で数える（`sess:*` は r24）。
+   - 認可ポリシーの停止・再開（`PUT /policies/{imsi}/status`。r25）は `PolicyStore.SetStatus` で `status` だけを書き換える。認可ポリシーの PUT（全体の置き換え）は `status` に触れず、書き込んだ後の `status` を同じ Lua で読んで応答に返す（セクション2.C）。
 2. **監査ログ（r24）:** 監査ログを `audit:prov`（§2.H）に XADD し、`GET /audit-logs` で XREVRANGE で読む。
 3. **セッションの参照（r24。読み取りだけ）:** `GET /sessions` は、`sess:*` を SCAN してパイプライン HGETALL で読む（Admin TUI と同じ `pkg/masterdata.SessionStore`）。`?imsi=` では `idx:user:{IMSI}` を SMEMBERS して読み、索引が空なら全セッションから絞り込む。存在しないセッションの UUID は結果から除くだけで、`idx:user:` からは消さない。
 4. **連動しない操作:** 加入者を削除しても `policy:{IMSI}`・`sess:`・`idx:user:` は削除しない（D-13 §3.1）。セッションを変更・削除する操作はない。
@@ -543,12 +560,19 @@ type Policy struct {
     Default   string       `json:"default"`    // デフォルトアクション（"allow" or "deny"）
     RulesJSON string       `json:"rules_json"` // ルールのJSON文字列（Valkey保存用）
     Rules     []PolicyRule `json:"-"`          // パース済みルール（メモリ上のみ）
+    Status    string       `json:"status"`     // 状態（"active" or "suspended"。読み出しでは status がなければ "active"。r25）
 }
+
+const (
+    PolicyStatusActive    = "active"
+    PolicyStatusSuspended = "suspended"
+)
 
 func NewPolicy(imsi, defaultAction string) *Policy
 func (p *Policy) ParseRules() error        // RulesJSONをパースしてRulesに格納
 func (p *Policy) EncodeRules() error       // RulesをJSON文字列にエンコード
 func (p *Policy) IsAllowByDefault() bool   // デフォルトアクションが許可か判定
+func (p *Policy) IsSuspended() bool        // 停止中か判定（r25）
 
 type PolicyRule struct {
     NasID          string   `json:"nas_id"`                    // NAS識別子（"*" 単独で任意のNASに一致。それ以外は完全一致）
@@ -644,10 +668,11 @@ type RadiusClient struct {
     Vendor string `redis:"vendor"`
 }
 
-// apps/auth-server/internal/policy/types.go — policy:{IMSI}（default / rules は store/policy.go で個別に解釈）
+// apps/auth-server/internal/policy/types.go — policy:{IMSI}（default / rules / status は store/policy.go で個別に解釈）
 type Policy struct {
     Rules   []PolicyRule
     Default string // "allow" or "deny"
+    Status  string // "active" or "suspended"（r25。status がなければ "active"、不正値は ErrPolicyInvalid）
 }
 
 type PolicyRule struct {
@@ -703,3 +728,4 @@ type Subscriber struct {
 | r22 | 2026-10-08 | Provisioning API（D-13）の実装の反映: §2 の冒頭に Provisioning API も同じキー・形式で読み書きすること、§2.A に Provisioning API からの加入者の変更（`SubscriberStore.Patch`。`sqn` を指定しなければ触れない、指定した場合は比較せずに書き換える）、§4 に「Provisioning API」のアクセスパターン（CRUD、PATCH・PUT、`ListPage` による一覧、`/status` の件数、連動しない操作）を追加 |
 | r23 | 2026-10-08 | RADIUSクライアントにサーバー採番の ID を導入（D-13 r5）: §1 のキー一覧に `idx:client:`（ID → IP の索引、String）と `seq:client`（採番のカウンター）を追加。§2.B に `id` フィールドと「IDと索引」（作成・上書き・IP の変更・削除の Lua、ID からの取得、起動時の採番 `EnsureIDs`、simwifi での確認）を追加。§4 の Admin TUI / Provisioning API のアクセスパターン、§5.1 の `RadiusClient` に `ID` を追加。Auth / Acct Server の `client:{IP}` の参照は変更なし |
 | r24 | 2026-10-09 | Provisioning API の監査ログとセッションの参照（D-13 r6、API 0.3.0）: §1 のキー一覧に `audit:prov`（Stream）を追加し、§2.H（監査ログの写し。フィールド、XADD の MAXLEN、読み出し、メモリの目安）を新設。§3.F の注記に Provisioning API は索引を掃除しないことを、§5.1 の `pkg/model` の利用元に Provisioning API と `Policy` / `PolicyRule`（`pkg/masterdata` で使用。r21 以降の実態に合わせる）を、§4 の Provisioning API に監査ログの読み書きと `GET /sessions` の読み出し（`pkg/masterdata.SessionStore`）、`/status` の `sess:*` の件数を追記 |
+| r25 | 2026-10-10 | 加入者の停止の印（一時停止・再開）を追加: §2.C の `policy:{IMSI}` にフィールド `status`（`active` / `suspended`。ないときは `active`）を加え、Auth Server の扱い（`suspended` はルールを評価せずに Reject・`AUTH_SUBSCRIBER_SUSPENDED`、不正値は安全側に Reject）と「停止の印」の節（書き込むのは停止・再開の操作だけ、ポリシーの保存・置き換えでは残る、CSV の取り込みの扱い、削除で消える、次の認証から効く、停止中も SQN は進む）を追加。§3 の Auth Server の処理フロー、Admin TUI・Provisioning API の操作（`PolicyStore.SetStatus`、PUT の応答の `status`）、§4 の `pkg/model.Policy` と Auth Server の `Policy` に `Status` を追記 |

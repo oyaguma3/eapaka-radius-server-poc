@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: EAP-AKA RADIUS PoC Provisioning API
-  version: 0.3.0
+  version: 0.4.0
   description: |
     EAP-AKA RADIUS PoC環境の加入者、RADIUSクライアント、認可ポリシーを操作する API（D-13）。
     本PoCの外に置く BFF や、将来の統合API（eapaka-node-provisioner）から使う。
@@ -27,6 +27,11 @@ info:
       それ以外の Content-Type は 400（`INVALID_MSG_FORMAT`）。本文の上限は 256KiB。
     - 未知の項目、型の違う値、JSON の後ろに続くデータは 400（`INVALID_MSG_FORMAT`）。
     - 該当しないパスは 404、メソッドは 405 を ProblemDetails（`cause` なし）で返す。
+
+    加入者の停止・再開（0.4.0 で追加）:
+    - 認可ポリシーに状態 `status`（`active` / `suspended`）を加えた。`suspended` の加入者は、鍵の置き場所によらず
+      Auth Server が認証を拒否する。効くのは次の認証からで、接続中のセッションは切れない。
+    - 停止・再開は `PUT /policies/{imsi}/status` で行う。認可ポリシーの PUT（全体の置き換え）では `status` は変わらない。
 
     監査ログ・セッションの参照（0.3.0 で追加）:
     - `GET /audit-logs` で、本APIの監査ログ（変更操作と秘密の値の読み出し）を新しい順に返す。監査ログは Valkey の Stream にも保存しており、
@@ -452,6 +457,8 @@ paths:
       description: |
         ポリシー全体を置き換える。存在しなければ作成する。
         加入者（sub:{IMSI}）の有無は確認しない（接続方式01では加入者の鍵を aka-only-server が持つため）。
+        状態（`status`）は変えない（停止中のポリシーを置き換えても停止のまま。新規は `active`）。本文に `status` は指定できない
+        （未知の項目として 400 `INVALID_MSG_FORMAT`）。停止・再開は `PUT /policies/{imsi}/status` で行う。
       requestBody:
         required: true
         content:
@@ -496,6 +503,43 @@ paths:
       responses:
         '204':
           description: 削除した
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/PolicyNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /policies/{imsi}/status:
+    parameters:
+      - $ref: '#/components/parameters/Imsi'
+      - $ref: '#/components/parameters/OperatorId'
+      - $ref: '#/components/parameters/TraceId'
+    put:
+      tags: [policies]
+      summary: 加入者を停止する、または再開する（0.4.0 で追加）
+      operationId: putPolicyStatus
+      description: |
+        認可ポリシーの状態を変える。`suspended` にすると、Auth Server はその加入者の認証をルールを評価せずに拒否する
+        （鍵の置き場所によらない）。`active` に戻すと再開する。効くのは次の認証からで、接続中のセッションは切れない。
+        認可ポリシーがなければ 404（何も書き込まない）。今と同じ状態への変更も 200 を返す（書き込まず、監査ログにも残さない）。
+        状態が変わったときは監査ログに `policy.suspend` / `policy.resume` を記録する。
+        `status` は前後の空白を除き小文字にしてから検証する。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PolicyStatusPut'
+            example:
+              status: suspended
+      responses:
+        '200':
+          description: 状態を変えた後の認可ポリシー
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Policy'
         '400':
           $ref: '#/components/responses/BadRequest'
         '404':
@@ -906,6 +950,7 @@ components:
         - imsi
         - default
         - rules
+        - status
       properties:
         imsi:
           $ref: '#/components/schemas/Imsi'
@@ -916,6 +961,26 @@ components:
           description: 先頭から順に評価し、最初に一致したルールを採用する。
           items:
             $ref: '#/components/schemas/PolicyRule'
+        status:
+          $ref: '#/components/schemas/PolicyStatus'
+
+    PolicyStatus:
+      type: string
+      description: |
+        加入者の状態（0.4.0 で追加）。`active` は利用中、`suspended` は停止中（Auth Server が認証を拒否する）。
+        Valkey にフィールドがなければ `active` を返す。Valkey を直接書き換えた不正な値は、そのまま返す
+        （Auth Server は拒否する。`PUT /policies/{imsi}/status` で正しい値に戻せる）。
+      enum:
+        - active
+        - suspended
+
+    PolicyStatusPut:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          $ref: '#/components/schemas/PolicyStatus'
 
     PolicyPut:
       type: object
@@ -1007,7 +1072,8 @@ components:
           type: string
           description: |
             操作。`subscriber.create` / `subscriber.update` / `subscriber.delete` / `subscriber.keys.read`、
-            `client.create` / `client.update` / `client.delete` / `client.secret.read`、`policy.create` / `policy.update` / `policy.delete`。
+            `client.create` / `client.update` / `client.delete` / `client.secret.read`、`policy.create` / `policy.update` / `policy.delete`、
+            `policy.suspend` / `policy.resume`（加入者の停止・再開。0.4.0 で追加）。
           example: subscriber.create
         target:
           type: string

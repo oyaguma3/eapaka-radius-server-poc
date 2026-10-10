@@ -81,6 +81,10 @@ func TestParsePolicyCSV_InvalidHeader(t *testing.T) {
 			name:    "Empty file",
 			csvData: "",
 		},
+		{
+			name:    "Unknown 4th column",
+			csvData: "imsi,default,rules_json,state\n",
+		},
 	}
 
 	for _, tt := range tests {
@@ -181,7 +185,7 @@ func TestWritePolicyCSV(t *testing.T) {
 	}
 
 	// ヘッダー検証
-	expectedHeader := "imsi,default,rules_json"
+	expectedHeader := "imsi,default,rules_json,status"
 	if lines[0] != expectedHeader {
 		t.Errorf("Header = %q, want %q", lines[0], expectedHeader)
 	}
@@ -282,5 +286,53 @@ func TestPolicyCSV_RoundtripWithRules(t *testing.T) {
 	}
 	if parsed[0].Rules[0].VlanID != "100" {
 		t.Errorf("Rule VlanID = %q, want %q", parsed[0].Rules[0].VlanID, "100")
+	}
+}
+
+func TestParsePolicyCSV_Status(t *testing.T) {
+	// status 列なし（今までの CSV）: 状態は空（取り込みで変えない）
+	policies, errs := ParsePolicyCSV(strings.NewReader("imsi,default,rules_json\n440101234567890,deny,[]\n"))
+	if len(errs) > 0 || len(policies) != 1 || policies[0].Status != "" {
+		t.Fatalf("without status column: policies = %+v, errs = %v", policies, errs)
+	}
+
+	// status 列あり: 値（大文字・空白は正規化）、空は状態を変えない
+	csvData := "imsi,default,rules_json,status\n" +
+		"440101234567890,deny,[],suspended\n" +
+		"440101234567891,allow,[], Active \n" +
+		"440101234567892,deny,[],\n"
+	policies, errs = ParsePolicyCSV(strings.NewReader(csvData))
+	if len(errs) > 0 {
+		t.Fatalf("ParsePolicyCSV() errors = %v", errs)
+	}
+	want := []string{model.PolicyStatusSuspended, model.PolicyStatusActive, ""}
+	for i, p := range policies {
+		if p.Status != want[i] {
+			t.Errorf("policies[%d].Status = %q, want %q", i, p.Status, want[i])
+		}
+	}
+
+	// 不正な値は行のエラー
+	_, errs = ParsePolicyCSV(strings.NewReader("imsi,default,rules_json,status\n440101234567890,deny,[],stopped\n"))
+	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "line 2") {
+		t.Errorf("invalid status errs = %v", errs)
+	}
+}
+
+func TestPolicyCSV_RoundtripStatus(t *testing.T) {
+	original := []*model.Policy{
+		{IMSI: "440101234567890", Default: "deny", Status: model.PolicyStatusSuspended},
+		{IMSI: "440101234567891", Default: "deny"}, // 状態が空なら active で書き出す
+	}
+	var buf bytes.Buffer
+	if err := WritePolicyCSV(&buf, original); err != nil {
+		t.Fatalf("WritePolicyCSV() error = %v", err)
+	}
+	parsed, errs := ParsePolicyCSV(strings.NewReader(buf.String()))
+	if len(errs) > 0 || len(parsed) != 2 {
+		t.Fatalf("ParsePolicyCSV() = %v, %v", parsed, errs)
+	}
+	if parsed[0].Status != model.PolicyStatusSuspended || parsed[1].Status != model.PolicyStatusActive {
+		t.Errorf("Status = %q, %q", parsed[0].Status, parsed[1].Status)
 	}
 }

@@ -131,6 +131,11 @@ type PolicyPut struct {
 	Rules   []PolicyRuleInput `json:"rules"`
 }
 
+// PolicyStatusPut は認可ポリシーの状態の変更の要求（PUT /policies/{imsi}/status。0.4.0 で追加）。
+type PolicyStatusPut struct {
+	Status *string `json:"status"`
+}
+
 // PolicyRule は認可ポリシーのルールの応答。
 type PolicyRule struct {
 	NasID          string   `json:"nasId"`
@@ -144,6 +149,8 @@ type Policy struct {
 	IMSI    string       `json:"imsi"`
 	Default string       `json:"default"`
 	Rules   []PolicyRule `json:"rules"`
+	// Status は状態（active / suspended。0.4.0 で追加）
+	Status string `json:"status"`
 }
 
 // NewPolicy は応答用の認可ポリシーを作る。Valkey の snake_case の JSON を camelCase に変換する。
@@ -156,7 +163,11 @@ func NewPolicy(p *model.Policy) Policy {
 		}
 		rules[i] = PolicyRule{NasID: r.NasID, AllowedSSIDs: ssids, VlanID: r.VlanID, SessionTimeout: r.SessionTimeout}
 	}
-	return Policy{IMSI: p.IMSI, Default: p.Default, Rules: rules}
+	status := p.Status
+	if status == "" {
+		status = model.PolicyStatusActive
+	}
+	return Policy{IMSI: p.IMSI, Default: p.Default, Rules: rules, Status: status}
 }
 
 // PolicyList は認可ポリシーの一覧の応答。

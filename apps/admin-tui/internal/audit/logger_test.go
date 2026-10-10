@@ -221,3 +221,30 @@ func TestNewLogger(t *testing.T) {
 		t.Errorf("expected adminUser to be 'admin', got '%s'", logger.adminUser)
 	}
 }
+
+func TestLogStatusChange(t *testing.T) {
+	var buf bytes.Buffer
+	logger := NewLoggerWithWriter(&buf, "admin")
+
+	logger.LogStatusChange("policy:440101234567890", "440101234567890", "active", "suspended")
+	logger.LogStatusChange("policy:440101234567890", "440101234567890", "suspended", "active")
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("lines = %d, want 2", len(lines))
+	}
+	want := []struct{ op, msg, details string }{
+		{"suspend", "policy suspended", "status: active -> suspended"},
+		{"resume", "policy resumed", "status: suspended -> active"},
+	}
+	for i, line := range lines {
+		var e Entry
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if string(e.Operation) != want[i].op || e.Msg != want[i].msg || e.Details != want[i].details ||
+			e.TargetType != TargetPolicy || e.TargetIMSI != "440101234567890" {
+			t.Errorf("entry[%d] = %+v", i, e)
+		}
+	}
+}

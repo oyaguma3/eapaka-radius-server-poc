@@ -17,6 +17,7 @@ import (
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/ui/policy"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui/internal/ui/subscriber"
 	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/masterdata"
+	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/model"
 	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/valkey"
 	"github.com/redis/go-redis/v9"
 	"github.com/rivo/tview"
@@ -368,6 +369,10 @@ func (a *Application) showPolicyList() {
 		})
 	})
 
+	screen.SetOnToggleStatus(func(p *model.Policy) {
+		a.showPolicyStatusConfirm(p, screen)
+	})
+
 	screen.SetOnBack(func() {
 		a.app.HidePage("policy-list")
 		a.app.RemovePage("policy-list")
@@ -385,6 +390,45 @@ func (a *Application) showPolicyList() {
 			}
 		})
 	}()
+}
+
+// showPolicyStatusConfirm は加入者の停止・再開の確認ダイアログを表示し、Yes なら状態を変える。
+// 接続中のセッションは切れず、次の認証から効くことを伝える（D-05 §4.4.1）。
+func (a *Application) showPolicyStatusConfirm(p *model.Policy, screen *policy.ListScreen) {
+	imsi := p.IMSI
+	status, title, message := model.PolicyStatusSuspended, "Confirm Suspend",
+		"Suspend this subscriber?\n\n"+imsi+"\n\nAuthentication will be rejected from the next attempt.\nConnected sessions are not disconnected."
+	if p.IsSuspended() {
+		status, title, message = model.PolicyStatusActive, "Confirm Resume",
+			"Resume this subscriber?\n\n"+imsi+"\n\nAuthentication will be allowed from the next attempt."
+	}
+
+	closeDialog := func() {
+		a.app.HidePage("status-confirm")
+		a.app.RemovePage("status-confirm")
+		a.app.SetFocus(screen.GetTable())
+	}
+	dialog := ui.NewConfirmDialog(title, message, func() {
+		closeDialog()
+		ctx := context.Background()
+		prev, err := a.policyStore.SetStatus(ctx, imsi, status)
+		if err != nil {
+			a.app.GetStatusBar().ShowError("Failed to change status: " + err.Error())
+			return
+		}
+		if prev != status {
+			a.auditLogger.LogStatusChange(masterdata.PolicyKey(imsi), imsi, prev, status)
+		}
+		if status == model.PolicyStatusSuspended {
+			a.app.GetStatusBar().ShowSuccess("Subscriber suspended: " + imsi)
+		} else {
+			a.app.GetStatusBar().ShowSuccess("Subscriber resumed: " + imsi)
+		}
+		_ = screen.Refresh(ctx)
+		screen.SelectIMSI(imsi)
+	}, closeDialog)
+
+	a.app.AddPage("status-confirm", dialog.GetModal(), true, true)
 }
 
 func (a *Application) showPolicyForm(editMode bool, imsi string) {

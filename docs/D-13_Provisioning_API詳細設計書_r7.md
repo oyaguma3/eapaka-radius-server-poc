@@ -1,7 +1,7 @@
-# D-13 Provisioning API 詳細設計書 (r6)
+# D-13 Provisioning API 詳細設計書 (r7)
 
 **作成日:** 2026-10-07
-**更新日:** 2026-10-09
+**更新日:** 2026-10-10
 **ステータス:** 実装済み（`apps/provisioning-api`。simwifi 実機での結合確認済み。§9）
 
 ## 1. 概要
@@ -16,6 +16,7 @@
 - 秘密の値（Ki / OPc、共有シークレット）の読み出しを専用の経路に限り、監査ログに記録する
 - 変更操作の監査ログの出力と、その参照（r6）
 - アクティブセッションの参照（読み取りだけ。r6）
+- 加入者の停止・再開（認可ポリシーの `status`。r7）
 - mTLS によるクライアント（BFF 等）の認証
 
 ### 1.2 背景と位置づけ
@@ -165,6 +166,7 @@ API のリソースと Valkey のキーの対応は次のとおり。
 | `imsi` | キー `policy:{IMSI}` | 数字15桁 | パスで指定 |
 | `default` | `default` | `allow` / `deny` | 必須 |
 | `rules` | `rules`（JSON 配列の文字列） | 下表の配列（0件以上） | 必須（空配列可） |
+| `status` | `status` | `active` / `suspended`（r7。応答だけ。フィールドがなければ `active`） | PUT では指定できない（停止・再開は下記の専用の操作） |
 
 `rules` の要素:
 
@@ -179,6 +181,14 @@ API のリソースと Valkey のキーの対応は次のとおり。
 - **作成・変更（PUT）:** ポリシー全体を置き換える（`default` と `rules` を1回の HSET で書き込む）。存在しなければ作成する（201）、存在すれば置き換える（200）。加入者（`sub:{IMSI}`）の有無は確認しない。
 - API では `rules` を JSON の配列として扱い、Valkey へは D-02 の形式（snake_case のキーを持つ JSON 文字列）で保存する。
 - 正規化は Admin TUI と同じ（`pkg/validation.NormalizePolicyInput`）: `default` は小文字にし（`ALLOW` も受け付ける）、`nasId` と各 SSID は前後の空白を除く。
+- **停止・再開（`PUT /policies/{imsi}/status`。r7、API 0.4.0）:** 加入者を登録したまま一時的に認証できなくする（停止）・戻す（再開）。本文は `{"status": "suspended"}` / `{"status": "active"}`。Auth Server は `status` が `suspended` の加入者の認証を、ルールを評価せずに拒否する（D-09 §8.4.4。鍵の置き場所によらず効く）。
+  - 認可ポリシーがなければ 404 `POLICY_NOT_FOUND`（何も書き込まない。ポリシーのない加入者はもともと認証が拒否される）。
+  - 成功は 200 で、変えた後の認可ポリシー全体（`status` を含む）を返す。今と同じ状態への変更も 200 で、書き込まず、監査ログにも残さない。
+  - `status` がない（`null` を含む）ときは `MANDATORY_IE_MISSING`、`active` / `suspended` 以外は `MANDATORY_IE_INCORRECT`（前後の空白を除き小文字にしてから検証する。`SUSPENDED` も受け付ける）。未知の項目は `INVALID_MSG_FORMAT`。
+  - 書き込みは `pkg/masterdata` の `PolicyStore.SetStatus`（Lua で存在確認・変更前の値の読み出し・HSET を1回の操作で行う。D-02 §2.C）。監査ログは `operation` が `suspend` / `resume`（§6.2）。
+  - 効くのは次の認証から。接続中のセッションは切れない（Disconnect / CoA は扱わない）。
+- **PUT（置き換え）と `status`（r7）:** 認可ポリシーの PUT は `default` と `rules` だけを書き、`status` には触れない（停止中にポリシーを編集しても停止は解けない）。応答の `status` は、書き込んだ後の値（新規なら `active`）を同じ Lua で読んで返す。PUT の本文に `status` を入れると、未知の項目として 400 `INVALID_MSG_FORMAT` になる。ポリシーを削除して作り直すと `active` になる。
+- **`status` の不正値（r7）:** Valkey を直接書き換えて `active` / `suspended` 以外の値になった場合、本APIはその値をそのまま返す（Auth Server は安全側に倒して拒否する。D-09 §8.4.1）。`PUT /policies/{imsi}/status` で正しい値に戻せる。
 - `rules` の要素のうち、`nasId` / `allowedSsids` の欠落は `MANDATORY_IE_MISSING`、値の不正（`allowedSsids` が空の配列を含む）は `MANDATORY_IE_INCORRECT`、`vlanId` / `sessionTimeout` の不正は `OPTIONAL_IE_INCORRECT` とする。`invalidParams` の `param` は `rules[0].allowedSsids[1]` のように位置を示す。
 
 ### 3.4 秘密の値の読み出し
@@ -286,6 +296,7 @@ API のリソースと Valkey のキーの対応は次のとおり。
 | GET | `/policies/{imsi}` | 認可ポリシーの取得 | 200 | - |
 | PUT | `/policies/{imsi}` | 認可ポリシーの作成・置き換え | 201 / 200 | create / update |
 | DELETE | `/policies/{imsi}` | 認可ポリシーの削除 | 204 | delete |
+| PUT | `/policies/{imsi}/status` | 加入者の停止・再開（r7） | 200 | suspend / resume（状態が変わったときだけ） |
 | GET | `/audit-logs` | 監査ログの取得（r6） | 200 | - |
 | GET | `/sessions` | アクティブセッションの取得（r6） | 200 | - |
 
@@ -377,7 +388,7 @@ Valkey に接続できない場合は `500`（`SYSTEM_FAILURE`）を返す。
 
 | 項目 | 内容 |
 |------|------|
-| `operation` | `create` / `update` / `delete` / `read`（秘密の値の読み出し） |
+| `operation` | `create` / `update` / `delete` / `read`（秘密の値の読み出し）/ `suspend` / `resume`（加入者の停止・再開。r7） |
 | `target_type` | `subscriber` / `client` / `policy` |
 | `target_key` | Valkey のキー（`sub:{IMSI}` 等。RADIUSクライアントの IP の変更では変更後のキー） |
 | `target_id` | RADIUSクライアントの ID（RADIUSクライアントだけ。IP を変えても変わらないので、同じクライアントの記録を追える。本APIで追加する項目） |
@@ -387,7 +398,7 @@ Valkey に接続できない場合は `500`（`SYSTEM_FAILURE`）を返す。
 | `details` | 変更した項目（加入者の SQN / AMF、ポリシーの `default` 等は変更前後の値。Ki / OPc / 共有シークレットは「変更あり」だけで値は含めない）。読み出しでは読み出した項目名（`ki,opc` / `secret`） |
 | `trace_id` | リクエストのトレースID（`request completed` と突き合わせる。本APIで追加する項目） |
 
-`msg` は `{target_type} created` / `updated` / `deleted` / `secret read`（例 `subscriber created`、`client secret read`）。`details` の形式は次のとおり（16進は小文字、RADIUSクライアントの名前・ベンダーは引用符付き）。
+`msg` は `{target_type} created` / `updated` / `deleted` / `secret read` / `suspended` / `resumed`（例 `subscriber created`、`client secret read`、`policy suspended`）。`GET /audit-logs` の `action` は `{target_type}.{operation}`（例 `policy.suspend`）。`details` の形式は次のとおり（16進は小文字、RADIUSクライアントの名前・ベンダーは引用符付き）。
 
 | 操作 | `details` の例 |
 |------|---------------|
@@ -398,6 +409,7 @@ Valkey に接続できない場合は `500`（`SYSTEM_FAILURE`）を返す。
 | 認可ポリシーの作成・削除 | `default=deny, rules=2` |
 | 認可ポリシーの置き換え | `default: allow -> deny, rules: changed (1 -> 2)`（`rules` は内容が変わったかと件数） |
 | 秘密の値の読み出し | `ki,opc` / `secret` |
+| 加入者の停止・再開（r7） | `status: active -> suspended` / `status: suspended -> active` |
 
 - 失敗した操作（400 / 404 / 409 / 500）は監査ログに記録しない（`request completed` には記録する）。
 - 監査ログは `LOG_LEVEL` によらず出力する（アプリケーションログとは別のロガーで、同じ標準出力に1行ずつ書く）。`time` の形式は他のコンポーネントの `log/slog` と同じ（Admin TUI の監査ログの秒精度・UTC とは異なる）。
@@ -432,7 +444,7 @@ apps/provisioning-api/
 - Vector API と同じく Gin と envconfig を使う（D-11）。新しい外部パッケージは追加していない。
 - ハンドラーは DTO と HTTP の変換だけを行い、検証・正規化・監査ログは service 層で行う。service は検証エラーを `ValidationError`（`cause` と `invalidParams` を持つ）で、存在しない・既に存在するを `pkg/masterdata` のセンチネルエラーで返し、handler が HTTP のステータスに対応付ける。
 - アプリケーションログと監査ログは、同じ標準出力に排他して書き込む（1行が混ざらないようにする）。
-- `version` は `main.version`（r6 で `0.3.0`。`-ldflags "-X main.version=..."` で上書きできる）。
+- `version` は `main.version`（r6 で `0.3.0`、r7 で `0.4.0`。`-ldflags "-X main.version=..."` で上書きできる）。
 - Go Workspace（`go.work`）にモジュールを加えたため、他のアプリの Dockerfile も `apps/provisioning-api/go.mod` / `go.sum` をコピーする（`go.work` の `use` の解決に全モジュールの go.mod が要る）。Makefile と CI の対象にも加えた。
 
 **共通ライブラリに追加したもの（2026-10-08）:**
@@ -442,6 +454,7 @@ apps/provisioning-api/
 | `SubscriberStore.ListPage` / `PolicyStore.ListPage`（`pkg/masterdata/page.go`） | IMSI の前方一致・cursor・件数で1ページを返す（§4.1 のページング）。`rules` を解釈できないポリシーは `List` と同じく結果に含めない（`total` には数える） |
 | `ClientStore.Patch` | 指定した項目だけを書き換える（PATCH 用。存在確認と書き込みを1回の操作で行う）。r5 で IP の変更（キーの付け替え）に対応 |
 | `SessionStore`（`pkg/masterdata/session.go`。r6） | セッションの読み出し（`Get` / `List` / `Count` / `ListByIMSI` / `IndexCount`）。Admin TUI から移した（§7.2）。`ListByIMSI` は索引に残った古い UUID を返すだけで、索引からは消さない |
+| `PolicyStore.SetStatus`、`Put` の応答の `status`（r7） | 停止・再開（存在確認・変更前の値の読み出し・書き込みを1回の Lua で行い、変更前の状態を返す）。`Put` は書き込んだ後の `status` も同じ Lua で読み、`model.Policy.Status` に入れる。`Create` / `Update` / `Put` は `status` を書かない（E-03 §9） |
 | `ClientStore.GetByID` / `EnsureIDs`、`Create` の採番（r5） | ID からの取得（索引 `idx:client:{ID}` を引き、Hash の `id` と一致するときだけ返す）、ID の導入前のデータへの採番、作成時の採番（`model.RadiusClient.ID` に設定）。`BulkCreate`（CSV）は既存の ID を引き継ぐ |
 
 ### 7.2 共通ライブラリへの移動
@@ -536,6 +549,11 @@ compose では、`PROVISIONING_API_LISTEN_ADDR` は既定値（`:9444`）のま�
 - 単体: パッケージごとのカバレッジは audit 98.4%、auth 98.4%、config 100%、dto 100%、handler 98.7%、server 96.3%、service 97.6%、`pkg/masterdata` 90.0%（`SessionStore` を含む）。Admin TUI の store（SessionStore を `pkg/masterdata` に委ねた後）の既存のテストもそのまま通る。ケースは T-02（r23）を参照。
 - 結合: simwifi で、作業ツリーを profile `provisioning` で起動し、`GET /audit-logs`（新しい順、ページ送り、400、ログファイルの `trace_id` との対応、再起動後の保持、`PROVISIONING_API_AUDIT_MAX`=50 での件数の抑制（254件の記録で 62件））と、eapaka_test の認証で作られたセッションの `GET /sessions`（新しい順、`total`、`?imsi=`、400、`/status` の `sessionCount`）、索引を API は掃除せず Admin TUI の Session Search が掃除すること（セッションの読み出しを移した版の Admin TUI の Statistics・Session List・Session Search の表示を含む）を確認した。手順と結果は T-03（r19）の INT-PROV-037〜043 を参照。
 
+**実施結果（2026-10-10。r7 の加入者の停止・再開）:**
+
+- 単体: パッケージごとのカバレッジは audit 98.4%、dto 100%、handler 98.8%、server 96.4%、service 97.7%、`pkg/masterdata` 90.2%、`pkg/validation` 92.6%、`pkg/model` 95.5%。ケースは T-02（r24）を参照。
+- 結合: simwifi で、aka-only-server（接続方式 `01`、PLMN 44010）と本PoC（profile `provisioning`）を起動し、本PoCに鍵を置く加入者（PLMN 44020）と aka-only-server に鍵を置く加入者のそれぞれで、`PUT /policies/{imsi}/status` で停止すると eapaka_test の EAP-AKA / AKA' が Access-Reject（`AUTH_SUBSCRIBER_SUSPENDED`）、再開すると Access-Accept になること、停止中の置き換え（PUT）で停止が解けないこと、404 / 400 の応答、同じ状態への変更で監査ログが増えないこと、`GET /audit-logs` の `policy.suspend` / `policy.resume`、Valkey に書いた不正な値で拒否されることを確かめた。Admin TUI の停止・再開と CSV も同じ環境で確かめた。手順は T-03（r20）G12。
+
 ---
 
 ## 10. 将来拡張
@@ -544,7 +562,8 @@ compose では、`PROVISIONING_API_LISTEN_ADDR` は既定値（`:9444`）のま�
 |------|------|
 | eapaka-node-provisioner | 加入者を「IMSI＋鍵の置き場所（本PoCの Vector API / aka-only-server）＋認可ポリシー」として扱い、本APIと aka-only-server の管理API を組み合わせて操作する。複数ノードへの操作の失敗時は、補償（作成したものを消す等）で戻す。本APIは、作成の 409、ポリシーの PUT（置き換え）により、やり直しやすい形にしておく |
 | 一括操作 | **本APIでは扱わない**（2026-10-09 決定）。CSV のインポート / エクスポートは Admin TUI だけで行う。エクスポートには Ki / OPc が含まれ、秘密の値を API でまとめて返すことになるため |
-| 参照系 | セッション（`sess:`）・統計の参照は r6 で実装済み（§3.7、`/status` の `sessionCount`）。セッションの切断（Disconnect / CoA）は扱わない |
+| 参照系 | セッション（`sess:`）・統計の参照は r6 で実装済み（§3.7、`/status` の `sessionCount`）。セッションの切断（Disconnect / CoA）は扱わない（停止した加入者の接続中のセッションも切らない。r7） |
+| 停止中の加入者の一覧・件数 | `GET /policies` の各要素に `status` を含める（r7）が、`?status=` による絞り込みと `/status` の停止中の件数は加えていない（件数には全ポリシーの読み出しが要るため）。必要になったら検討する |
 | 監査ログの参照 | r6 で実装済み（§3.6。Valkey の Stream `audit:prov` に保存し、`/audit-logs` で返す）。Admin TUI の操作の監査ログも参照できるようにするかは未定（現状はログファイルだけ） |
 | 権限 | 管理クライアントごとの読み取り専用等 |
 | IPv6 | RADIUSクライアントの IPv6 アドレス（Admin TUI・Auth Server を含めた対応が必要）。r5 で識別子を ID にしたため、API のパスへの影響はない。サブネット単位の登録も同様 |
@@ -557,7 +576,8 @@ compose では、`PROVISIONING_API_LISTEN_ADDR` は既定値（`:9444`）のま�
 2. 共通ライブラリへの移動（§7.2。`pkg/validation`、`pkg/masterdata`。Admin TUI の動作は変えない）… 実装済み（本書 r2）
 3. provisioning-api の実装（§4〜§8）、D-01 / D-04 / D-08 / E-03 / T-02 / T-03 / B-02 等の更新、simwifi での結合確認 … 実装済み（本書 r3）
 4. 監査ログ・セッションの参照（§3.6・§3.7。API 0.3.0）、セッションの読み出しの `pkg/masterdata` への移動、D-02 / D-04 / D-07 / D-08 / E-03 / B-02 / O-05 / T-02 / T-03 等の更新、simwifi での結合確認 … 実装済み（本書 r6）
-5. そのほかの将来拡張（§10）は別途検討
+5. 加入者の停止・再開（`PUT /policies/{imsi}/status`、認可ポリシーの `status`。API 0.4.0）、Auth Server の停止の判定、Admin TUI の停止・再開と CSV の `status` 列、D-02 / D-04 / D-05 / D-07 / D-09 / E-03 / O-01 / O-02 / T-02 / T-03 等の更新、simwifi での結合確認 … 実装済み（本書 r7）
+6. そのほかの将来拡張（§10）は別途検討
 
 ---
 
@@ -571,3 +591,4 @@ compose では、`PROVISIONING_API_LISTEN_ADDR` は既定値（`:9444`）のま�
 | r4 | 2026-10-08 | 同じホストの BFF（別の compose。web-gui-for-eapaka-radius）から接続するための共有ネットワークの追加: §2.2 の公開範囲を、同じホストの BFF は共有ネットワーク（既定名 `eapaka-prov`）経由で `https://provisioning-api:9444` に接続する形に改め（コンテナからはホストの 127.0.0.1 に届かないため）、注記を追加。§6.1 の `src_ip` の注記に共有ネットワーク経由では BFF のコンテナの IP になることを追記。§8.1.2 に `PROVISIONING_SHARED_NETWORK`、§8.2 に共有ネットワークの定義・起動と停止の順序、サーバー証明書の SAN（`DNS:provisioning-api`）を追加。いずれも simwifi で確認 |
 | r5 | 2026-10-08 | RADIUSクライアントにサーバー採番の ID を導入（API 0.2.0。provisioning-api のバージョン 0.2.0）: §3 の識別子を ID に、§3.2 に `id` と、識別子の設計（`client:{IP}` の Hash の `id`、索引 `idx:client:{ID}`、カウンター `seq:client`、Lua による作成・IP の変更・削除、起動時の採番 `EnsureIDs`、`?ip=` による検索、ID に改めた理由）、PATCH での IP の変更（キーの付け替え、409）を追記。§3.4・§4.2 のパスを `/clients/{clientId}` に、§4.3 の `CLIENT_ALREADY_EXISTS` の条件に PATCH を追加。§6.1 に `assigned client ids`、§6.2 に `target_id` と details の `ip`。§10 の IPv6 に注記。simwifi で、変更前の版で登録したクライアントへの採番、IP の変更の認証への反映、Admin TUI の ID 表示を確認 |
 | r6 | 2026-10-09 | 監査ログとセッションの参照を追加（API 0.3.0。provisioning-api のバージョン 0.3.0）: §1.1・§1.4 の対象に監査ログの参照とセッションの参照を加え、一括操作（CSV）は Admin TUI だけで行い本APIでは扱わないことにした。§3.6（監査ログ。Valkey の Stream `audit:prov` への保存、上限 `PROVISIONING_API_AUDIT_MAX`、保存の失敗の扱い、aka-only-server に揃えた項目と `action` の命名）と §3.7（セッション。読み取りだけ、新しい順・`limit`・`total`、`?imsi=` と索引を掃除しないこと）を新設。§4.1 に一覧の作法、§4.2 に `GET /audit-logs`・`GET /sessions`、§4.4 に `sessionCount`、§6.1 に `audit_max` と `PROV_AUDIT_STORE_ERR`、§6.2 に Stream への保存、§7.1 に `SessionStore` と `audit` の Stream、§7.2 にセッションの読み出しの `pkg/masterdata` への移動、§8.1 に `PROVISIONING_API_AUDIT_MAX`、§9 に実施結果、§10・§11 を更新 |
+| r7 | 2026-10-10 | 加入者の停止・再開を追加（API 0.4.0。provisioning-api のバージョン 0.4.0）: §1.1 の責務に追加。§3.3 に `status`（応答だけ。`active` / `suspended`）と、専用の `PUT /policies/{imsi}/status`（404 `POLICY_NOT_FOUND`、200 で認可ポリシー全体、同じ状態への変更は書き込まず監査ログなし、検証、`PolicyStore.SetStatus`、次の認証から効く）、置き換え（PUT）では `status` を変えないこと・本文の `status` は `INVALID_MSG_FORMAT`、不正値はそのまま返すことを追加。§4.2 のエンドポイント一覧、§6.2 の監査ログ（`operation` の `suspend` / `resume`、`msg`、`action`、`details`）、§7.1（`version`、共通ライブラリの追加）、§9 の実施結果、§10（停止した加入者のセッションは切らない、停止中の一覧・件数）、§11 を更新 |
