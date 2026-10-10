@@ -376,6 +376,20 @@ func (h *Handler) PutPolicy(c *gin.Context) {
 	c.JSON(status, dto.NewPolicy(p))
 }
 
+// PutPolicyStatus は PUT /policies/{imsi}/status を処理する。変えた後の認可ポリシーを 200 で返す。
+func (h *Handler) PutPolicyStatus(c *gin.Context) {
+	var req dto.PolicyStatusPut
+	if !decode(c, &req) {
+		return
+	}
+	p, err := h.svc.SetPolicyStatus(c.Request.Context(), actor(c), c.Param("imsi"), req)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, dto.NewPolicy(p))
+}
+
 // DeletePolicy は DELETE /policies/{imsi} を処理する。
 func (h *Handler) DeletePolicy(c *gin.Context) {
 	if err := h.svc.DeletePolicy(c.Request.Context(), actor(c), c.Param("imsi")); err != nil {

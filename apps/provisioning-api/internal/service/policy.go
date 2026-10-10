@@ -113,6 +113,39 @@ func (s *Service) PutPolicy(ctx context.Context, actor audit.Actor, imsi string,
 	return policy, created, nil
 }
 
+// SetPolicyStatus は認可ポリシーの状態（停止・再開）を変え、変えた後の認可ポリシーを返す（D-13 §3.3）。
+// 認可ポリシーがなければ masterdata.ErrPolicyNotFound を返す。同じ状態への変更は書き込まず、監査ログにも残さない。
+func (s *Service) SetPolicyStatus(ctx context.Context, actor audit.Actor, imsi string, req dto.PolicyStatusPut) (*model.Policy, error) {
+	if err := checkIMSI(imsi); err != nil {
+		return nil, err
+	}
+	status := validation.NormalizePolicyStatus(deref(req.Status, ""))
+	var v ValidationError
+	v.required("status", req.Status != nil, validation.ValidatePolicyStatus(status))
+	if err := v.orNil(); err != nil {
+		return nil, err
+	}
+
+	prev, err := s.policies.SetStatus(ctx, imsi, status)
+	if err != nil {
+		return nil, err
+	}
+	if prev != status {
+		op := audit.OpSuspend
+		if status == model.PolicyStatusActive {
+			op = audit.OpResume
+		}
+		s.audit.Record(ctx, actor, audit.Entry{
+			Operation:  op,
+			TargetType: audit.TargetPolicy,
+			TargetKey:  masterdata.PolicyKey(imsi),
+			TargetIMSI: imsi,
+			Details:    fmt.Sprintf("status: %s -> %s", prev, status),
+		})
+	}
+	return s.policies.Get(ctx, imsi)
+}
+
 // DeletePolicy は認可ポリシーを削除する。
 func (s *Service) DeletePolicy(ctx context.Context, actor audit.Actor, imsi string) error {
 	if err := checkIMSI(imsi); err != nil {

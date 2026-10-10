@@ -1,4 +1,4 @@
-# E-03 共通ライブラリ(pkg)設計書 (r14)
+# E-03 共通ライブラリ(pkg)設計書 (r15)
 
 ## 1. 概要
 
@@ -1021,6 +1021,12 @@ package model
 
 import "encoding/json"
 
+// 認可ポリシーの状態（policy:{IMSI} の status フィールド。D-02。r15）
+const (
+    PolicyStatusActive    = "active"    // 利用中（status がないときもこれとみなす）
+    PolicyStatusSuspended = "suspended" // 停止中（Auth Server は認証を拒否する）
+)
+
 // Policy は加入者のアクセスポリシーを表す。
 // Valkeyキー: policy:{IMSI}
 type Policy struct {
@@ -1028,6 +1034,9 @@ type Policy struct {
     Default   string       `json:"default"`    // デフォルトアクション（"allow" or "deny"）
     RulesJSON string       `json:"rules_json"` // ルールのJSON文字列（Valkey保存用）
     Rules     []PolicyRule `json:"-"`          // パース済みルール（メモリ上のみ）
+    // Status は状態（"active" or "suspended"。r15）。読み出しでは status がなければ "active"。
+    // 作成・更新（Create / Update / Put）では書き込まない。変更は PolicyStore.SetStatus で行う
+    Status string `json:"status"`
 }
 
 // PolicyRule はポリシールールを表す。
@@ -1045,6 +1054,7 @@ func NewPolicy(imsi, defaultAction string) *Policy {
         Default:   defaultAction,
         RulesJSON: "[]",
         Rules:     []PolicyRule{},
+        Status:    PolicyStatusActive,
     }
 }
 
@@ -1072,7 +1082,12 @@ func (p *Policy) IsAllowByDefault() bool {
     return p.Default == "allow"
 }
 
-// Clone はポリシーのディープコピーを作成する（Admin TUI の編集画面で使う）。
+// IsSuspended は停止中かどうかを返す（r15）。
+func (p *Policy) IsSuspended() bool {
+    return p.Status == PolicyStatusSuspended
+}
+
+// Clone はポリシーのディープコピーを作成する（Admin TUI の編集画面で使う。Status も写す）。
 func (p *Policy) Clone() *Policy
 ```
 
@@ -1220,7 +1235,7 @@ func (h *GatewayHandler) handleBackendError(c *gin.Context, err error) {
 |------|------|--------|---------|
 | 加入者 | `ValidateIMSI` / `ValidateKi` / `ValidateOPc` / `ValidateAMF` / `ValidateSQN`、まとめて `ValidateSubscriber(*SubscriberInput) []error` | `NormalizeSubscriberInput`（前後の空白を除去し、16進を大文字に） | `SubscriberValidationError`（`Field`, `Message`） |
 | RADIUSクライアント | `ValidateIPv4` / `ValidateSecret` / `ValidateClientName` / `ValidateVendor`、まとめて `ValidateClient(*ClientInput) []error` | `NormalizeClientInput` | `ClientValidationError` |
-| 認可ポリシー | `ValidateDefaultAction` / `ValidateNasID` / `ValidateSSID` / `ValidateAllowedSSIDs` / `ValidateVlanID` / `ValidateSessionTimeout`、`ValidatePolicyRule(*model.PolicyRule)`、まとめて `ValidatePolicy(*PolicyInput) []error` | `NormalizePolicyInput`（空白の除去、`default` を小文字に） | `PolicyValidationError`（ルールの項目は `Rules[i].NasID` 等） |
+| 認可ポリシー | `ValidateDefaultAction` / `ValidateNasID` / `ValidateSSID` / `ValidateAllowedSSIDs` / `ValidateVlanID` / `ValidateSessionTimeout`、`ValidatePolicyRule(*model.PolicyRule)`、まとめて `ValidatePolicy(*PolicyInput) []error`。状態は `ValidatePolicyStatus`（r15。`active` / `suspended` 以外は `Status: must be 'active' or 'suspended'`、空は `Status: required`。`ValidatePolicy` には含めない） | `NormalizePolicyInput`（空白の除去、`default` を小文字に）、`NormalizePolicyStatus`（r15。空白の除去と小文字化） | `PolicyValidationError`（ルールの項目は `Rules[i].NasID` 等） |
 
 - 正規表現（`IMSIPattern` 等）と上限値（`MaxSecretLength` 等）は `rules.go` に定数として公開する
 - `pkg/model` の `PolicyRule` に依存する（§10.2）
@@ -1253,7 +1268,7 @@ if errs := validation.ValidateSubscriber(input); len(errs) > 0 {
 |----|------------|------|
 | `SubscriberStore` | `Get`, `Create`, `Update`, `UpdateWithSQN`, `Patch`, `Delete`, `List`, `ListPage`, `Count`, `Exists`, `BulkCreate` | `Update` は SQN を書き換えない。`UpdateWithSQN` は編集開始時の SQN との比較・置き換え（D-02 §2.A）。`Patch` は `SubscriberPatch` の nil でない項目だけを書き換える（SQN を指定しなければ触れない。D-13 §3.1） |
 | `ClientStore` | `Get`, `GetByID`, `Create`, `Update`, `Patch`, `Delete`, `EnsureIDs`, `List`, `Count`, `Exists`, `BulkCreate` | サーバー採番の ID を扱う（D-02 §2.B、D-13 §3.2）。`Create` は ID を採番して `RadiusClient.ID` に設定、`GetByID` は索引 `idx:client:{ID}` から引く、`Patch` は `ClientPatch` の nil でない項目だけを書き換え、`IP` を指定するとキーを付け替える（変更後の IP があれば `ErrClientExists`）、`Delete` は索引も消す、`EnsureIDs` は ID の導入前のデータに採番する（起動時に呼ぶ）、`BulkCreate`（CSV）は既存の ID を引き継ぐ |
-| `PolicyStore` | `Get`, `Create`, `Update`, `Upsert`, `Put`, `Delete`, `List`, `ListPage`, `Count`, `Exists`, `BulkCreate`, `GetIMSIsWithPolicy` | `Put` は作成したか（存在しなかったか）を返す（D-13 §3.3 の PUT の 201 / 200 用） |
+| `PolicyStore` | `Get`, `Create`, `Update`, `Upsert`, `Put`, `SetStatus`, `Delete`, `List`, `ListPage`, `Count`, `Exists`, `BulkCreate`, `GetIMSIsWithPolicy` | `Put` は作成したか（存在しなかったか）を返す（D-13 §3.3 の PUT の 201 / 200 用）。読み出し（`Get` / `List` / `ListPage`）は `status` を `Policy.Status` に入れる（ないときは `active`、不正な値はそのまま）。`Create` / `Update` / `Put` は `default` と `rules` だけを書き、`status` に触れない（停止中に編集しても停止のまま。r15）。`Put` は書き込んだ後の `status` を `Policy.Status` に入れる。`SetStatus(ctx, imsi, status) (prev, err)`（r15）は状態だけを書き換え、変更前の状態を返す（ポリシーがなければ `ErrPolicyNotFound`。値の検証は呼び出し側で行う）。`BulkCreate`（CSV）は `Policy.Status` が空でないときだけ `status` も書く（D-05 §6.4） |
 | `SubscriberPage` / `PolicyPage` | `ListPage` の戻り値（`Items`、`Total`、`NextCursor`） | `ListPage(ctx, imsiPrefix, cursor, limit)` は IMSI の前方一致のキーを `SCAN` で集めて昇順に並べ、`cursor` より後の `limit` 件だけを読む（`page.go`。D-13 §4.1 のページング用）。`Total` は前方一致に一致する件数、`NextCursor` は次のページがあるときだけそのページの最後の IMSI。Valkey に一覧用のインデックスはないため、件数に比例して `SCAN` する（PoC の件数を前提とする）。`PolicyStore.ListPage` は `rules` を解釈できないポリシーを `List` と同じく結果に含めない（`Total` には数える） |
 | `SessionStore`（r14） | `Get`, `List`, `Count`, `ListByIMSI`, `IndexCount` | 読み出しだけ（`session.go`）。`List` / `Count` は `sess:*` の SCAN（値を解釈できないセッションは `List` から除く）。`ListByIMSI` は `idx:user:{IMSI}` から引き、索引にあるが存在しない UUID を `stale` として返す（索引からは消さない。Admin TUI はそれを SREM する）。索引が空なら全セッションから IMSI で絞り込む。`IndexCount` は索引の SCARD（掃除前の UUID を含みうる） |
 | キー | `SubscriberKey`, `ClientKey`, `PolicyKey`, `SessionKey`, `UserIndexKey`、`PrefixSubscriber` / `PrefixSession` / `PrefixUserIndex` 等 | `SessionKey` / `UserIndexKey` は r14 で Admin TUI から移した（Admin TUI の `internal/store` の同名の定数・関数はこれを参照する） |
@@ -1276,6 +1291,8 @@ if errs := validation.ValidateSubscriber(input); len(errs) > 0 {
 | 作成 | 同じキーを同時に作成しても成功するのは1つだけで、後の方は `Err*Exists` になり既存の値を上書きしない |
 | 変更 | 途中で削除されたキーを、一部のフィールドだけで作り直さない（`Err*NotFound`） |
 | 一括作成（`BulkCreate`）・`Upsert` / `Put` | 既存の値を上書きする（CSV インポート、PUT の仕様） |
+| 認可ポリシーの状態の変更（`SetStatus`。r15） | 存在確認・変更前の `status` の読み出し・HSET を1つの Lua（`setStatusScript`）で行う。存在しなければ書き込まない（`status` だけの Hash を作らない）。変更前と同じ値なら書き込まない。変更前の値は監査ログ（`status: active -> suspended`）に使う |
+| 認可ポリシーの置き換え（`Put`。r15） | `default` と `rules` の HSET と、書き込んだ後の `status` の読み出しを1つの Lua（`putPolicyScript`）で行う（応答の `status` が書き込みとずれない） |
 
 > **注記:** 2026-10-07 より前の Admin TUI の作成・変更は「存在確認 → 書き込み」の2回の操作で行っており、同時に作成すると後の方が上書きしていた。
 
@@ -1437,3 +1454,4 @@ next, err := subs.ListPage(ctx, "00101", page.NextCursor, 50) // 次のページ
 | r12 | 2026-10-08 | Provisioning API（D-13）の実装の反映: §2.3 の利用コンポーネント対応表に Provisioning API の列（`valkey`・`logging`・`model`・`validation`・`masterdata`）を追加し、注記を実装済みに（`httputil` は使わない旨）。§9.2 に `SubscriberStore.ListPage` / `PolicyStore.ListPage`（`SubscriberPage` / `PolicyPage`。SCAN による IMSI の前方一致・cursor のページング）と `ClientStore.Patch`（`ClientPatch`）を追加、§9.3 の原子的な変更に `ClientStore.Patch`、§9.4 に `ListPage` の使用例を追加 |
 | r13 | 2026-10-08 | RADIUSクライアントにサーバー採番の ID を導入（D-13 r5、D-02 r23）: §9.2 の `ClientStore` に `GetByID`・`EnsureIDs` を追加し、`Create`（採番）・`Patch`（IP の変更）・`Delete`（索引の削除）・`BulkCreate`（ID の引き継ぎ）の動作を追記。§9.3 に RADIUSクライアントの Lua を追記。`pkg/model.RadiusClient` に `ID` |
 | r14 | 2026-10-09 | セッションの読み出しを Admin TUI から `pkg/masterdata` に移した（Provisioning API の `GET /sessions` と共通で使うため。D-13 r6）: §9.1 の責務にセッション・索引の読み出しを加え、§9.2 に `SessionStore`（`Get` / `List` / `Count` / `ListByIMSI` / `IndexCount`）、`SessionKey` / `UserIndexKey`、`ErrSessionNotFound` を追加。索引の掃除は Admin TUI に残した |
+| r15 | 2026-10-10 | 加入者の停止の印（D-02 r25 の `policy:{IMSI}` の `status`）の追加: §6.4 の `pkg/model.Policy` に `Status`、定数 `PolicyStatusActive` / `PolicyStatusSuspended`、`IsSuspended` を追加（`NewPolicy` は `active`、`Clone` は `Status` も写す）。§8.2 に `ValidatePolicyStatus` / `NormalizePolicyStatus` を追加。§9.2 の `PolicyStore` に `SetStatus` と、読み出し・`Create` / `Update` / `Put`・`BulkCreate` での `status` の扱いを追加。§9.3 に `SetStatus`（`setStatusScript`）と `Put`（`putPolicyScript`）の原子性を追加 |

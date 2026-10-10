@@ -28,7 +28,7 @@ import (
 
 // version は provisioning-api のバージョン（/status の version）。
 // ビルド時に -ldflags "-X main.version=..." で上書きできる。
-var version = "0.3.0"
+var version = "0.4.0"
 
 func main() {
 	startedAt := time.Now()

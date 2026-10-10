@@ -25,6 +25,10 @@ const (
 	OpExport Operation = "export"
 	// OpSearch は検索操作
 	OpSearch Operation = "search"
+	// OpSuspend は加入者の停止（認可ポリシーの status を suspended にする）
+	OpSuspend Operation = "suspend"
+	// OpResume は加入者の再開（認可ポリシーの status を active にする）
+	OpResume Operation = "resume"
 )
 
 // TargetType は監査ログの対象種別を表す。
@@ -136,6 +140,16 @@ func (l *Logger) LogCreate(targetType TargetType, targetKey, targetIMSI string) 
 // LogUpdate はUPDATE操作のログを出力する。
 func (l *Logger) LogUpdate(targetType TargetType, targetKey, targetIMSI string) {
 	l.Log(OpUpdate, targetType, targetKey, targetIMSI, string(targetType)+" updated")
+}
+
+// LogStatusChange は認可ポリシーの状態の変更（停止・再開）のログを出力する。
+// details には変更前後の状態を「status: active -> suspended」の形で記録する（Provisioning API と同じ）。
+func (l *Logger) LogStatusChange(targetKey, targetIMSI, prev, status string) {
+	op, msg := OpSuspend, string(TargetPolicy)+" suspended"
+	if status == "active" {
+		op, msg = OpResume, string(TargetPolicy)+" resumed"
+	}
+	l.LogWithDetails(op, TargetPolicy, targetKey, targetIMSI, msg, "status: "+prev+" -> "+status)
 }
 
 // LogDelete はDELETE操作のログを出力する。

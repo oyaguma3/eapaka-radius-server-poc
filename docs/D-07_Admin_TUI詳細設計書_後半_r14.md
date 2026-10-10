@@ -1,4 +1,4 @@
-# D-07 Admin TUI 詳細設計書【後半】(r13)
+# D-07 Admin TUI 詳細設計書【後半】(r14)
 
 ## 1. 概要
 
@@ -821,7 +821,7 @@ IMSI検索ダイアログの入力値は検証しない。15桁の数字でな�
 
 ### 7.3 レイアウト
 
-2カラム構成で、左カラムにNavigation + Global、右カラムにList Actions + Policy Formを表示する。各操作にはファンクションキーと代替文字キー (alt) の両方が用意されている。
+2カラム構成で、左カラムにNavigation + Global、右カラムにList Actions + Policy List + Policy Formを表示する（Policy List は r14 で追加。認可ポリシーの一覧の停止・再開。D-05 §4.4.1）。各操作にはファンクションキーと代替文字キー (alt) の両方が用意されている。
 
 ```
 ┌ Help ─────────────────────────────────────────────────────────────────────────┐
@@ -839,10 +839,13 @@ IMSI検索ダイアログの入力値は検証しない。15桁の数字でな�
 │                                      F6        Filter                         │
 │  Global                              /         Filter (alt)                   │
 │  ──────                                                                       │
-│  F1        Show this help            Policy Form                              │
+│  F1        Show this help            Policy List                              │
 │  ?         Show this help (alt)      ───────────                              │
-│  q         Back/Quit                 F6        Toggle Form/Rules focus        │
+│  q         Back/Quit                 F7 / s    Suspend/Resume selected        │
 │  Ctrl+Q    Exit application                                                   │
+│                                      Policy Form                              │
+│                                      ───────────                              │
+│                                      F6        Toggle Form/Rules focus        │
 │                                                                               │
 └───────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -1055,7 +1058,7 @@ Admin TUIの監査ログでは、**IMSIを常に生値（マスキングなし�
 
 | 項目 | 方針 |
 |------|------|
-| `target_imsi` フィールド | IMSI全桁を記録（加入者・ポリシーの作成/更新/削除時、Session Detail検索（`search`）で検索したIMSI） |
+| `target_imsi` フィールド | IMSI全桁を記録（加入者・ポリシーの作成/更新/削除時、加入者の停止・再開（`suspend` / `resume`。r14。D-05 §4.4.1）、Session Detail検索（`search`）で検索したIMSI） |
 | 環境変数 | `LOG_MASK_IMSI` は参照しない |
 
 **設計意図:**
@@ -1130,3 +1133,4 @@ Admin TUIの監査ログでは、**IMSIを常に生値（マスキングなし�
 | r11 | 2026-10-06 | セッションに NAS-Identifier（`nas_identifier`）を記録した実装修正の反映（radsecproxy 等のプロキシ経由では NAS IP がプロキシのIPになり NAS を区別できないため）: Session List（§5.2 注記、§5.3 レイアウト、§5.5 表示項目）と Session Search（§6.3 レイアウト、§6.7 表示項目）に NAS-ID カラムを追加（IMSI / UUID の次。値がなければ `-`、24文字を超えれば省略）。§5.4 フィルタの対象に NAS-ID を追加しラベルを `IMSI/NAS-ID/IP contains:` に変更。§5.8.2 の Hash フィールド対応、§5.8.3 の mapToSession、構造体定義に `nas_identifier` / `NasIdentifier` を追加。NAS-ID はソート項目にしない。§1.3 の D-02 の版数を r20 に更新 |
 | r12 | 2026-10-07 | Admin TUI の加入者・RADIUSクライアント・認可ポリシーの store と validation を pkg に移した実装修正（Provisioning API（D-13）と共通で使うため。E-03 r11）の反映: §8.1 の StatisticsStore の構造体で、加入者・クライアント・ポリシーのストアを `pkg/masterdata` の型に修正（ポリシーの件数は `PolicyStore.Count`） |
 | r13 | 2026-10-09 | セッションの読み出しを Provisioning API（D-13 r6 の `GET /sessions`）と共通の `pkg/masterdata.SessionStore` に移した実装修正の反映: §5.8.3（Hash の変換。`sessionFromHash`）、§5.8.4（一覧の取得）、§6.9.3（SCAN フォールバック。`ListByIMSI`）、§6.10.1（インデックスのクリーンアップ。stale を受け取って Admin TUI が SREM する）の説明と抜粋、§5.8.1 の手順の関数名を更新。§1.3 の D-02 の版数を r24 に更新。Admin TUI の動作は変えていない |
+| r14 | 2026-10-10 | 加入者の停止・再開（D-05 r16）の反映: §7.3 のヘルプのレイアウトの右カラムに `Policy List`（`F7 / s  Suspend/Resume selected`）を追加。§10.1.1 の `target_imsi` を記録する操作に停止・再開（`suspend` / `resume`）を追加 |

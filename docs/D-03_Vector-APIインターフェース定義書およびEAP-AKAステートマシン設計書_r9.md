@@ -1,4 +1,4 @@
-# D-03 Vector-APIインターフェース定義書およびEAP-AKAステートマシン設計書 (r8)
+# D-03 Vector-APIインターフェース定義書およびEAP-AKAステートマシン設計書 (r9)
 
 ---
 
@@ -340,8 +340,9 @@ EAP認証成功後の認可処理。`policy:{IMSI}` を参照し、接続可否�
 | 取得結果 | 処理 | ログ | Next State |
 |---------|------|------|------------|
 | キー不在 | Access-Reject | `AUTH_POLICY_NOT_FOUND` | FAILURE |
-| JSONパース失敗 | Access-Reject | `AUTH_POLICY_NOT_FOUND`（専用のevent_idはなく、`error` 属性で区別） | FAILURE |
-| 取得成功 | ルール評価へ | - | - |
+| JSONパース失敗・`status` の不正値（r9） | Access-Reject | `AUTH_POLICY_NOT_FOUND`（専用のevent_idはなく、`error` 属性で区別） | FAILURE |
+| 取得成功・`status` が `suspended`（加入者の停止中。r9） | Access-Reject（ルールを評価しない） | `AUTH_SUBSCRIBER_SUSPENDED` | FAILURE |
+| 取得成功（`active`） | ルール評価へ | - | - |
 
 3. **ルール評価:**
    - RADIUSリクエストから `NAS-Identifier` と `Called-Station-Id`（SSID: 最初の `:` より後ろ、`:` が無ければ全体）を取得。
@@ -454,3 +455,4 @@ EAP認証成功後の認可処理。`policy:{IMSI}` を参照し、接続可否�
 | r6 | 2026-10-04 | 接続方式01（aka-only-server）対応: 接続構成図・注記を更新（内部IFは変更なし）、Error Responseに接続方式01由来の400/403/404/502を追加、403の3ケース（detailで区別）と再同期AUTS検証失敗が403となる点を明記、Auth ServerでのCB対象外扱い・502のCB計上を注記。既存記載の実装との不一致を修正（2a の404時ログを `AUTH_IMSI_NOT_FOUND` → `VECTOR_IMSI_NOT_FOUND`、APIエラー時ログに `VECTOR_CONN_ERR` / `VECTOR_CB_OPEN` / `VECTOR_UNKNOWN_ERR` を追記、再同期APIエラー時のAuth Server側ログを `VECTOR_API_ERR` 等に修正、404応答例の detail を実装の文言に修正）。D-04 r19 の event_id 全面整合に合わせて修正（2b の `EAP_PSEUDONYM_FALLBACK` を削除（フル認証誘導時は専用ログなし）、§7 不正な状態遷移の `EAP_INVALID_STATE` を `EAP_STATE_ERR` / `EAP_UNEXPECTED_IDENTITY` / `EAP_UNKNOWN_SUBTYPE` に修正、3a のJSONパース失敗時ログ `POLICY_PARSE_ERR` を `AUTH_POLICY_NOT_FOUND` に修正、§5 Client-Error受信時にエラーコードを記録しない旨を明記） |
 | r7 | 2026-10-04 | ポリシーの `nas_id` で `"*"` を任意の NAS に一致させた Auth Server の実装修正に合わせ、3a Post-Auth Policy Check のルール評価を実装の PolicyRule 構造（`nas_id` / `allowed_ssids` / `vlan_id` / `session_timeout`）に修正（r5 で記載した `ssid` / `action` / `time_min` / `time_max` による評価は実装に存在しないため削除）。`nas_id` は `"*"` 単独で任意の NAS に一致（部分一致なし）、それ以外は完全一致であることを明記。評価結果の分岐表を「ルール一致 → Accept（VLAN・Session-Timeout 付与）／不一致 → default で判定」に整理し、Access-Accept 時の VLAN・Session-Timeout 属性を追記 |
 | r8 | 2026-10-04 | SQN競合制御の実装（Lua による `sqn` の比較・置き換え、競合時のやり直し最大3回、HTTP 409）の反映（1.1 Error Response）: 409 Conflict の説明を実装に合わせて修正（3回とも競合・待機中の期限切れ等で返す、`detail` は固定文 `SQN update conflict`、Vector Gateway はそのまま中継、Auth Server は Circuit Breaker 対象外として Access-Reject、5xx にしない理由）。「Phase 1で追加されたSQN競合制御（WATCH/MULTI CAS）」の記述を、Lua による比較・置き換えに修正。接続方式01の注記の Circuit Breaker 対象外の 4xx の例に 409 を追加 |
+| r9 | 2026-10-10 | 加入者の停止の印（D-02 r25 の `policy:{IMSI}` の `status`、D-09 r21 §8.4.4）の反映: Post-Auth のポリシー取得結果の分岐に、`status` が `suspended` の場合（ルールを評価せずに Access-Reject、`AUTH_SUBSCRIBER_SUSPENDED`、FAILURE）と `status` の不正値（`AUTH_POLICY_NOT_FOUND`）を追加 |

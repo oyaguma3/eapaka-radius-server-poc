@@ -1,4 +1,4 @@
-# D-05 Admin TUI 詳細設計書【前半】(r15)
+# D-05 Admin TUI 詳細設計書【前半】(r16)
 
 ## 1. 概要
 
@@ -215,6 +215,7 @@ HSET "policy:440101234567890" "default" "deny" "rules" '[{"nas_id":"AP-OFFICE-01
 | `F4` / `d` | 削除確認ダイアログ表示 |
 | `F5` / `r` | 一覧を再読み込み |
 | `F6` / `/` | フィルタ入力ダイアログ表示 |
+| `F7` / `s` | 加入者の停止・再開の確認ダイアログ表示（認可ポリシーの一覧だけ。§4.4.1。r16） |
 
 **注記：**
 - 加入者・クライアント・ポリシーの一覧で `Enter` を押すと、`F3` / `e` と同じく選択項目の編集画面（ポリシーは Policy Details フォーム）を開く。一覧画面は `Enter` で `onSelect` コールバックを呼ぶため、`main.go` で各一覧に `SetOnSelect` を設定して編集画面を開く（`SetOnEdit` と同じ処理）。
@@ -239,6 +240,8 @@ HSET "policy:440101234567890" "default" "deny" "rules" '[{"nas_id":"AP-OFFICE-01
 | **削除確認**（`Confirm Delete`） | 一覧で削除操作（`F4` / `d`） | `Are you sure you want to delete this subscriber?`<br>（空行）<br>`440101234567890`<br>（client / policy も同形式で、対象のIP・IMSIを表示） | `[Yes] [No]` |
 | **SQN変更警告**（`SQN Modification Warning`） | 加入者の編集で SQN を変更して保存（大文字小文字の違いだけは変更とみなさない） | §4.2.2 参照 | `[Continue] [Cancel]` |
 | **Default allow 警告**（`Default Allow Warning`） | ポリシーの Default を `allow` にして保存 | §3.5 参照 | `[Continue] [Cancel]` |
+| **停止確認**（`Confirm Suspend`）（r16） | 認可ポリシーの一覧で、利用中（`active`）の行に `F7` / `s` | `Suspend this subscriber?`<br>（空行）<br>`440101234567890`<br>（空行）<br>`Authentication will be rejected from the next attempt.`<br>`Connected sessions are not disconnected.` | `[Yes] [No]` |
+| **再開確認**（`Confirm Resume`）（r16） | 認可ポリシーの一覧で、停止中（`suspended`）の行に `F7` / `s` | `Resume this subscriber?`<br>（空行）<br>`440101234567890`<br>（空行）<br>`Authentication will be allowed from the next attempt.` | `[Yes] [No]` |
 | **接続エラー**（`Connection Error`） | 起動時の Valkey 接続失敗 | §7.2 参照 | `[Retry] [Exit]` |
 
 **注記：**
@@ -734,19 +737,30 @@ tview.Form を centered() ヘルパーで画面中央にダイアログ表示す
 
 ```
 ┌ Authorization Policy List 1-9 of 9 (Page 1/1) ───────────────────────────┐
-│ IMSI              Default   Rules                                        │
-│ 001010000000000   allow     No rules                                     │
-│ 001010000000001   allow     No rules                                     │
-│ 001010000000002   deny      No rules                                     │
-│ 001010000000003   deny      1 rule                                       │
-│ 001010000000004   deny      2 rules                                      │
-│ 001010000000005   deny      1 rule                                       │
-│  :                :         :                                            │
+│ IMSI              Default   Rules       Status                           │
+│ 001010000000000   allow     No rules    active                           │
+│ 001010000000001   allow     No rules    active                           │
+│ 001010000000002   deny      No rules    suspended                        │
+│ 001010000000003   deny      1 rule      active                           │
+│ 001010000000004   deny      2 rules     active                           │
+│ 001010000000005   deny      1 rule      active                           │
+│  :                :         :           :                                │
 └──────────────────────────────────────────────────────────────────────────┘
 F1:Help  |  q:Back/Quit  |  Ctrl+Q:Exit
 ```
 
-**表示色:** Default列は `allow` = Yellow/Orange、`deny` = Green。Rules列は `No rules` / `1 rule` / `N rules` / `10+ rules` 形式で表示。
+**表示色:** Default列は `allow` = Yellow/Orange、`deny` = Green。Rules列は `No rules` / `1 rule` / `N rules` / `10+ rules` 形式で表示。Status列（r16）は `active` = Gray、`suspended`（と Valkey を直接書き換えた不正な値）= Red。
+
+##### 加入者の停止・再開（r16）
+
+認可ポリシーの `status`（D-02 §2.C）で、加入者を登録したまま一時的に認証できなくする（停止）・戻す（再開）。
+
+- 一覧で `F7` / `s` を押すと、選択中の行の状態に応じて停止確認（`Confirm Suspend`）または再開確認（`Confirm Resume`）のダイアログを表示する（§3.4）。`Yes` で `PolicyStore.SetStatus` を呼び、`suspended` / `active` を書き込む。`No` では何もしない。
+- 停止確認には「次の認証から拒否される。接続中のセッションは切れない」ことを表示する（Disconnect / CoA は扱わない）。
+- 成功するとステータスバーに `Subscriber suspended: {IMSI}` / `Subscriber resumed: {IMSI}` を表示し、一覧を読み直して同じ行を選択したままにする。認可ポリシーが削除されていた場合等はステータスバーに `Failed to change status: policy not found` 等を表示する。
+- 状態が変わったときだけ監査ログ（`operation` が `suspend` / `resume`。D-04 §3.5）を記録する。
+- 停止・再開は認可ポリシーの一覧だけで行う。編集画面（§4.4.2）では状態を表示するだけで、保存しても状態は変わらない。認可ポリシーのない加入者は停止できない（もともと認証は拒否される）。
+- `F1` のヘルプの右列に `Policy List` の欄（`F7 / s  Suspend/Resume selected`）を表示する（D-07 §7）。
 
 #### 4.4.2 ポリシー登録 [P2] / 編集 [P3]
 
@@ -759,6 +773,7 @@ F1:Help  |  q:Back/Quit  |  Ctrl+Q:Exit
 │                                                                    │
 │  IMSI             001010000000004        (disabled)                │
 │  Default Action   [deny ▼]                                         │
+│  Status           active                 (disabled)                │
 │                                                                    │
 │  < Add Rule >  < Save >  < Cancel >                                │
 │                                                                    │
@@ -820,6 +835,7 @@ centered(form, width=60, height=15) で Policy Details の上にオーバーレ�
 | IMSI | Yes | 空 | 編集時は変更不可 |
 | Default | Yes | `deny` | ドロップダウン選択（`deny` / `allow`） |
 | Rules | No | 空配列 | サブリストで管理（0件でも保存できる。ルールが0件の場合は Default のみで判定される） |
+| Status（r16） | - | `active` | 表示のみ（変更不可の入力欄）。停止・再開は一覧の `F7` / `s` で行い、保存では書き込まない（停止中に編集・保存しても停止のまま） |
 
 **注記：** Defaultを "allow" に設定して保存する場合、警告ダイアログを表示（セクション3.5参照）。
 
@@ -923,9 +939,23 @@ ip,secret,name,vendor
 ### 6.4 認可ポリシーCSV仕様
 
 ```csv
-imsi,default,rules_json
-440101234567890,deny,"[{""nas_id"":""AP-OFFICE-01"",""allowed_ssids"":[""CORP-WIFI""],""vlan_id"":""100"",""session_timeout"":3600},{""nas_id"":""*"",""allowed_ssids"":[""GUEST-WIFI""]}]"
+imsi,default,rules_json,status
+440101234567890,deny,"[{""nas_id"":""AP-OFFICE-01"",""allowed_ssids"":[""CORP-WIFI""],""vlan_id"":""100"",""session_timeout"":3600},{""nas_id"":""*"",""allowed_ssids"":[""GUEST-WIFI""]}]",active
+440101234567891,deny,[],suspended
 ```
+
+**列 `status`（r16）：** 末尾の任意の列。値は `active` / `suspended`（前後の空白を除き小文字にしてから検証する）。
+
+| 場合 | インポートの扱い |
+|------|----------------|
+| 列がない（r15 までの3列の CSV） | 状態を書き込まない。新しいポリシーは `active`（`status` なし）、既存のポリシーは今の状態のまま（停止中なら停止のまま） |
+| 列があり、値が空 | 同上（その行は状態を変えない） |
+| 列があり、値が `active` / `suspended` | その値を書き込む（停止・再開になる） |
+| それ以外の値 | その行を検証エラー（`line {N}: Status: must be 'active' or 'suspended'`）とし、インポート全体を中断する（§6.2） |
+
+- ヘッダーの4列目は `status` でなければならない（4列目に別の名前があるとヘッダーの検証エラー）。5列目以降は無視する。
+- エクスポートは常に4列（`imsi,default,rules_json,status`）で出力する。r15 までの Admin TUI は4列目を無視して取り込める。
+- 古い3列の CSV を取り込み直しても停止がうっかり解けないよう、列がない・値が空のときは状態を変えない。CSV で状態を変えた場合の監査ログは `import`（件数）だけで、`suspend` / `resume` は記録しない。
 
 **注記：** `rules_json` フィールドはJSON文字列をダブルクォートでエスケープしてCSV格納する。空文字列または `[]` はルールなし。各ルールは §5.1 の Rule の規則で検証する（エラーは `line {N}, rule[{i}]: NasID: required` の形式）。
 
@@ -1201,3 +1231,4 @@ Admin TUIからの操作は、標準出力にJSON形式で記録する。
 | r13 | 2026-10-07 | Admin TUI の加入者・RADIUSクライアント・認可ポリシーの store と validation を pkg に移した実装修正（Provisioning API（D-13）と共通で使うため。E-03 r11）の反映: §5.1 のバリデーションの実装箇所を `pkg/validation` に修正、§5.2 の登録時のエラーに、存在確認と書き込みを1つの操作で行い同時に作成しても上書きしない旨を追記 |
 | r14 | 2026-10-08 | Admin TUI の RADIUS クライアントの登録・編集画面で Save / Cancel ボタンが枠外に出て表示されなかった不具合の修正の反映: §4.3.2 のレイアウトの説明（フォーカスが下に移るとスクロールしてボタンが表示される、としていた）を、高さを入力欄の数から `ui.FormHeight` で計算し（入力欄4つで13行）ボタンを常に表示する動作に修正し、高さの計算と経緯の注記を追加。§4.2.2 に加入者のフォームの高さ（同じ関数、入力欄5つで15行）を追記 |
 | r15 | 2026-10-08 | RADIUSクライアントにサーバー採番の ID を導入した実装修正（D-02、D-13）の反映: §1.5 の RADIUSクライアントの Hash に `id` を追加し、索引 `idx:client:{ID}`・カウンター `seq:client`、作成時の採番・削除時の索引の削除（`pkg/masterdata` の Lua）、ID を再利用しないことを追記。§3.7・§4.3.1 のクライアント一覧に、先頭の ID 列（右寄せ、灰色、幅は広げない。列は ID / IP Address / Name / Secret / Vendor）とフィルタの対象への ID の追加、並び順は従来どおり IP の文字列順であることを追記。§4.3.2 の編集画面のタイトルを「Edit RADIUS Client (ID n)」に修正し、登録画面のタイトルは変えないこと・ID は入力しないことを追記。§6.3 に CSV では ID を扱わない（列は変えない）こと、インポートは既存のクライアントの ID を引き継ぎ新しいクライアントに採番することを追記。§7.1 に起動時（`connectValkey`）の `ClientStore.EnsureIDs` による ID の導入前のクライアントへの採番（何度実行しても同じ。失敗時は接続エラーと同じ扱い）を追記。2026-10-08 に simwifi で、一覧の ID 表示、Admin TUI で登録したクライアントへの ID 3 の採番、編集画面のタイトル `Edit RADIUS Client (ID 1)` を確認。あわせて、§4.3.1 の Vendor が空のときの表示を実装どおり `-` に訂正（従来から `none` と誤記）。§6.3 のインポートは、従来どおり MULTI / EXEC で全件を1回の操作として書き込む |
+| r16 | 2026-10-10 | 加入者の停止・再開（認可ポリシーの `status`。D-02 r25）の追加: §3.2 の一覧のキーに `F7` / `s`（認可ポリシーの一覧だけ）、§3.4 の確認ダイアログに停止確認・再開確認、§4.4.1 のレイアウトに Status 列と表示色、「加入者の停止・再開」（`PolicyStore.SetStatus`、ステータスバー、選択の保持、監査ログ、ヘルプ）を追加。§4.4.2 のレイアウトとフィールド定義に Status（表示のみ。保存では書き込まない）を追加。§6.4 に末尾の任意の列 `status`（列がない・値が空なら状態を変えない、不正値は行のエラー、エクスポートは常に4列）を追加 |

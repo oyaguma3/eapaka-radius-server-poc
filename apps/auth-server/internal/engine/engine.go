@@ -549,6 +549,22 @@ func (e *EngineImpl) handleChallengeResponse(ctx context.Context, req *eap.Reque
 		}
 	}
 
+	// 停止中の加入者はルールを評価せずに拒否する（D-09 セクション8.4.4）
+	if pol.IsSuspended() {
+		slog.Warn("加入者停止中",
+			"event_id", "AUTH_SUBSCRIBER_SUSPENDED",
+			"trace_id", traceID,
+			"imsi", maskedIMSI,
+			"nas_identifier", req.NASIdentifier,
+		)
+		_ = e.ctxStore.Delete(ctx, traceID)
+		eapFailure, _ := eap.BuildEAPFailure(pkt.Identifier + 1)
+		return &eap.Result{
+			Action:     eap.ActionReject,
+			EAPMessage: eapFailure,
+		}
+	}
+
 	// ポリシー評価
 	ssid := policy.ExtractSSID(req.CalledStation)
 	evalResult := e.evaluator.Evaluate(pol, req.NASIdentifier, ssid)

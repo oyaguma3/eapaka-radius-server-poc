@@ -29,6 +29,22 @@ func ValidateDefaultAction(action string) error {
 	return nil
 }
 
+// ValidatePolicyStatus は認可ポリシーの状態のバリデーションを行う。
+func ValidatePolicyStatus(status string) error {
+	if status == "" {
+		return &PolicyValidationError{Field: "Status", Message: "required"}
+	}
+	if status != model.PolicyStatusActive && status != model.PolicyStatusSuspended {
+		return &PolicyValidationError{Field: "Status", Message: "must be 'active' or 'suspended'"}
+	}
+	return nil
+}
+
+// NormalizePolicyStatus は認可ポリシーの状態を正規化する（前後の空白を除き、小文字にする）。
+func NormalizePolicyStatus(status string) string {
+	return strings.ToLower(strings.TrimSpace(status))
+}
+
 // ValidateNasID はNAS IDのバリデーションを行う。
 func ValidateNasID(nasID string) error {
 	if nasID == "" {

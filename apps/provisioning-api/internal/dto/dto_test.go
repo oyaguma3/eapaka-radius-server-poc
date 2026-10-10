@@ -59,9 +59,13 @@ func TestNewPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"imsi":"001010000000001","default":"deny","rules":[{"nasId":"*","allowedSsids":[],"vlanId":"10","sessionTimeout":60}]}`
+	want := `{"imsi":"001010000000001","default":"deny","rules":[{"nasId":"*","allowedSsids":[],"vlanId":"10","sessionTimeout":60}],"status":"active"}`
 	if string(data) != want {
 		t.Errorf("NewPolicy() = %s, want %s", data, want)
+	}
+	p.Status = model.PolicyStatusSuspended
+	if got := NewPolicy(p); got.Status != "suspended" {
+		t.Errorf("NewPolicy().Status = %q, want suspended", got.Status)
 	}
 	if got := NewClient(&model.RadiusClient{IP: "10.0.0.1", Secret: "s", Name: "AP"}); got.IP != "10.0.0.1" || got.Name != "AP" {
 		t.Errorf("NewClient() = %+v", got)

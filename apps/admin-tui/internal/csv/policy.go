@@ -12,8 +12,12 @@ import (
 	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/validation"
 )
 
-// PolicyCSVHeader はポリシーCSVのヘッダー行
-var PolicyCSVHeader = []string{"imsi", "default", "rules_json"}
+// PolicyCSVHeader はポリシーCSVのヘッダー行（書き出し用。D-05 §6.4）
+// 末尾の status は任意の列で、取り込みでは列がなくてもよい（ない、または値が空なら状態を変えない）。
+var PolicyCSVHeader = []string{"imsi", "default", "rules_json", "status"}
+
+// policyCSVRequiredColumns は必須の列の数（imsi, default, rules_json）
+const policyCSVRequiredColumns = 3
 
 // ParsePolicyCSV はポリシーCSVをパースする。
 // 全件バリデーションを行い、エラーがあれば行番号とエラーを返す。
@@ -28,7 +32,8 @@ func ParsePolicyCSV(r io.Reader) ([]*model.Policy, []error) {
 	}
 
 	// ヘッダー検証
-	if err := validatePolicyHeader(header); err != nil {
+	hasStatus, err := validatePolicyHeader(header)
+	if err != nil {
 		return nil, []error{err}
 	}
 
@@ -47,7 +52,7 @@ func ParsePolicyCSV(r io.Reader) ([]*model.Policy, []error) {
 			continue
 		}
 
-		policy, parseErrs := parsePolicyRecord(record, lineNum)
+		policy, parseErrs := parsePolicyRecord(record, lineNum, hasStatus)
 		if len(parseErrs) > 0 {
 			errs = append(errs, parseErrs...)
 			continue
@@ -59,24 +64,39 @@ func ParsePolicyCSV(r io.Reader) ([]*model.Policy, []error) {
 	return policies, errs
 }
 
-func validatePolicyHeader(header []string) error {
-	if len(header) < 3 {
-		return errors.New("invalid header: expected at least 3 columns (imsi, default, rules_json)")
+// validatePolicyHeader はヘッダーを検証し、status の列があるかを返す。
+// 4列目以降がある場合、4列目は status でなければならない（5列目以降は無視する）。
+func validatePolicyHeader(header []string) (hasStatus bool, err error) {
+	if len(header) < policyCSVRequiredColumns {
+		return false, errors.New("invalid header: expected at least 3 columns (imsi, default, rules_json)")
 	}
 
-	expected := PolicyCSVHeader
-	for i, col := range expected {
+	for i, col := range PolicyCSVHeader {
+		if i >= len(header) {
+			break
+		}
 		if strings.ToLower(strings.TrimSpace(header[i])) != col {
-			return fmt.Errorf("invalid header: expected '%s' at column %d, got '%s'", col, i+1, header[i])
+			return false, fmt.Errorf("invalid header: expected '%s' at column %d, got '%s'", col, i+1, header[i])
 		}
 	}
 
-	return nil
+	return len(header) > policyCSVRequiredColumns, nil
 }
 
-func parsePolicyRecord(record []string, lineNum int) (*model.Policy, []error) {
-	if len(record) < 3 {
+func parsePolicyRecord(record []string, lineNum int, hasStatus bool) (*model.Policy, []error) {
+	if len(record) < policyCSVRequiredColumns {
 		return nil, []error{fmt.Errorf("line %d: expected at least 3 columns, got %d", lineNum, len(record))}
+	}
+
+	// status（任意。空なら状態を変えない）
+	var status string
+	if hasStatus && len(record) > policyCSVRequiredColumns {
+		status = validation.NormalizePolicyStatus(record[policyCSVRequiredColumns])
+		if status != "" {
+			if err := validation.ValidatePolicyStatus(status); err != nil {
+				return nil, []error{fmt.Errorf("line %d: %s", lineNum, err.Error())}
+			}
+		}
 	}
 
 	imsi := strings.TrimSpace(record[0])
@@ -117,6 +137,7 @@ func parsePolicyRecord(record []string, lineNum int) (*model.Policy, []error) {
 		Default:   defaultAction,
 		RulesJSON: rulesJSON,
 		Rules:     rules,
+		Status:    status,
 	}, nil
 }
 
@@ -144,7 +165,12 @@ func WritePolicyCSV(w io.Writer, policies []*model.Policy) error {
 			rulesJSON = policy.RulesJSON
 		}
 
-		record := []string{policy.IMSI, policy.Default, rulesJSON}
+		status := policy.Status
+		if status == "" {
+			status = model.PolicyStatusActive
+		}
+
+		record := []string{policy.IMSI, policy.Default, rulesJSON, status}
 		if err := writer.Write(record); err != nil {
 			return fmt.Errorf("failed to write record for IMSI %s: %w", policy.IMSI, err)
 		}

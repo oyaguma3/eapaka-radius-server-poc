@@ -29,15 +29,42 @@ redis.call('HSET', KEYS[1], unpack(ARGV))
 return 1
 `)
 
-// putHashScript は指定したフィールドを書き込み、書き込む前にキーが存在したかを返す。
-// 戻り値: 1=作成した（存在しなかった）、0=置き換えた（存在した）
-var putHashScript = redis.NewScript(`
+// putPolicyScript は認可ポリシーの指定したフィールドを書き込み、書き込む前にキーが存在したかと、書き込んだ後の status を返す。
+// 指定しないフィールド（status）は変えないので、置き換えても停止の状態は保たれる。
+// 戻り値: {1=作成した（存在しなかった）/ 0=置き換えた（存在した）, status（ない場合は空文字）}
+var putPolicyScript = redis.NewScript(`
 local existed = redis.call('EXISTS', KEYS[1])
 redis.call('HSET', KEYS[1], unpack(ARGV))
-if existed == 1 then
-  return 0
+local status = redis.call('HGET', KEYS[1], 'status')
+if not status then
+  status = ''
 end
-return 1
+if existed == 1 then
+  return {0, status}
+end
+return {1, status}
+`)
+
+// setStatusScript はキーが存在するときだけ status フィールドを書き換え、変更前の値を返す。
+// 変更前の値の読み出しと書き込みを1回で行うので、監査ログに残す変更前の状態がずれない。
+// 戻り値: 変更前の status（ない場合は空文字）。キーが存在しなければ nil（何も書き込まない）
+// 変更前と同じ値（status がなく active にする場合を含む）なら書き込まない。
+var setStatusScript = redis.NewScript(`
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  return nil
+end
+local prev = redis.call('HGET', KEYS[1], 'status')
+if not prev then
+  prev = ''
+end
+local cur = prev
+if cur == '' then
+  cur = 'active'
+end
+if cur ~= ARGV[1] then
+  redis.call('HSET', KEYS[1], 'status', ARGV[1])
+end
+return prev
 `)
 
 // fieldArgs はフィールドと値の組をスクリプトの引数（field1, value1, field2, value2, ...）にする。

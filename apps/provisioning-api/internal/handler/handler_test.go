@@ -13,6 +13,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -443,7 +444,7 @@ func TestPolicyLifecycle(t *testing.T) {
 	if w.Code != http.StatusCreated || w.Header().Get("Location") != "/admin/v1/policies/"+testIMSI {
 		t.Fatalf("put status = %d, Location = %q, body = %s", w.Code, w.Header().Get("Location"), w.Body.String())
 	}
-	want := `{"imsi":"001010000000001","default":"deny","rules":[{"nasId":"AP-OFFICE-01","allowedSsids":["CORP-WIFI"],"vlanId":"100","sessionTimeout":3600},{"nasId":"*","allowedSsids":["GUEST-WIFI"]}]}`
+	want := `{"imsi":"001010000000001","default":"deny","rules":[{"nasId":"AP-OFFICE-01","allowedSsids":["CORP-WIFI"],"vlanId":"100","sessionTimeout":3600},{"nasId":"*","allowedSsids":["GUEST-WIFI"]}],"status":"active"}`
 	if got := w.Body.String(); got != want {
 		t.Errorf("put body = %s\nwant %s", got, want)
 	}
@@ -452,7 +453,7 @@ func TestPolicyLifecycle(t *testing.T) {
 	if w.Code != http.StatusOK || w.Header().Get("Location") != "" {
 		t.Errorf("replace status = %d, Location = %q", w.Code, w.Header().Get("Location"))
 	}
-	if got := w.Body.String(); got != `{"imsi":"001010000000001","default":"allow","rules":[]}` {
+	if got := w.Body.String(); got != `{"imsi":"001010000000001","default":"allow","rules":[],"status":"active"}` {
 		t.Errorf("replace body = %s", got)
 	}
 
@@ -474,6 +475,68 @@ func TestPolicyLifecycle(t *testing.T) {
 		http.StatusBadRequest, "MANDATORY_IE_INCORRECT", "rules[0].allowedSsids")
 	expectProblem(t, e.do(http.MethodPut, "/admin/v1/policies/"+testIMSI, `{"default":"deny","rules":[{"nasId":"*","allowedSsids":["A"],"foo":1}]}`),
 		http.StatusBadRequest, "INVALID_MSG_FORMAT")
+}
+
+// TestPolicyStatus は PUT /policies/{imsi}/status（停止・再開）を確認する（D-13 §3.3）。
+func TestPolicyStatus(t *testing.T) {
+	e := newEnv(t)
+	path := "/admin/v1/policies/" + testIMSI + "/status"
+
+	// 認可ポリシーがなければ 404。何も作らない
+	expectProblem(t, e.do(http.MethodPut, path, `{"status":"suspended"}`), http.StatusNotFound, "POLICY_NOT_FOUND")
+	if e.mr.Exists("policy:" + testIMSI) {
+		t.Fatal("status put created the policy")
+	}
+
+	e.do(http.MethodPut, "/admin/v1/policies/"+testIMSI, `{"default":"allow","rules":[]}`)
+
+	// 停止。変えた後の認可ポリシー全体を返す
+	w := e.do(http.MethodPut, path, `{"status":"suspended"}`, "X-Operator-Id", "alice")
+	if w.Code != http.StatusOK || w.Body.String() != `{"imsi":"001010000000001","default":"allow","rules":[],"status":"suspended"}` {
+		t.Fatalf("suspend = %d %s", w.Code, w.Body.String())
+	}
+	// 同じ状態への変更も 200
+	if w = e.do(http.MethodPut, path, `{"status":"suspended"}`); w.Code != http.StatusOK || decode(t, w)["status"] != "suspended" {
+		t.Errorf("suspend again = %d %s", w.Code, w.Body.String())
+	}
+	// 認可ポリシーの PUT（全体の置き換え）では状態は変わらない。本文の status は未知の項目として拒否する
+	if m := decode(t, e.do(http.MethodPut, "/admin/v1/policies/"+testIMSI, `{"default":"deny","rules":[]}`)); m["status"] != "suspended" {
+		t.Errorf("replace = %v", m)
+	}
+	expectProblem(t, e.do(http.MethodPut, "/admin/v1/policies/"+testIMSI, `{"default":"deny","rules":[],"status":"active"}`),
+		http.StatusBadRequest, "INVALID_MSG_FORMAT")
+	if m := decode(t, e.do(http.MethodGet, "/admin/v1/policies/"+testIMSI, nil)); m["status"] != "suspended" {
+		t.Errorf("get = %v", m)
+	}
+	if m := decode(t, e.do(http.MethodGet, "/admin/v1/policies", nil)); m["items"].([]any)[0].(map[string]any)["status"] != "suspended" {
+		t.Errorf("list = %v", m)
+	}
+
+	// 再開
+	if w = e.do(http.MethodPut, path, `{"status":"active"}`); w.Code != http.StatusOK || decode(t, w)["status"] != "active" {
+		t.Errorf("resume = %d %s", w.Code, w.Body.String())
+	}
+
+	// 監査ログは変えた 2 回だけ（policy.suspend / policy.resume）
+	m := decode(t, e.do(http.MethodGet, "/admin/v1/audit-logs", nil))
+	var actions []string
+	for _, it := range m["items"].([]any) {
+		entry := it.(map[string]any)
+		if a := entry["action"].(string); a == "policy.suspend" || a == "policy.resume" {
+			actions = append(actions, a+" "+entry["details"].(string))
+		}
+	}
+	if want := []string{"policy.resume status: suspended -> active", "policy.suspend status: active -> suspended"}; !slices.Equal(actions, want) {
+		t.Errorf("audit actions = %v, want %v", actions, want)
+	}
+
+	// 入力の検証
+	expectProblem(t, e.do(http.MethodPut, path, `{}`), http.StatusBadRequest, "MANDATORY_IE_MISSING", "status")
+	expectProblem(t, e.do(http.MethodPut, path, `{"status":null}`), http.StatusBadRequest, "MANDATORY_IE_MISSING", "status")
+	expectProblem(t, e.do(http.MethodPut, path, `{"status":"stopped"}`), http.StatusBadRequest, "MANDATORY_IE_INCORRECT", "status")
+	expectProblem(t, e.do(http.MethodPut, path, `{"status":"active","default":"deny"}`), http.StatusBadRequest, "INVALID_MSG_FORMAT")
+	expectProblem(t, e.do(http.MethodPut, "/admin/v1/policies/1/status", `{"status":"active"}`), http.StatusBadRequest, "MANDATORY_IE_INCORRECT", "imsi")
+	expectProblem(t, e.do(http.MethodGet, path, nil), http.StatusMethodNotAllowed, "")
 }
 
 func TestOperatorAndTraceHeaders(t *testing.T) {
@@ -518,6 +581,7 @@ func TestInternalError(t *testing.T) {
 		{http.MethodGet, "/admin/v1/clients/1/secret", ""},
 		{http.MethodGet, "/admin/v1/policies/" + testIMSI, ""},
 		{http.MethodPut, "/admin/v1/policies/" + testIMSI, `{"default":"deny","rules":[]}`},
+		{http.MethodPut, "/admin/v1/policies/" + testIMSI + "/status", `{"status":"suspended"}`},
 		{http.MethodDelete, "/admin/v1/policies/" + testIMSI, ""},
 	} {
 		var body any

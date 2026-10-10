@@ -124,6 +124,15 @@ func (s *FormScreen) setupForm() {
 	}
 	s.form.AddDropDown("Default Action", defaultOptions, defaultIndex, nil)
 
+	// Status（表示のみ。停止・再開は一覧の F7 / s で行い、保存では変えない）
+	status := s.policy.Status
+	if status == "" {
+		status = model.PolicyStatusActive
+	}
+	s.form.AddInputField("Status", status, 20, nil, nil)
+	s.form.GetFormItemByLabel("Status").(*tview.InputField).SetDisabled(true)
+	s.flex.ResizeItem(s.form, ui.FormHeight(s.form.GetFormItemCount()), 0)
+
 	// Buttons
 	s.form.AddButton("Add Rule", s.showAddRuleDialog)
 	s.form.AddButton("Save", s.handleSave)
