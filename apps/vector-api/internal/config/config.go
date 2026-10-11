@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"net"
+	"regexp"
 
 	"github.com/kelseyhightower/envconfig"
 )
@@ -32,8 +33,15 @@ func Load() (*Config, error) {
 	if err := envconfig.Process("", &cfg); err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
+	// テストベクターモードの IMSI の前方一致は数字だけ（数字以外だと、どの IMSI にも一致しないまま起動してしまう）
+	if cfg.TestVectorEnabled && !imsiPrefixPattern.MatchString(cfg.TestVectorIMSIPrefix) {
+		return nil, fmt.Errorf("failed to load config: TEST_VECTOR_IMSI_PREFIX must be 1-15 digits: %q", cfg.TestVectorIMSIPrefix)
+	}
 	return &cfg, nil
 }
+
+// imsiPrefixPattern は TEST_VECTOR_IMSI_PREFIX の形式（1〜15 桁の数字）。
+var imsiPrefixPattern = regexp.MustCompile(`^[0-9]{1,15}$`)
 
 // RedisAddr はValkey接続文字列を返す。
 func (c *Config) RedisAddr() string {

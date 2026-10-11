@@ -185,3 +185,36 @@ func TestServer_MalformedPacket(t *testing.T) {
 		t.Errorf("RADIUS_LIB_ERR should be WARN: %s", logs.String())
 	}
 }
+
+func TestRecoverHandler(t *testing.T) {
+	// パケットの処理中のパニックは回復し、SYS_PANIC のログを出す（プロセスは落ちない）。
+	var buf bytes.Buffer
+	orig := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(orig) })
+
+	h := recoverHandler(radiuspkg.HandlerFunc(func(radiuspkg.ResponseWriter, *radiuspkg.Request) {
+		panic("boom")
+	}))
+	req := &radiuspkg.Request{
+		Packet:     radiuspkg.New(radiuspkg.CodeAccessRequest, []byte("secret")),
+		RemoteAddr: &net.UDPAddr{IP: net.ParseIP("192.0.2.10"), Port: 50000},
+	}
+	h.ServeRADIUS(nil, req)
+
+	out := buf.String()
+	for _, want := range []string{`"event_id":"SYS_PANIC"`, `"src_ip":"192.0.2.10"`, `"panic":"boom"`, `"stack":`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log does not contain %s: %s", want, out)
+		}
+	}
+}
+
+func TestRecoverHandler_PassThrough(t *testing.T) {
+	called := false
+	h := recoverHandler(radiuspkg.HandlerFunc(func(radiuspkg.ResponseWriter, *radiuspkg.Request) { called = true }))
+	h.ServeRADIUS(nil, &radiuspkg.Request{Packet: radiuspkg.New(radiuspkg.CodeAccessRequest, []byte("secret"))})
+	if !called {
+		t.Error("handler was not called")
+	}
+}

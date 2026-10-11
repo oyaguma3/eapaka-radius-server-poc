@@ -190,9 +190,6 @@ func TestConstants(t *testing.T) {
 	if ValkeyPoolSize != 10 {
 		t.Errorf("ValkeyPoolSize = %d, want %d", ValkeyPoolSize, 10)
 	}
-	if VectorConnectTimeout != 2*time.Second {
-		t.Errorf("VectorConnectTimeout = %v, want %v", VectorConnectTimeout, 2*time.Second)
-	}
 	if VectorRequestTimeout != 5*time.Second {
 		t.Errorf("VectorRequestTimeout = %v, want %v", VectorRequestTimeout, 5*time.Second)
 	}

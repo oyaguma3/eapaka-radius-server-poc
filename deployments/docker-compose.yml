@@ -16,13 +16,16 @@ services:
     build:
       context: ..
       dockerfile: apps/auth-server/Dockerfile
+      args:
+        # 起動ログの build に出すビルドの版（例: POC_VERSION=$(git rev-parse --short HEAD)）
+        VERSION: ${POC_VERSION:-dev}
     ports:
       - "1812:1812/udp"
     environment:
       <<: *timezone
       REDIS_HOST: valkey
       REDIS_PORT: "6379"
-      REDIS_PASS: ${VALKEY_PASSWORD}
+      REDIS_PASS: ${VALKEY_PASSWORD:?deployments/.env に VALKEY_PASSWORD を設定してください}
       VECTOR_API_URL: http://vector-gateway:8080
       RADIUS_SECRET: ${RADIUS_SECRET:-}
       LOG_MASK_IMSI: ${LOG_MASK_IMSI:-true}
@@ -51,13 +54,16 @@ services:
     build:
       context: ..
       dockerfile: apps/acct-server/Dockerfile
+      args:
+        # 起動ログの build に出すビルドの版（例: POC_VERSION=$(git rev-parse --short HEAD)）
+        VERSION: ${POC_VERSION:-dev}
     ports:
       - "1813:1813/udp"
     environment:
       <<: *timezone
       REDIS_HOST: valkey
       REDIS_PORT: "6379"
-      REDIS_PASS: ${VALKEY_PASSWORD}
+      REDIS_PASS: ${VALKEY_PASSWORD:?deployments/.env に VALKEY_PASSWORD を設定してください}
       RADIUS_SECRET: ${RADIUS_SECRET:-}
       LOG_MASK_IMSI: ${LOG_MASK_IMSI:-true}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -83,6 +89,9 @@ services:
     build:
       context: ..
       dockerfile: apps/vector-gateway/Dockerfile
+      args:
+        # 起動ログの build に出すビルドの版（例: POC_VERSION=$(git rev-parse --short HEAD)）
+        VERSION: ${POC_VERSION:-dev}
     expose:
       - "8080"
     environment:
@@ -112,6 +121,8 @@ services:
       retries: 3
       start_period: 10s
     restart: always
+    # 停止の上限（10 秒）が Docker の既定の猶予と同じなので、強制終了と重ならないよう長くする
+    stop_grace_period: 20s
     logging:
       <<: *fluent-bit-logging
       options:
@@ -124,13 +135,16 @@ services:
     build:
       context: ..
       dockerfile: apps/vector-api/Dockerfile
+      args:
+        # 起動ログの build に出すビルドの版（例: POC_VERSION=$(git rev-parse --short HEAD)）
+        VERSION: ${POC_VERSION:-dev}
     expose:
       - "8080"
     environment:
       <<: *timezone
       REDIS_HOST: valkey
       REDIS_PORT: "6379"
-      REDIS_PASS: ${VALKEY_PASSWORD}
+      REDIS_PASS: ${VALKEY_PASSWORD:?deployments/.env に VALKEY_PASSWORD を設定してください}
       LOG_MASK_IMSI: ${LOG_MASK_IMSI:-true}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       # テストベクターモード（開発・テスト専用。本番では有効にしないこと）
@@ -146,6 +160,8 @@ services:
       retries: 3
       start_period: 10s
     restart: always
+    # 停止の上限（10 秒）が Docker の既定の猶予と同じなので、強制終了と重ならないよう長くする
+    stop_grace_period: 20s
     logging:
       <<: *fluent-bit-logging
       options:
@@ -167,6 +183,9 @@ services:
     build:
       context: ..
       dockerfile: apps/provisioning-api/Dockerfile
+      args:
+        # 起動ログの build に出すビルドの版（例: POC_VERSION=$(git rev-parse --short HEAD)）
+        VERSION: ${POC_VERSION:-dev}
     profiles: ["provisioning"]
     ports:
       # 既定はループバックだけ。別ノードの BFF から使う場合は .env の PROVISIONING_API_BIND を変える
@@ -175,7 +194,7 @@ services:
       <<: *timezone
       REDIS_HOST: valkey
       REDIS_PORT: "6379"
-      REDIS_PASS: ${VALKEY_PASSWORD}
+      REDIS_PASS: ${VALKEY_PASSWORD:?deployments/.env に VALKEY_PASSWORD を設定してください}
       PROVISIONING_API_TLS_CERT: /certs/server.pem
       PROVISIONING_API_TLS_KEY: /certs/server.key
       # 管理クライアントの「識別名=フィンガープリント」。空なら起動しない
@@ -204,6 +223,8 @@ services:
       retries: 3
       start_period: 10s
     restart: always
+    # 停止の上限（10 秒）が Docker の既定の猶予と同じなので、強制終了と重ならないよう長くする
+    stop_grace_period: 20s
     logging:
       <<: *fluent-bit-logging
       options:
@@ -227,11 +248,14 @@ services:
       --appendfsync everysec
       --maxmemory 512mb
       --maxmemory-policy noeviction
-      --requirepass ${VALKEY_PASSWORD}
+      --requirepass ${VALKEY_PASSWORD:?deployments/.env に VALKEY_PASSWORD を設定してください}
     environment:
       <<: *timezone
+      # healthcheck の valkey-cli はパスワードを環境変数で受け取る（コマンドラインの -a は ps に出るため）
+      VALKEYCLI_AUTH: ${VALKEY_PASSWORD:?deployments/.env に VALKEY_PASSWORD を設定してください}
     healthcheck:
-      test: ["CMD", "valkey-cli", "-a", "${VALKEY_PASSWORD}", "ping"]
+      # PONG が返ることを確かめる（valkey-cli は認証の失敗でも終了コード 0 で終わるため）
+      test: ["CMD-SHELL", "valkey-cli ping | grep -q PONG"]
       interval: 10s
       timeout: 3s
       retries: 3

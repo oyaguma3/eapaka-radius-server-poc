@@ -21,7 +21,9 @@ RUN cd apps/vector-api && go mod download && \
 COPY apps/vector-api/ ./apps/vector-api/
 COPY pkg/ ./pkg/
 
-RUN cd apps/vector-api && CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/vector-api .
+# ビルドの版（compose の POC_VERSION から渡す。起動ログの build に出る）
+ARG VERSION=dev
+RUN cd apps/vector-api && CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X main.build=${VERSION}" -o /out/vector-api .
 
 # ランタイムステージ
 FROM debian:12.15-slim

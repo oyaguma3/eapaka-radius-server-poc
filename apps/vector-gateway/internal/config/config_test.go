@@ -402,3 +402,17 @@ func TestLoadAKAOnly(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadRejectsNonPositiveInternalTimeout(t *testing.T) {
+	t.Setenv("VECTOR_GATEWAY_INTERNAL_URL", "http://vector-api:8080")
+	for _, v := range []string{"0s", "-1s"} {
+		t.Setenv("VECTOR_GATEWAY_INTERNAL_TIMEOUT", v)
+		if _, err := Load(); err == nil {
+			t.Errorf("VECTOR_GATEWAY_INTERNAL_TIMEOUT=%s: want error", v)
+		}
+	}
+	t.Setenv("VECTOR_GATEWAY_INTERNAL_TIMEOUT", "1s")
+	if _, err := Load(); err != nil {
+		t.Errorf("1s: %v", err)
+	}
+}

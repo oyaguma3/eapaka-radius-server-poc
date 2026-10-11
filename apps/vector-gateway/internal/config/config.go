@@ -59,6 +59,10 @@ func Load() (*Config, error) {
 	if err := envconfig.Process("", &cfg); err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
+	if cfg.InternalTimeout <= 0 {
+		// 0 以下だと内部 Vector API への呼び出しに上限がなくなる（http.Client の Timeout 0 は無制限）
+		return nil, fmt.Errorf("failed to load config: VECTOR_GATEWAY_INTERNAL_TIMEOUT must be positive: %v", cfg.InternalTimeout)
+	}
 	if err := cfg.validateAKAOnly(); err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}

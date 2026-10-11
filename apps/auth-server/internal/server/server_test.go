@@ -1,8 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -93,5 +96,38 @@ func TestServer_PacketsReachHandler(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatalf("packet with code %d did not reach the handler", code)
 		}
+	}
+}
+
+func TestRecoverHandler(t *testing.T) {
+	// パケットの処理中のパニックは回復し、SYS_PANIC のログを出す（プロセスは落ちない）。
+	var buf bytes.Buffer
+	orig := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(orig) })
+
+	h := recoverHandler(radius.HandlerFunc(func(radius.ResponseWriter, *radius.Request) {
+		panic("boom")
+	}))
+	req := &radius.Request{
+		Packet:     radius.New(radius.CodeAccessRequest, []byte("secret")),
+		RemoteAddr: &net.UDPAddr{IP: net.ParseIP("192.0.2.10"), Port: 50000},
+	}
+	h.ServeRADIUS(nil, req)
+
+	out := buf.String()
+	for _, want := range []string{`"event_id":"SYS_PANIC"`, `"src_ip":"192.0.2.10"`, `"panic":"boom"`, `"stack":`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log does not contain %s: %s", want, out)
+		}
+	}
+}
+
+func TestRecoverHandler_PassThrough(t *testing.T) {
+	called := false
+	h := recoverHandler(radius.HandlerFunc(func(radius.ResponseWriter, *radius.Request) { called = true }))
+	h.ServeRADIUS(nil, &radius.Request{Packet: radius.New(radius.CodeAccessRequest, []byte("secret"))})
+	if !called {
+		t.Error("handler was not called")
 	}
 }

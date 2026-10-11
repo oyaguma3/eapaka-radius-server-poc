@@ -26,6 +26,10 @@ import (
 	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/valkey"
 )
 
+// build はビルドの版（git のコミットなど）。起動ログの build に出す（API の版の version とは別）。
+// イメージのビルドで -ldflags "-X main.build=..." として埋め込む（compose の POC_VERSION。既定 dev）。
+var build = "dev"
+
 // version は provisioning-api のバージョン（/status の version）。
 // ビルド時に -ldflags "-X main.version=..." で上書きできる。
 var version = "0.4.0"
@@ -51,6 +55,7 @@ func main() {
 
 	log.Info("starting provisioning-api",
 		"version", version,
+		"build", build,
 		"listen_addr", cfg.ListenAddr,
 		"log_level", cfg.LogLevel,
 		"node_name", cfg.NodeName,

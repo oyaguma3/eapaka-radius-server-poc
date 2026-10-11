@@ -5,10 +5,19 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-gateway/internal/config"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-gateway/internal/handler"
+)
+
+// HTTP サーバーの時間の上限。
+const (
+	readHeaderTimeout = 10 * time.Second
+	readTimeout       = 30 * time.Second
+	writeTimeout      = 30 * time.Second
+	idleTimeout       = 120 * time.Second
 )
 
 // Server はHTTPサーバーを管理する。
@@ -38,6 +47,12 @@ func New(cfg *config.Config, h *handler.VectorHandler) *Server {
 		server: &http.Server{
 			Addr:    cfg.ListenAddr,
 			Handler: engine,
+			// 遅いクライアントや切れない接続でゴルーチンが溜まらないよう、上限を設ける（provisioning-api と同じ値）。
+			// 処理の時間はバックエンドへの呼び出しの上限（数秒）に収まるので、書き出しの 30 秒で足りる
+			ReadHeaderTimeout: readHeaderTimeout,
+			ReadTimeout:       readTimeout,
+			WriteTimeout:      writeTimeout,
+			IdleTimeout:       idleTimeout,
 		},
 		cfg: cfg,
 	}

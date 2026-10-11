@@ -21,7 +21,9 @@ RUN cd apps/provisioning-api && go mod download && \
 COPY apps/provisioning-api/ ./apps/provisioning-api/
 COPY pkg/ ./pkg/
 
-RUN cd apps/provisioning-api && CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/provisioning-api .
+# ビルドの版（compose の POC_VERSION から渡す。起動ログの build に出る）
+ARG VERSION=dev
+RUN cd apps/provisioning-api && CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X main.build=${VERSION}" -o /out/provisioning-api .
 
 # ランタイムステージ
 FROM debian:12.15-slim

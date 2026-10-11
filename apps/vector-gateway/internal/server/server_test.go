@@ -133,3 +133,12 @@ func TestServer_RunAndShutdown(t *testing.T) {
 		t.Errorf("Run() error = %v, want http.ErrServerClosed", err)
 	}
 }
+
+func TestNew_Timeouts(t *testing.T) {
+	// 遅いクライアントや切れない接続でゴルーチンが溜まらないよう、HTTP サーバーに時間の上限がある。
+	s := newTestServer(t, "http://127.0.0.1:1")
+	if s.server.ReadHeaderTimeout != 10*time.Second || s.server.ReadTimeout != 30*time.Second ||
+		s.server.WriteTimeout != 30*time.Second || s.server.IdleTimeout != 120*time.Second {
+		t.Errorf("timeouts = %v %v %v %v", s.server.ReadHeaderTimeout, s.server.ReadTimeout, s.server.WriteTimeout, s.server.IdleTimeout)
+	}
+}

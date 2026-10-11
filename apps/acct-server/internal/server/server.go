@@ -2,6 +2,9 @@ package server
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
+	"runtime/debug"
 
 	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/logging"
 	"layeh.com/radius"
@@ -18,7 +21,7 @@ func NewServer(addr string, handler radius.Handler, secretSource radius.SecretSo
 		ps: &radius.PacketServer{
 			Addr:         addr,
 			SecretSource: secretSource,
-			Handler:      handler,
+			Handler:      recoverHandler(handler),
 			// パケットの認証（Request Authenticator / Message-Authenticator）はハンドラーで検証し、
 			// 失敗したら送信元IP付きのログを出して破棄する。ライブラリにも検証させると、
 			// Accounting-Request などのシークレット不一致や未知のCodeのパケットが、
@@ -28,6 +31,26 @@ func NewServer(addr string, handler radius.Handler, secretSource radius.SecretSo
 			ErrorLog: logging.NewRADIUSLibraryLogger(),
 		},
 	}
+}
+
+// recoverHandler は、パケットの処理中のパニックを回復してログ（SYS_PANIC）に出す。
+// layeh.com/radius の PacketServer はパケットごとの goroutine でハンドラーを呼び、パニックを回復しないので、
+// 回復しないと 1 つのパケットでプロセスごと落ちる。そのパケットには応答しない（NAS は応答がなければ送り直す）。
+func recoverHandler(next radius.Handler) radius.Handler {
+	return radius.HandlerFunc(func(w radius.ResponseWriter, r *radius.Request) {
+		defer func() {
+			if p := recover(); p != nil {
+				slog.Error("パケット処理中のパニック（回復して処理を続ける）",
+					"event_id", "SYS_PANIC",
+					"src_ip", extractIP(r.RemoteAddr),
+					"code", r.Code,
+					"panic", fmt.Sprint(p),
+					"stack", string(debug.Stack()),
+				)
+			}
+		}()
+		next.ServeRADIUS(w, r)
+	})
 }
 
 // ListenAndServe はUDPサーバーを起動する

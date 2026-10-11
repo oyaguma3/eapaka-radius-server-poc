@@ -92,3 +92,26 @@ func TestRedisAddr(t *testing.T) {
 		t.Errorf("RedisAddr() = %q, want %q", got, want)
 	}
 }
+
+func TestLoadTestVectorIMSIPrefix(t *testing.T) {
+	t.Setenv("REDIS_HOST", "localhost")
+	t.Setenv("REDIS_PORT", "6379")
+	t.Setenv("REDIS_PASS", "testpass")
+	for _, tc := range []struct {
+		enabled, prefix string
+		wantErr         bool
+	}{
+		{"true", "00101", false},
+		{"true", "001010123456789", false},
+		{"true", "", true},
+		{"true", "0010a", true},
+		{"true", "0010100000000000", true}, // 16 桁
+		{"false", "0010a", false},          // テストベクターモードが無効なら見ない
+	} {
+		t.Setenv("TEST_VECTOR_ENABLED", tc.enabled)
+		t.Setenv("TEST_VECTOR_IMSI_PREFIX", tc.prefix)
+		if _, err := Load(); (err != nil) != tc.wantErr {
+			t.Errorf("enabled=%s prefix=%q: err = %v, wantErr %v", tc.enabled, tc.prefix, err, tc.wantErr)
+		}
+	}
+}

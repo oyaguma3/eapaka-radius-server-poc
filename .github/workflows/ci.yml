@@ -78,3 +78,6 @@ jobs:
           docker compose -f docker-compose.yml config -q
           docker compose -f docker-compose.yml -f docker-compose.aka-av.yml --profile provisioning config -q
           docker compose -f docker-compose.yml -f docker-compose.aka-av.yml --profile provisioning config --services
+          # VALKEY_PASSWORD が空なら、compose が断る。
+          sed -i 's|^VALKEY_PASSWORD=.*|VALKEY_PASSWORD=|' .env
+          ! docker compose -f docker-compose.yml config -q 2>/dev/null

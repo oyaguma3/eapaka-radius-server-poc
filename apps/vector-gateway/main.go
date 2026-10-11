@@ -19,6 +19,10 @@ import (
 	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/logging"
 )
 
+// build はビルドの版（git のコミットなど）。起動ログの build に出す。
+// イメージのビルドで -ldflags "-X main.build=..." として埋め込む（compose の POC_VERSION。既定 dev）。
+var build = "dev"
+
 func main() {
 	// 1. 設定読み込み
 	cfg, err := config.Load()
@@ -38,6 +42,7 @@ func main() {
 	}
 
 	slog.Info("starting vector-gateway",
+		"build", build,
 		"listen_addr", cfg.ListenAddr,
 		"log_level", cfg.LogLevel,
 		"mode", cfg.Mode,

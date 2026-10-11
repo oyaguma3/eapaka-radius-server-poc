@@ -228,7 +228,7 @@ func (b *AKAOnlyBackend) call(ctx context.Context, traceID string, req *VectorRe
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json, application/problem+json")
-	// X-Trace-IDはベストエフォート（aka-only-serverは参照しない）
+	// X-Trace-ID を渡す（aka-only-server は認証ベクターAPI 0.2.0-draft 以降、払い出しのログの trace_id に残す）
 	if traceID != "" {
 		httpReq.Header.Set(traceIDHeader, traceID)
 	}

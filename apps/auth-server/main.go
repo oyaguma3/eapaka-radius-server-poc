@@ -3,10 +3,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/auth-server/internal/config"
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/auth-server/internal/engine"
@@ -17,6 +19,10 @@ import (
 	"github.com/oyaguma3/eapaka-radius-server-poc/apps/auth-server/internal/vector"
 	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/logging"
 )
+
+// build はビルドの版（git のコミットなど）。起動ログの build に出す。
+// イメージのビルドで -ldflags "-X main.build=..." として埋め込む（compose の POC_VERSION。既定 dev）。
+var build = "dev"
 
 func main() {
 	// 1. 環境変数読み込み
@@ -33,6 +39,7 @@ func main() {
 	slog.SetDefault(logger)
 
 	slog.Info("auth-server起動開始",
+		"build", build,
 		"listen_addr", cfg.ListenAddr,
 		"log_level", cfg.LogLevel,
 		"vector_api_url", cfg.VectorAPIURL,
@@ -78,29 +85,50 @@ func main() {
 	// 10. UDPサーバー
 	srv := server.NewServer(cfg.ListenAddr, handler, secretSource)
 
-	// 11. サーバー起動（goroutine）
-	go func() {
-		slog.Info("RADIUSサーバー起動", "addr", cfg.ListenAddr)
-		if err := srv.ListenAndServe(); err != nil {
-			slog.Error("サーバーエラー", "error", err)
-		}
-	}()
-
-	// 12. シグナル待機 → Graceful Shutdown
+	// 11. サーバー起動、12. シグナル待機 → Graceful Shutdown
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
-
-	sig := <-sigCh
-	slog.Info("シグナル受信、シャットダウン開始", "signal", sig)
-
-	ctx, cancel := context.WithTimeout(context.Background(), config.ShutdownTimeout)
-	defer cancel()
-
-	if err := srv.Shutdown(ctx); err != nil {
-		slog.Warn("シャットダウンエラー", "error", err)
+	if err := runServer(srv, cfg.ListenAddr, sigCh, config.ShutdownTimeout); err != nil {
+		// 待ち受けを開始できない（ポートが使用中など）か、異常終了した。プロセスを終えて、compose の restart で
+		// 起動し直させる（終了しないと、待ち受けていないのに pgrep の healthcheck が通ってしまう）
+		slog.Error("サーバーエラー", "event_id", "SYS_LISTEN_ERR", "addr", cfg.ListenAddr, "error", err)
+		os.Exit(1)
 	}
 
 	slog.Info("auth-server停止完了")
+}
+
+// radiusServer は runServer が使う RADIUS サーバーの操作（テストで差し替える）。
+type radiusServer interface {
+	ListenAndServe() error
+	Shutdown(ctx context.Context) error
+}
+
+// runServer は RADIUS サーバーを起動し、停止のシグナルを受けたらグレースフルに停止して nil を返す。
+// シグナルの前にサーバーが終わった（待ち受けの開始の失敗など）ときは、そのエラーを返す。
+func runServer(srv radiusServer, addr string, sigCh <-chan os.Signal, shutdownTimeout time.Duration) error {
+	errCh := make(chan error, 1)
+	go func() {
+		slog.Info("RADIUSサーバー起動", "addr", addr)
+		errCh <- srv.ListenAndServe()
+	}()
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			err = errors.New("RADIUS server stopped unexpectedly")
+		}
+		return err
+	case sig := <-sigCh:
+		slog.Info("シグナル受信、シャットダウン開始", "signal", sig)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		slog.Warn("シャットダウンエラー", "error", err)
+	}
+	return nil
 }
 
 // warnFallbackSecret は、RADIUS_SECRET（フォールバックの共有シークレット）が設定されているときにWARNログを出す。

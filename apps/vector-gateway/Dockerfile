@@ -21,7 +21,9 @@ RUN cd apps/vector-gateway && go mod download && \
 COPY apps/vector-gateway/ ./apps/vector-gateway/
 COPY pkg/ ./pkg/
 
-RUN cd apps/vector-gateway && CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/vector-gateway .
+# ビルドの版（compose の POC_VERSION から渡す。起動ログの build に出る）
+ARG VERSION=dev
+RUN cd apps/vector-gateway && CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X main.build=${VERSION}" -o /out/vector-gateway .
 
 # ランタイムステージ
 FROM debian:12.15-slim

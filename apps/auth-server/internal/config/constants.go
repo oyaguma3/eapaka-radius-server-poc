@@ -9,9 +9,8 @@ const (
 	ValkeyPoolSize       = 10
 )
 
-// Vector Gateway接続設定（D-06準拠）
+// Vector Gateway接続設定（D-06準拠）。接続の確立も要求全体の上限に含める（接続だけの上限は設けない）
 const (
-	VectorConnectTimeout = 2 * time.Second
 	VectorRequestTimeout = 5 * time.Second
 )
 
