@@ -1,4 +1,4 @@
-# D-01 ミニPC版 EAP-AKA RADIUS PoC環境 設計仕様書 (r23)
+# D-01 ミニPC版 EAP-AKA RADIUS PoC環境 設計仕様書 (r24)
 
 ## 1. システム概要
 
@@ -147,7 +147,7 @@ Auth ServerからVector Gateway、Vector GatewayからVector API（および aka
 
 | 接続 | タイムアウト | 備考 |
 |------|------------|------|
-| Auth Server → Vector Gateway | 5秒 | 既存のVector API接続設定を継承 |
+| Auth Server → Vector Gateway | 5秒 | 既存のVector API接続設定を継承。接続の確立を含む要求全体の上限（接続だけの上限はない。D-09 §7.2） |
 | Vector Gateway → Vector API | 3秒 | `VECTOR_GATEWAY_INTERNAL_TIMEOUT` で設定 |
 | Vector Gateway → aka-only-server（接続方式01、任意） | 3秒 | `VECTOR_GATEWAY_AKAONLY_TIMEOUT` で設定。HTTPS + mTLS（既定）または平文HTTP |
 
@@ -192,7 +192,7 @@ Auth ServerからVector Gateway、Vector GatewayからVector API（および aka
 
 以下の機密情報は `.env` ファイルで管理し、各アプリへ注入します（コンテナアプリは `envconfig` 経由、Admin TUIは `os.Getenv()` で直接取得）。
 
-- `VALKEY_PASSWORD`: DBアクセス用パスワード（必須）
+- `VALKEY_PASSWORD`: DBアクセス用パスワード（必須。空なら `docker compose` が `${VALKEY_PASSWORD:?…}` で断る。r24）
 - `RADIUS_SECRET`: **フォールバックの共有シークレット**（任意。空を推奨）
   - **優先順位:**
     1. Valkey `client:{IP}` 内の `secret` を使用 (本番/登録済みクライアント)
@@ -289,13 +289,16 @@ services:
     build:
       context: ..
       dockerfile: apps/auth-server/Dockerfile
+      args:
+        # 起動ログの build に出すビルドの版（例: POC_VERSION=$(git rev-parse --short HEAD)）
+        VERSION: ${POC_VERSION:-dev}
     ports:
       - "1812:1812/udp"
     environment:
       <<: *timezone
       REDIS_HOST: valkey
       REDIS_PORT: "6379"
-      REDIS_PASS: ${VALKEY_PASSWORD}
+      REDIS_PASS: ${VALKEY_PASSWORD:?deployments/.env に VALKEY_PASSWORD を設定してください}
       VECTOR_API_URL: http://vector-gateway:8080
       RADIUS_SECRET: ${RADIUS_SECRET:-}
       LOG_MASK_IMSI: ${LOG_MASK_IMSI:-true}
@@ -324,13 +327,16 @@ services:
     build:
       context: ..
       dockerfile: apps/acct-server/Dockerfile
+      args:
+        # 起動ログの build に出すビルドの版（例: POC_VERSION=$(git rev-parse --short HEAD)）
+        VERSION: ${POC_VERSION:-dev}
     ports:
       - "1813:1813/udp"
     environment:
       <<: *timezone
       REDIS_HOST: valkey
       REDIS_PORT: "6379"
-      REDIS_PASS: ${VALKEY_PASSWORD}
+      REDIS_PASS: ${VALKEY_PASSWORD:?deployments/.env に VALKEY_PASSWORD を設定してください}
       RADIUS_SECRET: ${RADIUS_SECRET:-}
       LOG_MASK_IMSI: ${LOG_MASK_IMSI:-true}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -356,6 +362,9 @@ services:
     build:
       context: ..
       dockerfile: apps/vector-gateway/Dockerfile
+      args:
+        # 起動ログの build に出すビルドの版（例: POC_VERSION=$(git rev-parse --short HEAD)）
+        VERSION: ${POC_VERSION:-dev}
     expose:
       - "8080"
     environment:
@@ -385,6 +394,8 @@ services:
       retries: 3
       start_period: 10s
     restart: always
+    # 停止の上限（10 秒）が Docker の既定の猶予と同じなので、強制終了と重ならないよう長くする
+    stop_grace_period: 20s
     logging:
       <<: *fluent-bit-logging
       options:
@@ -397,13 +408,16 @@ services:
     build:
       context: ..
       dockerfile: apps/vector-api/Dockerfile
+      args:
+        # 起動ログの build に出すビルドの版（例: POC_VERSION=$(git rev-parse --short HEAD)）
+        VERSION: ${POC_VERSION:-dev}
     expose:
       - "8080"
     environment:
       <<: *timezone
       REDIS_HOST: valkey
       REDIS_PORT: "6379"
-      REDIS_PASS: ${VALKEY_PASSWORD}
+      REDIS_PASS: ${VALKEY_PASSWORD:?deployments/.env に VALKEY_PASSWORD を設定してください}
       LOG_MASK_IMSI: ${LOG_MASK_IMSI:-true}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       # テストベクターモード（開発・テスト専用。本番では有効にしないこと）
@@ -419,6 +433,8 @@ services:
       retries: 3
       start_period: 10s
     restart: always
+    # 停止の上限（10 秒）が Docker の既定の猶予と同じなので、強制終了と重ならないよう長くする
+    stop_grace_period: 20s
     logging:
       <<: *fluent-bit-logging
       options:
@@ -440,6 +456,9 @@ services:
     build:
       context: ..
       dockerfile: apps/provisioning-api/Dockerfile
+      args:
+        # 起動ログの build に出すビルドの版（例: POC_VERSION=$(git rev-parse --short HEAD)）
+        VERSION: ${POC_VERSION:-dev}
     profiles: ["provisioning"]
     ports:
       # 既定はループバックだけ。別ノードの BFF から使う場合は .env の PROVISIONING_API_BIND を変える
@@ -448,7 +467,7 @@ services:
       <<: *timezone
       REDIS_HOST: valkey
       REDIS_PORT: "6379"
-      REDIS_PASS: ${VALKEY_PASSWORD}
+      REDIS_PASS: ${VALKEY_PASSWORD:?deployments/.env に VALKEY_PASSWORD を設定してください}
       PROVISIONING_API_TLS_CERT: /certs/server.pem
       PROVISIONING_API_TLS_KEY: /certs/server.key
       # 管理クライアントの「識別名=フィンガープリント」。空なら起動しない
@@ -477,6 +496,8 @@ services:
       retries: 3
       start_period: 10s
     restart: always
+    # 停止の上限（10 秒）が Docker の既定の猶予と同じなので、強制終了と重ならないよう長くする
+    stop_grace_period: 20s
     logging:
       <<: *fluent-bit-logging
       options:
@@ -500,11 +521,14 @@ services:
       --appendfsync everysec
       --maxmemory 512mb
       --maxmemory-policy noeviction
-      --requirepass ${VALKEY_PASSWORD}
+      --requirepass ${VALKEY_PASSWORD:?deployments/.env に VALKEY_PASSWORD を設定してください}
     environment:
       <<: *timezone
+      # healthcheck の valkey-cli はパスワードを環境変数で受け取る（コマンドラインの -a は ps に出るため）
+      VALKEYCLI_AUTH: ${VALKEY_PASSWORD:?deployments/.env に VALKEY_PASSWORD を設定してください}
     healthcheck:
-      test: ["CMD", "valkey-cli", "-a", "${VALKEY_PASSWORD}", "ping"]
+      # PONG が返ることを確かめる（valkey-cli は認証の失敗でも終了コード 0 で終わるため）
+      test: ["CMD-SHELL", "valkey-cli ping | grep -q PONG"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -545,6 +569,12 @@ networks:
   provisioning-shared:
     name: ${PROVISIONING_SHARED_NETWORK:-eapaka-prov}
 ```
+
+> **注記（ビルドの版。r24）:** 5 つのアプリ（auth-server / acct-server / vector-gateway / vector-api / provisioning-api）の `build.args` の `VERSION: ${POC_VERSION:-dev}` は、イメージに埋め込むビルドの版で、起動ログの `build` に出る（D-04 §3.1.8）。`.env` またはシェルの `POC_VERSION`（例: `POC_VERSION=$(git rev-parse --short HEAD)`）で渡し、未設定なら `dev`。コンテナの環境変数には渡さない。
+
+> **注記（`VALKEY_PASSWORD` と Valkey のヘルスチェック。r24）:** `VALKEY_PASSWORD` は `${VALKEY_PASSWORD:?deployments/.env に VALKEY_PASSWORD を設定してください}` で参照するため、空・未設定なら `docker compose` が設定の読み込みで断る（以前は空のまま起動できた）。Valkey のヘルスチェックはパスワードを環境変数 `VALKEYCLI_AUTH` で `valkey-cli` に渡し（コマンドラインの `-a` は `ps` に出るため）、`valkey-cli ping | grep -q PONG` で PONG が返ることを確かめる（`valkey-cli` は認証に失敗しても終了コード 0 で終わるため、以前の `valkey-cli -a … ping` では認証の失敗でも healthy になった）。
+
+> **注記（停止の猶予。r24）:** vector-gateway / vector-api / provisioning-api は停止のシグナルを受けると 10秒を上限に処理中の要求を待つ。これが Docker の既定の停止の猶予（10秒）と同じで強制終了と重なりうるため、`stop_grace_period: 20s` とする。
 
 > **注記（ログレベル）:** auth-server / acct-server / vector-gateway / vector-api / provisioning-api の `LOG_LEVEL`（既定 `INFO`。`DEBUG` / `INFO` / `WARN` / `ERROR`）は、compose が `.env` の値を渡す（D-04 §4.6）。
 
@@ -587,7 +617,7 @@ Vector Gatewayの動作を制御する環境変数。
 | `VECTOR_GATEWAY_MODE` | No | `gateway` | 動作モード。`gateway`: PLMNルーティング、`passthrough`: 全て内部APIへ転送 |
 | `VECTOR_GATEWAY_INTERNAL_URL` | Yes | - | 内部Vector APIのURL |
 | `VECTOR_GATEWAY_PLMN_MAP` | No | 空文字列 | PLMNマッピング（`PLMN:ID,PLMN:ID,...` 形式） |
-| `VECTOR_GATEWAY_INTERNAL_TIMEOUT` | No | `3s` | 内部API呼び出しタイムアウト。Auth Server のタイムアウト（5秒）より短くする（3.5節） |
+| `VECTOR_GATEWAY_INTERNAL_TIMEOUT` | No | `3s` | 内部API呼び出しタイムアウト。Auth Server のタイムアウト（5秒）より短くする（3.5節）。0 以下なら起動しない（r24） |
 | `VECTOR_GATEWAY_AKAONLY_URL` | No | 空文字列 | aka-only-server（接続方式01）のベースURL。例: `https://aka-only-server:8443`。`https://` で mTLS、`http://` で平文HTTP（同一ホスト限定）。空なら `01` は無効（`01` に向けたPLMNは501） |
 | `VECTOR_GATEWAY_AKAONLY_CLIENT_CERT` | https時Yes | 空文字列 | クライアント証明書のPEM（コンテナ内パス、例: `/certs/av-client.pem`）。証明書と秘密鍵が1ファイルでよい |
 | `VECTOR_GATEWAY_AKAONLY_CLIENT_KEY` | No | 空文字列 | 秘密鍵のPEM。空なら `CLIENT_CERT` と同じファイルから読む |
@@ -660,3 +690,4 @@ VECTOR_GATEWAY_PLMN_MAP=""
 | r21 | 2026-10-08 | RADIUSクライアントにサーバー採番の ID を導入（D-02 r23、D-13 r5）: §3.1 のデータモデル注記の RadiusClient に `id`（索引 `idx:client:{ID}`、カウンター `seq:client`）を追加 |
 | r22 | 2026-10-09 | Provisioning API の監査ログとセッションの参照（D-13 r6、API 0.3.0）の反映: コンポーネント一覧の Provisioning API に `/audit-logs`・`/sessions` と、監査ログの Stream（`audit:prov`）への保存を追記。compose の抜粋に `PROVISIONING_API_AUDIT_MAX` を追加 |
 | r23 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 3（Go 1.27.2 への更新とイメージの版の固定）の反映: compose の写しのイメージを実ファイルに同期（`valkey/valkey:9.0` → `9.1.2`、`fluent/fluent-bit:4.2` → `4.2.8`。パッチ版まで固定） |
+| r24 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 4（ビルドの版の埋め込み、`VALKEY_PASSWORD` が空なら compose が断ること、Valkey のヘルスチェック、停止の猶予）の反映: §7 の `docker-compose.yml` の全文を実ファイルに同期（5 つのアプリの build.args `VERSION: ${POC_VERSION:-dev}`、`REDIS_PASS` と `--requirepass` の `${VALKEY_PASSWORD:?…}`、Valkey の `VALKEYCLI_AUTH` と healthcheck `valkey-cli ping \| grep -q PONG`、vector-gateway / vector-api / provisioning-api の `stop_grace_period: 20s`）し、それぞれの注記を追加。§4 のシークレット管理の `VALKEY_PASSWORD` に空なら compose が断ることを追記。§8 の `VECTOR_GATEWAY_INTERNAL_TIMEOUT` に 0 以下なら起動しないことを、§3.5 の Auth Server → Vector Gateway に接続の確立を含む要求全体の上限であることを追記 |

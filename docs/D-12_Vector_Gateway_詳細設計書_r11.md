@@ -1,4 +1,4 @@
-# D-12 Vector Gateway 詳細設計書 (r10)
+# D-12 Vector Gateway 詳細設計書 (r11)
 
 ## 1. 概要
 
@@ -110,7 +110,7 @@ Auth Server → Vector Gateway ─┬→ Vector API      (PLMN未一致 or ID:00
 | バックエンド | 責務範囲 | 説明 |
 |-------------|---------|------|
 | **内部（Vector API）** | エンドツーエンド保証 | X-Trace-IDを伝搬し、Auth Server〜Vector APIまで追跡可能 |
-| **外部API（aka-only-server を含む）** | Vector Gatewayまで保証 | 外部APIへのヘッダ付与はベストエフォート（外部側の対応は期待しない）。aka-only-server は X-Trace-ID を参照・記録しない |
+| **外部API（aka-only-server を含む）** | Vector Gatewayまで保証 | 外部APIへのヘッダ付与はベストエフォート（外部側の対応は期待しない）。aka-only-server は認証ベクターAPI 0.2.0-draft 以降、受け取った X-Trace-ID を払い出しのログの `trace_id` に残す（r11） |
 
 外部API利用時は、Vector Gatewayのログでトレーサビリティの境界を記録する。
 
@@ -406,7 +406,7 @@ aka-only-server（https://github.com/oyaguma3/aka-only-server 、管理GUI: http
 POST {VECTOR_GATEWAY_AKAONLY_URL}/nudm-ueau/v1/imsi-{IMSI}/hss-security-information/eap-aka/generate-av
 Content-Type: application/json
 Accept: application/json, application/problem+json
-X-Trace-ID: {uuid}   ※ベストエフォート（aka-only-server は参照しない）
+X-Trace-ID: {uuid}   ※aka-only-server は払い出しのログの trace_id に残す（認証ベクターAPI 0.2.0-draft 以降）
 ```
 
 | 内部IF（受信） | GenerateAv（送信） |
@@ -530,7 +530,9 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o vector-gateway .
+# ビルドの版（compose の POC_VERSION から渡す。起動ログの build に出る）
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X main.build=${VERSION}" -o vector-gateway .
 
 # ランタイムステージ
 FROM debian:12.15-slim
@@ -608,7 +610,7 @@ VECTOR_GATEWAY_PLMN_MAP=""
 # -----------------------------------------------------------------------------
 # タイムアウト設定
 # -----------------------------------------------------------------------------
-# auth-server の Vector Gateway 呼び出しタイムアウト（5秒）より短くすること（5.3節）
+# auth-server の Vector Gateway 呼び出しタイムアウト（5秒）より短くすること（5.3節）。0 以下なら起動しない
 VECTOR_GATEWAY_INTERNAL_TIMEOUT=3s
 
 # -----------------------------------------------------------------------------
@@ -668,6 +670,9 @@ services:
     build:
       context: ..
       dockerfile: apps/vector-gateway/Dockerfile
+      args:
+        # 起動ログの build に出すビルドの版（例: POC_VERSION=$(git rev-parse --short HEAD)）
+        VERSION: ${POC_VERSION:-dev}
     expose:
       - "8080"
     environment:
@@ -691,6 +696,8 @@ services:
       vector-api:
         condition: service_healthy
     restart: always
+    # 停止の上限（10 秒）が Docker の既定の猶予と同じなので、強制終了と重ならないよう長くする
+    stop_grace_period: 20s
 
   vector-api:
     # 変更なし（LOG_MASK_IMSI / LOG_LEVEL はD-11で定義済み）
@@ -698,18 +705,21 @@ services:
 
 > **注記:** `LOG_LEVEL: ${LOG_LEVEL:-INFO}` は auth-server / acct-server / vector-gateway / vector-api の4サーバーに渡す（D-08 §4.1）。vector-gateway は `main.go` の `initLogger` で `LOG_LEVEL` を共通ライブラリの `pkg/logging.ParseLevel`（E-03 §5.6）により `slog.Level` に変換する（`DEBUG` / `INFO` / `WARN` / `ERROR`。大文字小文字を区別せず前後の空白を無視し、`WARNING` も `WARN` として扱う。それ以外は `INFO`）。
 
+> **注記（`stop_grace_period`。r11）:** vector-gateway は停止のシグナルを受けると、`Shutdown` に 10秒の上限を与えて処理中のリクエストを待つ（`main.go`）。これが Docker の既定の停止の猶予（10秒）と同じで強制終了と重なりうるため、compose で `stop_grace_period: 20s` とする（vector-api・provisioning-api も同じ。D-08 §4.1）。build.args の `VERSION` は起動ログの `build`（5.3節）に出るビルドの版で、`.env` またはシェルの `POC_VERSION` を渡す（未設定なら `dev`）。
+
 ### 5.3 起動時検証と起動ログ
 
-`config.Load()`（`validateAKAOnly`）と `backend.NewRegistry()` で接続方式 `01` の設定を検証する。検証に失敗すると起動しない（コンテナは再起動を繰り返す）。
+`config.Load()`（`VECTOR_GATEWAY_INTERNAL_TIMEOUT` の確認と `validateAKAOnly`）と `backend.NewRegistry()` で設定を検証する。検証に失敗すると起動しない（コンテナは再起動を繰り返す）。
 
 | 検証 | 失敗時のログ（ERROR） |
 |------|---------------------|
+| `VECTOR_GATEWAY_INTERNAL_TIMEOUT` が正の値（r11。0 以下だと `http.Client` の `Timeout` 0 が無制限になるため） | `failed to load config` |
 | URL が `http://` または `https://` で始まる（末尾の `/` は取り除く） | `failed to load config` |
 | `VECTOR_GATEWAY_AKAONLY_TIMEOUT` が正の値 | `failed to load config` |
 | `https://` の場合、`CLIENT_CERT` と `SERVER_CERT` が指定されている | `failed to load config` |
 | `https://` の場合、証明書・秘密鍵ファイルが読めて解釈でき、証明書と鍵が対応している | `failed to initialize backends` |
 
-URL が空の場合は `01` を使わないため検証しない。
+URL が空の場合は `01` を使わないため、`01` の設定は検証しない（`VECTOR_GATEWAY_INTERNAL_TIMEOUT` は常に検証する）。
 
 起動を止めない注意事項は WARN で出力する（`warnBackendConfig`）。
 
@@ -719,12 +729,13 @@ URL が空の場合は `01` を使わないため検証しない。
 | `http://` で接続する | `aka-only-server is connected over plain HTTP; CK/IK are transmitted unencrypted` | `akaonly_url` |
 | PLMNマップが登録されていないバックエンドID（例: URL 空なのに `01`、または `02`〜`99`）を参照している（passthroughモードでは出さない） | `PLMN map refers to a backend that is not configured; requests will fail with 501` | `plmn`, `backend_id` |
 
-**バックエンド向けタイムアウトの考え方:** auth-server は Vector Gateway の呼び出しに接続2秒・リクエスト5秒のタイムアウトを持つ（D-09 §7.2、`apps/auth-server/internal/config/constants.go` の `VectorConnectTimeout` / `VectorRequestTimeout`）。gateway のバックエンド向けタイムアウト（`VECTOR_GATEWAY_INTERNAL_TIMEOUT` / `VECTOR_GATEWAY_AKAONLY_TIMEOUT`）がこれと同じか長いと、バックエンド（vector-api / aka-only-server）障害時に gateway が 502 を返す前に auth-server がタイムアウトし、auth-server のログが `VECTOR_API_ERR`（`http_status`=502）になるか `VECTOR_CONN_ERR` になるかが環境（停止したコンテナ名の名前解決にかかる時間など）次第で変わる。このため既定値を 3s とし、auth-server が先に 502 を受け取るようにしている。WARN の判定に使う auth-server のタイムアウトは `main.go` の定数 `authServerVectorTimeout`（5秒）で、auth-server の `VectorRequestTimeout` と同じ値である。どちらかを変更するときは両方を合わせること。
+**バックエンド向けタイムアウトの考え方:** auth-server は Vector Gateway の呼び出しに、接続の確立を含めた要求全体で5秒のタイムアウトを持つ（D-09 §7.2、`apps/auth-server/internal/config/constants.go` の `VectorRequestTimeout`。r10 まで記載していた接続2秒の `VectorConnectTimeout` は使われておらず、削除された）。gateway のバックエンド向けタイムアウト（`VECTOR_GATEWAY_INTERNAL_TIMEOUT` / `VECTOR_GATEWAY_AKAONLY_TIMEOUT`）がこれと同じか長いと、バックエンド（vector-api / aka-only-server）障害時に gateway が 502 を返す前に auth-server がタイムアウトし、auth-server のログが `VECTOR_API_ERR`（`http_status`=502）になるか `VECTOR_CONN_ERR` になるかが環境（停止したコンテナ名の名前解決にかかる時間など）次第で変わる。このため既定値を 3s とし、auth-server が先に 502 を受け取るようにしている。WARN の判定に使う auth-server のタイムアウトは `main.go` の定数 `authServerVectorTimeout`（5秒）で、auth-server の `VectorRequestTimeout` と同じ値である。どちらかを変更するときは両方を合わせること。
 
 起動ログ `starting vector-gateway`（INFO）には `listen_addr` / `log_level` / `mode` / `plmn_map_entries` に加えて、次の項目を出力する。
 
 | 項目 | 値 |
 |------|----|
+| `build` | ビルドの版（r11。イメージのビルドで `-ldflags "-X main.build=..."` として埋め込む。compose の `POC_VERSION`、既定 `dev`。D-04 §3.1.8 注記） |
 | `akaonly_enabled` | `VECTOR_GATEWAY_AKAONLY_URL` が設定されているか（bool） |
 | `akaonly_transport` | `mtls`（https）／`plain`（http）／`disabled`（URL 未設定） |
 
@@ -795,7 +806,7 @@ VECTOR_GATEWAY_PLMN_MAP=44010:01
 | 振り分け単位 | PLMN 単位。同じ PLMN の IMSI を `00` と `01` に分けることはできない |
 | 証明書の差し替え | AV 用サーバー証明書を作り直したら `av-server.pem` を取り直して vector-gateway を再起動する。クライアント証明書の期限（既定 825 日）に注意する |
 | Circuit Breaker | 未登録・無効のクライアント証明書は aka-only-server が TLS ハンドシェイクで拒否し、gateway からは通信失敗（502）に見える。502 は auth-server の Circuit Breaker の失敗回数に数えられ、Circuit Breaker は接続方式共通のため、開くと `00` 向けの認証も止まる |
-| ログの突き合わせ | aka-only-server は Trace ID を記録せず、IMSI をマスクしない。gateway のログ（`trace_id`、時刻）と aka-only-server のログ（`client_id`、`imsi`、時刻）で突き合わせる |
+| ログの突き合わせ | aka-only-server は認証ベクターAPI 0.2.0-draft 以降、gateway が送る X-Trace-ID を払い出しのログの `trace_id` に残す（r11）。gateway のログの `trace_id` と aka-only-server のログの `trace_id` で突き合わせる（それより前の aka-only-server では `client_id`・`imsi`・時刻で突き合わせる）。aka-only-server は IMSI をマスクしない |
 | 平文HTTP | 同一ホスト内に限る（5.4.1） |
 
 障害切り分けのポイント（gateway の `BACKEND_EXTERNAL_ERR` の `http_status` / `cause` / `error` を見る）:
@@ -905,7 +916,7 @@ type Config struct {
 
 | メソッド | 内容 |
 |---------|------|
-| `Load()` | 環境変数を読み込み、`validateAKAOnly()` で接続方式 `01` の設定を検証する（5.3節） |
+| `Load()` | 環境変数を読み込み、`InternalTimeout` が正の値であること（r11）と、`validateAKAOnly()` で接続方式 `01` の設定を検証する（5.3節） |
 | `validateAKAOnly()` | URL が空なら何もしない。URL のスキーム、TIMEOUT、https 時の証明書指定を検証し、URL 末尾の `/` を取り除く |
 | `AKAOnlyEnabled()` | `AKAOnlyURL` が空でないか |
 | `AKAOnlyUseTLS()` | `AKAOnlyURL` が `https://` で始まるか |
@@ -922,6 +933,8 @@ type Config struct {
 |---------|------|------|
 | POST | `/api/v1/vector` | 認証ベクター取得（既存互換） |
 | GET | `/health` | ヘルスチェック |
+
+> **注記（HTTPサーバーの時間の上限。r11）:** `internal/server/server.go` の `http.Server` に `ReadHeaderTimeout` 10秒・`ReadTimeout` 30秒・`WriteTimeout` 30秒・`IdleTimeout` 120秒を設定する（遅いクライアントや切れない接続でゴルーチンが溜まらないようにする。Vector API、Provisioning API と同じ値。D-06 §4.1）。処理の時間はバックエンドへの呼び出しの上限（既定 3秒）に収まるので、書き出しの 30秒で足りる。
 
 ### 7.2 リクエスト/レスポンス（既存互換）
 
@@ -1032,7 +1045,7 @@ Vector API (伝搬・ログ出力)
 
 #### 外部バックエンド（aka-only-server 等）利用時
 
-Vector Gatewayまでのトレーサビリティを保証する。外部APIへのヘッダ付与はベストエフォートとし、外部側の対応は期待しない。aka-only-server は X-Trace-ID を参照・記録しないため、両者のログは gateway 側の `trace_id`・時刻と aka-only-server 側の `client_id`・`imsi`・時刻で突き合わせる（5.5節）。
+Vector Gatewayまでのトレーサビリティを保証する。外部APIへのヘッダ付与はベストエフォートとし、外部側の対応は期待しない。aka-only-server は認証ベクターAPI 0.2.0-draft 以降、受け取った X-Trace-ID を払い出しのログの `trace_id` に残し、応答の `X-Trace-ID` ヘッダーで返す（形式が違えば aka-only-server が採番する）。両者のログは `trace_id` で突き合わせられる（5.5節。r11）。
 
 ```
 Auth Server (trace_id生成)
@@ -1043,7 +1056,7 @@ Vector Gateway (ログ出力で境界記録)
      │
      │ Header: X-Trace-ID: {uuid} ※ベストエフォート
      ▼
-外部API / aka-only-server (対応は保証されない)
+外部API / aka-only-server (aka-only-server は払い出しのログの trace_id に残す。他の外部APIの対応は保証されない)
 ```
 
 外部API呼び出し時は、Vector Gatewayのログで以下の情報を記録し、トレーサビリティの境界を明確化する（接続方式 `01` の例）：
@@ -1355,3 +1368,4 @@ D-12: Vector Gateway詳細設計書 (未) ◄── 新規追加
 | r8 | 2026-10-04 | acct-server の LOG_LEVEL 対応（compose で acct-server にも `LOG_LEVEL` を渡す）の反映: §5.2 注記の `LOG_LEVEL` を渡す対象を4サーバー（auth-server / acct-server / vector-gateway / vector-api）に修正（「acct-server は LOG_LEVEL 未対応のため渡さない」を削除） |
 | r9 | 2026-10-04 | vector-gateway のバックエンド向けタイムアウトを auth-server より短くした実装修正の反映: §5.1 環境変数（PoC版）・接続方式 `01` の環境変数表・§5.2 docker-compose.yml（抜粋）・§6.2 設定構造体の `VECTOR_GATEWAY_INTERNAL_TIMEOUT` / `VECTOR_GATEWAY_AKAONLY_TIMEOUT` の既定値を 5s → 3s に修正。§5.3 の起動時 WARN に `backend timeout should be shorter than the auth-server timeout; auth-server may time out before receiving 502`（`setting` / `timeout` / `auth_server_timeout`。AKAONLY は `01` 有効時のみ判定）を追加し、タイムアウトの考え方（auth-server の 5秒より短くする理由、定数 `authServerVectorTimeout` と auth-server の `VectorRequestTimeout` を合わせること）を追記 |
 | r10 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 3（Go 1.27.2 への更新とイメージの版の固定）の反映: Dockerfile 方針のベースイメージを実ファイルに同期（ビルド `golang:1.25-bookworm` → `golang:1.27.2-bookworm`（Go 1.27.2）、ランタイム `debian:bookworm-slim` → `debian:12.15-slim`（Debian 12 bookworm のポイントリリース）） |
+| r11 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 4（HTTP サーバーの時間の上限、設定の検証、ビルドの版の埋め込み、停止の猶予、X-Trace-ID）の反映: aka-only-server が認証ベクターAPI 0.2.0-draft で X-Trace-ID を受け取り、払い出しのログの `trace_id` に残すようになった（aka-only-server f0756ab）ことに合わせ、§2.3 のトレーサビリティの責務範囲、§4.5.2 のリクエストヘッダ、§5.5 のログの突き合わせ、§9.1 の外部バックエンド利用時の説明と図を更新。§5.3 の起動時検証に `VECTOR_GATEWAY_INTERNAL_TIMEOUT` が正の値であること（0 以下なら起動しない）を、起動ログに `build` を追加し、バックエンド向けタイムアウトの考え方の auth-server のタイムアウトを「接続の確立を含めた要求全体で5秒」に訂正（使っていない `VectorConnectTimeout` の削除）。§5.1 の環境変数の例と §6.2 の `Load()` に検証を追記。§5.2 の compose の抜粋に build.args（`VERSION: ${POC_VERSION:-dev}`）と `stop_grace_period: 20s` を追加し、注記を追加。§4.7.1 の Dockerfile に `ARG VERSION=dev` と `-X main.build=${VERSION}` を追加。§7.1 に HTTP サーバーの時間の上限（`ReadHeaderTimeout` 10秒、`ReadTimeout` 30秒、`WriteTimeout` 30秒、`IdleTimeout` 120秒）の注記を追加 |

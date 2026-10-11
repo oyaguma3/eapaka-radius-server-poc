@@ -1,4 +1,4 @@
-# D-10 Acct Server詳細設計書 (r15)
+# D-10 Acct Server詳細設計書 (r16)
 
 ## ■セクション1: 概要
 
@@ -69,7 +69,8 @@
 
 ```
 apps/acct-server/
-├── main.go                           # エントリーポイント
+├── main.go                           # エントリーポイント（runServer で起動・停止）
+├── main_test.go                      # runServer・warnFallbackSecret のテスト
 └── internal/
     ├── acct/
     │   ├── duplicate.go              # 重複・順序異常検出
@@ -112,7 +113,7 @@ apps/acct-server/
     │   ├── handler_test.go           # handler.goのテスト
     │   ├── secret.go                 # radius.SecretSource実装
     │   ├── secret_test.go            # secret.goのテスト
-    │   ├── server.go                 # PacketServer設定（InsecureSkipVerify / ErrorLog）・起動・シャットダウン
+    │   ├── server.go                 # PacketServer設定（InsecureSkipVerify / ErrorLog）・起動・シャットダウン、パニックの回復（recoverHandler）
     │   └── server_test.go            # server.goのテスト（ループバックのUDPでPacketServerを動かす）
     ├── session/
     │   ├── errors.go                 # sessionパッケージエラー定義
@@ -211,7 +212,9 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o acct-server .
+# ビルドの版（compose の POC_VERSION から渡す。起動ログの build に出る）
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X main.build=${VERSION}" -o acct-server .
 
 # ランタイムステージ
 FROM debian:12.15-slim
@@ -245,7 +248,7 @@ ENTRYPOINT ["/usr/local/bin/acct-server"]
 | `curl`            | 将来のHTTPヘルスチェック対応に備える |
 | `procps`          | ヘルスチェック用（`pgrep`コマンド提供）|
 
-> **注記:** Acct ServerはUDPサービスのため、現時点ではプロセス存在確認（`pgrep`）でヘルスチェックを行う。`pgrep` は `procps` パッケージに含まれる。将来的にHTTPヘルスエンドポイントを追加する場合は `curl -fsS` を使用する。
+> **注記:** Acct ServerはUDPサービスのため、現時点ではプロセス存在確認（`pgrep`）でヘルスチェックを行う。`pgrep` は `procps` パッケージに含まれる。待ち受けを開始できない（ポートが使用中など）か、シグナルの前にサーバーが終わったときは、プロセスが終了コード 1 で終わる（`SYS_LISTEN_ERR`。§10.3。r16）ため、待ち受けていないプロセスが残って `pgrep` が通ることはない（compose の `restart: always` で起動し直す）。将来的にHTTPヘルスエンドポイントを追加する場合は `curl -fsS` を使用する。
 
 ---
 
@@ -1585,6 +1588,15 @@ D-06で定義されたエラーハンドリングに基づく。
 | Stop後にStart | 同一Acct-Session-Idで再Start | 新規セッションとして処理継続（reason=`start_after_stop`） | Accounting-Response | WARN: `ACCT_SEQUENCE_ERR` |
 | Stop重複 | 同一Acct-Session-Idで再Stop | 処理継続 | Accounting-Response | なし |
 
+#### 7.1.4 システムエラー（r16）
+
+| エラー種別 | 検出条件 | 対処 | RADIUS応答 | ログ |
+|-----------|---------|------|-----------|------|
+| 待ち受けの開始の失敗・サーバーの異常終了 | `PacketServer.ListenAndServe` が停止のシグナルの前に戻った（ポートが使用中など） | プロセスを終了コード 1 で終える（compose の `restart: always` で起動し直す） | - | ERROR: `SYS_LISTEN_ERR`（msg `サーバーエラー`、`addr`, `error`） |
+| パケット処理中のパニック | ハンドラーの処理中のパニック | `recoverHandler` で回復し、プロセスは処理を続ける | なし（Accounting-Response を返さない。NAS が送り直す） | ERROR: `SYS_PANIC`（`src_ip`, `code`, `panic`, `stack`） |
+
+> **注記:** Auth Server と同じ（D-09 §3.4、§4.3、D-06 §3.1.5）。§10.3 の `runServer` と `recoverHandler` を参照。
+
 ### 7.2 リトライ戦略
 
 Valkey操作のリトライ設定。
@@ -1661,6 +1673,8 @@ D-04で定義されたevent_idを使用する。
 | `VALKEY_CONN_ERR` | ERROR | 起動時のValkey接続失敗、実行時の読み取り系Valkeyエラー（重複・順序判定（Interim受信値の記録失敗を含む）・セッション存在確認） |
 | `DB_WRITE_ERR` | ERROR | Valkey書き込み失敗（セッション更新・停止マーク・セッション削除・インデックス削除） |
 | `PKT_SEND_ERR` | ERROR | Accounting-Response / Status-Server応答の送信失敗 |
+| `SYS_LISTEN_ERR` | ERROR | RADIUSサーバーが待ち受けを開始できない、またはシグナルの前に終わった（msg `サーバーエラー`。終了コード 1 で終了。r16） |
+| `SYS_PANIC` | ERROR | パケットの処理中のパニックを回復した（そのパケットには応答しない。r16） |
 | `RADIUS_PARSE_ERR` | WARN | Accounting-Requestの属性抽出失敗 |
 | `RADIUS_AUTH_ERR` | WARN | Accounting-RequestのRequest Authenticator検証失敗（共有シークレットの不一致等）、Status-ServerのMessage-Authenticator検証失敗。いずれもパケット破棄・応答なし |
 | `RADIUS_SECRET_ERR` | WARN | Shared Secret解決時のValkey検索エラー |
@@ -2001,20 +2015,23 @@ Valkey接続の復旧検知（`downtime_ms` の記録）は実装しない（D-0
 
 ### 10.3 起動・シャットダウン
 
-ロガーは環境変数 `LOG_LEVEL`（既定 `INFO`）以上のレベルを出力するJSON形式で初期化し、全ログに `app=acct-server` を付与する。レベル文字列は共通ライブラリの `pkg/logging.ParseLevel`（E-03 §5.6）で `slog.Level` に変換する（大文字小文字を区別せず前後の空白を除去、`WARNING` も `WARN`、未知の値・空文字は `INFO`）。起動ログ `acct-server起動開始` に `listen_addr` と `log_level`（設定値をそのまま出力）、`radius_secret_fallback`（真偽値。`RADIUS_SECRET` が空でなければ `true`。シークレットの値は出さない）を出力する（D-04 §3.2.5、§4.6）。Acct ServerのDEBUGログは、共有シークレットが決まらずにパケットを破棄したときの `RADIUS_LIB_ERR`（D-04 §3.2.2）のみである。
+ロガーは環境変数 `LOG_LEVEL`（既定 `INFO`）以上のレベルを出力するJSON形式で初期化し、全ログに `app=acct-server` を付与する。レベル文字列は共通ライブラリの `pkg/logging.ParseLevel`（E-03 §5.6）で `slog.Level` に変換する（大文字小文字を区別せず前後の空白を除去、`WARNING` も `WARN`、未知の値・空文字は `INFO`）。起動ログ `acct-server起動開始` に `build`（ビルドの版。イメージのビルドで `-ldflags "-X main.build=${VERSION}"` として埋め込む。compose の `POC_VERSION`、既定 `dev`。r16）、`listen_addr` と `log_level`（設定値をそのまま出力）、`radius_secret_fallback`（真偽値。`RADIUS_SECRET` が空でなければ `true`。シークレットの値は出さない）を出力する（D-04 §3.2.5、§4.6）。Acct ServerのDEBUGログは、共有シークレットが決まらずにパケットを破棄したときの `RADIUS_LIB_ERR`（D-04 §3.2.2）のみである。
 
 `RADIUS_SECRET` が設定されているときは、起動ログに続けて `warnFallbackSecret` が WARN を1行出力する（`event_id` なし。msg `RADIUS_SECRETが設定されているため、クライアント登録のない送信元IPのパケットもフォールバックの共有シークレットで受け付ける（インターネットに公開する場合は空にすること）`）。インターネットに公開するサーバーでは、`docker compose logs acct-server | grep 起動開始` で `"radius_secret_fallback":false` であり、この WARN が出ていないことを確認する（§3.1 注記）。
 
 ```go
 // main.go（実装）
+// Package main はAcct Server（RADIUS Accountingサーバー）のエントリーポイント。
 package main
 
 import (
     "context"
+    "errors"
     "log/slog"
     "os"
     "os/signal"
     "syscall"
+    "time"
 
     "github.com/oyaguma3/eapaka-radius-server-poc/apps/acct-server/internal/acct"
     "github.com/oyaguma3/eapaka-radius-server-poc/apps/acct-server/internal/config"
@@ -2023,6 +2040,10 @@ import (
     "github.com/oyaguma3/eapaka-radius-server-poc/apps/acct-server/internal/store"
     "github.com/oyaguma3/eapaka-radius-server-poc/pkg/logging"
 )
+
+// build はビルドの版（git のコミットなど）。起動ログの build に出す。
+// イメージのビルドで -ldflags "-X main.build=..." として埋め込む（compose の POC_VERSION。既定 dev）。
+var build = "dev"
 
 func main() {
     // 1. 環境変数読み込み
@@ -2039,6 +2060,7 @@ func main() {
     slog.SetDefault(logger)
 
     slog.Info("acct-server起動開始",
+        "build", build,
         "listen_addr", cfg.ListenAddr,
         "log_level", cfg.LogLevel,
         "radius_secret_fallback", cfg.RadiusSecret != "",
@@ -2080,29 +2102,50 @@ func main() {
     // 9. UDPサーバー
     srv := server.NewServer(cfg.ListenAddr, handler, secretSource)
 
-    // 10. サーバー起動（goroutine）
-    go func() {
-        slog.Info("RADIUSサーバー起動", "addr", cfg.ListenAddr)
-        if err := srv.ListenAndServe(); err != nil {
-            slog.Error("サーバーエラー", "error", err)
-        }
-    }()
-
-    // 11. シグナル待機 → Graceful Shutdown
+    // 10. サーバー起動、11. シグナル待機 → Graceful Shutdown
     sigCh := make(chan os.Signal, 1)
     signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
-
-    sig := <-sigCh
-    slog.Info("シグナル受信、シャットダウン開始", "signal", sig)
-
-    ctx, cancel := context.WithTimeout(context.Background(), config.ShutdownTimeout)
-    defer cancel()
-
-    if err := srv.Shutdown(ctx); err != nil {
-        slog.Warn("シャットダウンエラー", "error", err)
+    if err := runServer(srv, cfg.ListenAddr, sigCh, config.ShutdownTimeout); err != nil {
+        // 待ち受けを開始できない（ポートが使用中など）か、異常終了した。プロセスを終えて、compose の restart で
+        // 起動し直させる（終了しないと、待ち受けていないのに pgrep の healthcheck が通ってしまう）
+        slog.Error("サーバーエラー", "event_id", "SYS_LISTEN_ERR", "addr", cfg.ListenAddr, "error", err)
+        os.Exit(1)
     }
 
     slog.Info("acct-server停止完了")
+}
+
+// radiusServer は runServer が使う RADIUS サーバーの操作（テストで差し替える）。
+type radiusServer interface {
+    ListenAndServe() error
+    Shutdown(ctx context.Context) error
+}
+
+// runServer は RADIUS サーバーを起動し、停止のシグナルを受けたらグレースフルに停止して nil を返す。
+// シグナルの前にサーバーが終わった（待ち受けの開始の失敗など）ときは、そのエラーを返す。
+func runServer(srv radiusServer, addr string, sigCh <-chan os.Signal, shutdownTimeout time.Duration) error {
+    errCh := make(chan error, 1)
+    go func() {
+        slog.Info("RADIUSサーバー起動", "addr", addr)
+        errCh <- srv.ListenAndServe()
+    }()
+
+    select {
+    case err := <-errCh:
+        if err == nil {
+            err = errors.New("RADIUS server stopped unexpectedly")
+        }
+        return err
+    case sig := <-sigCh:
+        slog.Info("シグナル受信、シャットダウン開始", "signal", sig)
+    }
+
+    ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+    defer cancel()
+    if err := srv.Shutdown(ctx); err != nil {
+        slog.Warn("シャットダウンエラー", "error", err)
+    }
+    return nil
 }
 
 // warnFallbackSecret は、RADIUS_SECRET（フォールバックの共有シークレット）が設定されているときにWARNログを出す。
@@ -2116,7 +2159,9 @@ func warnFallbackSecret(fallbackSecret string) {
 }
 ```
 
-UDPサーバー（`server.NewServer`）は、`PacketServer` に `InsecureSkipVerify: true`（パケットの認証をライブラリでは行わず、ハンドラーで検証する）と `ErrorLog: logging.NewRADIUSLibraryLogger()`（ライブラリのエラーを JSON の slog（`RADIUS_LIB_ERR`）に流す。E-03）を設定する（§4.1 注記、D-09 §4.3）。
+サーバーの起動とシグナルの待機は `runServer` に分けている（r16。`main_test.go` で待ち受けの失敗とシグナルでの停止を確かめる）。`ListenAndServe` が停止のシグナルの前に戻ったら（ポートが使用中などで待ち受けを開始できない、またはサーバーが異常終了した）、`main` は ERROR `サーバーエラー`（`event_id` `SYS_LISTEN_ERR`、`addr`、`error`）を出して終了コード 1 で終える（compose の `restart: always` で起動し直す）。r15 まではゴルーチンの中でログを出すだけでプロセスが終了せず、待ち受けていないのに `pgrep` によるヘルスチェックが healthy のままだった。
+
+UDPサーバー（`server.NewServer`）は、`PacketServer` に `InsecureSkipVerify: true`（パケットの認証をライブラリでは行わず、ハンドラーで検証する）と `ErrorLog: logging.NewRADIUSLibraryLogger()`（ライブラリのエラーを JSON の slog（`RADIUS_LIB_ERR`）に流す。E-03）を設定する（§4.1 注記、D-09 §4.3）。ハンドラーは `recoverHandler` で包み、パケットの処理中のパニックを回復して ERROR `パケット処理中のパニック（回復して処理を続ける）`（`event_id` `SYS_PANIC`、`src_ip`、`code`、`panic`、`stack`）を出す（r16。`layeh.com/radius` の `PacketServer` はパニックを回復しないため、回復しないと 1 つのパケットでプロセスごと落ちる）。そのパケットには応答しない（NAS が送り直す）。
 
 ```go
 // internal/server/server.go（実装）
@@ -2124,6 +2169,9 @@ package server
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
+	"runtime/debug"
 
 	"github.com/oyaguma3/eapaka-radius-server-poc/pkg/logging"
 	"layeh.com/radius"
@@ -2140,7 +2188,7 @@ func NewServer(addr string, handler radius.Handler, secretSource radius.SecretSo
 		ps: &radius.PacketServer{
 			Addr:         addr,
 			SecretSource: secretSource,
-			Handler:      handler,
+			Handler:      recoverHandler(handler),
 			// パケットの認証（Request Authenticator / Message-Authenticator）はハンドラーで検証し、
 			// 失敗したら送信元IP付きのログを出して破棄する。ライブラリにも検証させると、
 			// Accounting-Request などのシークレット不一致や未知のCodeのパケットが、
@@ -2150,6 +2198,26 @@ func NewServer(addr string, handler radius.Handler, secretSource radius.SecretSo
 			ErrorLog: logging.NewRADIUSLibraryLogger(),
 		},
 	}
+}
+
+// recoverHandler は、パケットの処理中のパニックを回復してログ（SYS_PANIC）に出す。
+// layeh.com/radius の PacketServer はパケットごとの goroutine でハンドラーを呼び、パニックを回復しないので、
+// 回復しないと 1 つのパケットでプロセスごと落ちる。そのパケットには応答しない（NAS は応答がなければ送り直す）。
+func recoverHandler(next radius.Handler) radius.Handler {
+	return radius.HandlerFunc(func(w radius.ResponseWriter, r *radius.Request) {
+		defer func() {
+			if p := recover(); p != nil {
+				slog.Error("パケット処理中のパニック（回復して処理を続ける）",
+					"event_id", "SYS_PANIC",
+					"src_ip", extractIP(r.RemoteAddr),
+					"code", r.Code,
+					"panic", fmt.Sprint(p),
+					"stack", string(debug.Stack()),
+				)
+			}
+		}()
+		next.ServeRADIUS(w, r)
+	})
 }
 
 // ListenAndServe はUDPサーバーを起動する
@@ -2195,3 +2263,4 @@ func (s *Server) Shutdown(ctx context.Context) error {
 | r13 | 2026-10-05 | Status-Server に正常に応答したときのログを DEBUG に下げた実装修正（D-04 r32）の反映: §4.7 の `HandleStatusServer` の例の `slog.Info` を `slog.Debug` に、§4.7.4 注意点を DEBUG とその理由（radsecproxy 等の複数のプロキシが定期的に送る構成で INFO ログが埋まる）に修正、§8.1 の `PKT_RECV` を DEBUG に変更。あわせて event_id を `PKT_RECV` から Auth Server と同じ `RADIUS_STATUS_OK` に変更（§4.7 の例、§4.7.4、§8.1）。検証失敗の `RADIUS_AUTH_ERR`（WARN）と `PKT_SEND_ERR`（ERROR）は変更なし |
 | r14 | 2026-10-06 | NAS-Identifier を NAS の識別情報としてセッションとログに加えた実装修正（D-04 r33、D-02 r20）の反映（radsecproxy 等のプロキシ経由では送信元IPがプロキシのIPになり NAS を区別できないため）: §5 の Start / Interim / Stop のコードで `src_ip` を持つログに `nas_identifier` を追加し、Start / Interim のセッション更新に `NasIdentifier`（NAS-Identifier があるときだけ `nas_identifier` を上書き、なければ Auth Server が書いた値を残す）を追加。§5.7（セッション状態操作）の UpdateOnStart / UpdateOnInterim、§9.1 の型定義を更新。§8.1 に `nas_identifier` の注記を追加 |
 | r15 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 3（Go 1.27.2 への更新とイメージの版の固定）の反映: Dockerfile 方針のベースイメージを実ファイルに同期（ビルド `golang:1.25-bookworm` → `golang:1.27.2-bookworm`（Go 1.27.2）、ランタイム `debian:bookworm-slim` → `debian:12.15-slim`（Debian 12 bookworm のポイントリリース）） |
+| r16 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 4（待ち受けの失敗での終了、パニックの回復、ビルドの版の埋め込み）の反映: §10.3 の main.go を実装に同期（`build`、起動ログの `build`、`runServer` に分けた起動・シグナル待機・停止、シグナルの前にサーバーが終わったら `SYS_LISTEN_ERR` を出して終了コード 1）し、`internal/server/server.go` を実装に同期（`Handler: recoverHandler(handler)`、パケットの処理中のパニックを回復して `SYS_PANIC` を出し、そのパケットには応答しない）して説明を追加。§7.1.4（システムエラー）を新設し、§8.1 の event_id 一覧に `SYS_LISTEN_ERR`・`SYS_PANIC` を追加。§2.1 のディレクトリ構造に `main_test.go` を追加。§2.5.1 の Dockerfile に `ARG VERSION=dev` と `-X main.build=${VERSION}` を追加し、§2.5.3 の注記に待ち受けの失敗で終了するため `pgrep` が通り続けないことを追記 |

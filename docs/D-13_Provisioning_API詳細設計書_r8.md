@@ -1,7 +1,7 @@
-# D-13 Provisioning API 詳細設計書 (r7)
+# D-13 Provisioning API 詳細設計書 (r8)
 
 **作成日:** 2026-10-07
-**更新日:** 2026-10-10
+**更新日:** 2026-10-12
 **ステータス:** 実装済み（`apps/provisioning-api`。simwifi 実機での結合確認済み。§9）
 
 ## 1. 概要
@@ -331,7 +331,7 @@ ProblemDetails（RFC 7807）の `title` / `status` / `detail` に、aka-only-ser
 
 | 項目 | 内容 |
 |------|------|
-| `version` | provisioning-api のバージョン |
+| `version` | provisioning-api のバージョン（API の版。§7.1。起動ログの `build`（ビルドの版）とは別） |
 | `nodeName` | ノードの識別名（環境変数 `PROVISIONING_API_NODE_NAME`。BFF / provisioner がノードを区別するため） |
 | `startedAt` | 起動日時 |
 | `subscriberCount` / `clientCount` / `policyCount` | 各キーの件数 |
@@ -370,7 +370,7 @@ Valkey に接続できない場合は `500`（`SYSTEM_FAILURE`）を返す。
 
 | ログ | Level | event_id | 内容 |
 |------|-------|----------|------|
-| `starting provisioning-api` | INFO | - | 起動時に `version`、`listen_addr`、`log_level`、`node_name`、`admin_clients`（登録クライアントの件数）、`audit_max`（Stream に保存する監査ログの件数の上限。r6）を出す（フィンガープリントは出さない）。続いて `connected to Valkey`（`addr`）、`starting server`（`addr`） |
+| `starting provisioning-api` | INFO | - | 起動時に `version`、`build`（ビルドの版。r8。§7.1）、`listen_addr`、`log_level`、`node_name`、`admin_clients`（登録クライアントの件数）、`audit_max`（Stream に保存する監査ログの件数の上限。r6）を出す（フィンガープリントは出さない）。続いて `connected to Valkey`（`addr`）、`starting server`（`addr`） |
 | `assigned client ids` | INFO | - | 起動時に ID の導入前の RADIUSクライアントに ID を採番したとき（`count`。採番がなければ出さない）。採番に失敗したら `failed to assign client ids`（ERROR）を出して終了する |
 | `request completed` | INFO | - | `trace_id`、`method`、`path`、`http_status`、`latency_ms`、`mgmt_client`（クライアントの識別名）、`src_ip`。パスのうち7桁を超える数字だけのセグメント（IMSI。15桁でない誤った IMSI も含む）は `LOG_MASK_IMSI` に従ってマスクする。クエリパラメーター（`prefix` 等）は出さない |
 | `request failed` | ERROR | `PROV_REQUEST_ERR` | 500 を返したとき（Valkey のエラー等）。`trace_id`、`method`、`path`（マスク済み）、`error` |
@@ -445,6 +445,7 @@ apps/provisioning-api/
 - ハンドラーは DTO と HTTP の変換だけを行い、検証・正規化・監査ログは service 層で行う。service は検証エラーを `ValidationError`（`cause` と `invalidParams` を持つ）で、存在しない・既に存在するを `pkg/masterdata` のセンチネルエラーで返し、handler が HTTP のステータスに対応付ける。
 - アプリケーションログと監査ログは、同じ標準出力に排他して書き込む（1行が混ざらないようにする）。
 - `version` は `main.version`（r6 で `0.3.0`、r7 で `0.4.0`。`-ldflags "-X main.version=..."` で上書きできる）。
+- `build` は `main.build`（r8）。ビルドの版（git のコミットなど）で、Dockerfile の `ARG VERSION=dev` と `-ldflags "-s -w -X main.build=${VERSION}"` で埋め込み、起動ログの `build` に出す（compose の build.args の `VERSION: ${POC_VERSION:-dev}`。§8.2）。API の版の `version`（`/status` に出る）とは別のもので、`version` は API を変えたときに上げ、`build` はイメージを作るたびに変わる。埋め込まずにビルドしたときは `dev`。
 - Go Workspace（`go.work`）にモジュールを加えたため、他のアプリの Dockerfile も `apps/provisioning-api/go.mod` / `go.sum` をコピーする（`go.work` の `use` の解決に全モジュールの go.mod が要る）。Makefile と CI の対象にも加えた。
 
 **共通ライブラリに追加したもの（2026-10-08）:**
@@ -508,7 +509,8 @@ provisioning-api のプロセスが読む環境変数。
 | `PROVISIONING_API_NODE_NAME` | （空） | そのままコンテナの `PROVISIONING_API_NODE_NAME` に渡す（空ならコンテナのホスト名） |
 | `PROVISIONING_API_AUDIT_MAX` | `10000` | そのままコンテナの `PROVISIONING_API_AUDIT_MAX` に渡す（r6） |
 | `PROVISIONING_SHARED_NETWORK` | `eapaka-prov` | 同じホストの BFF との共有ネットワークの名前（compose の `networks` の展開にだけ使う。§8.2）。通常は変えない |
-| `VALKEY_PASSWORD` | - | コンテナの `REDIS_PASS` に渡す（他のコンポーネントと同じ） |
+| `VALKEY_PASSWORD` | - | コンテナの `REDIS_PASS` に渡す（他のコンポーネントと同じ。空なら `docker compose` が断る（`${VALKEY_PASSWORD:?…}`。r8）） |
+| `POC_VERSION` | `dev` | ビルドの版（r8）。compose の build.args の `VERSION` に渡し、イメージに埋め込む（起動ログの `build`。§7.1）。コンテナには渡さない。例: `POC_VERSION=$(git rev-parse --short HEAD) docker compose --profile provisioning up -d --build` |
 | `LOG_LEVEL` / `LOG_MASK_IMSI` | `INFO` / `true` | 他のコンポーネントと同じく、コンテナに渡す |
 
 compose では、`PROVISIONING_API_LISTEN_ADDR` は既定値（`:9444`）のまま、`PROVISIONING_API_TLS_CERT` / `PROVISIONING_API_TLS_KEY` はマウントした証明書のパス（`/certs/server.pem` / `/certs/server.key`）に固定する。
@@ -522,6 +524,8 @@ compose では、`PROVISIONING_API_LISTEN_ADDR` は既定値（`:9444`）のま�
   - 本PoC側を先に起動する（ネットワークがない状態で BFF を起動すると、`network eapaka-prov declared as external, but could not be found` で起動できない）。
   - BFF が参加したまま本PoC側を `down` すると、ネットワークは「Resource is still in use」で残る（問題ない）。本PoC側を起動し直すと、BFF は再起動なしで接続できる（2026-10-08 に simwifi で確認）。
 - ヘルスチェックはプロセスの確認（`pgrep -f /usr/local/bin/provisioning-api`）とする（`/status` は mTLS が要るため）。Linux のプロセス名（comm）は15文字までに切り詰められ、16文字の `provisioning-api` は `pgrep -x` で一致しないため、`-f` でコマンドラインと照合する。
+- イメージのビルドでは、build.args の `VERSION: ${POC_VERSION:-dev}` でビルドの版を渡す（r8。§7.1）。
+- 停止の猶予は `stop_grace_period: 20s`（r8）。provisioning-api は停止のシグナルを受けると `Shutdown` に 10秒の上限を与えて処理中の要求を待つ（`main.go`）。これが Docker の既定の停止の猶予（10秒）と同じで強制終了と重なりうるため、長くした（vector-gateway・vector-api も同じ。D-08 §4.1）。
 - `depends_on` は Valkey（healthy）だけ。サーバー証明書・秘密鍵が読めない、`PROVISIONING_API_ADMIN_CLIENTS` が空・不正、Valkey に接続できない場合は、エラーを出して終了する（`restart: always` により再起動を繰り返す）。
 - 秘密鍵のファイルはパーミッション 600 でよい（コンテナのプロセスは root で動く）。
 - 手順は B-02 を参照。
@@ -592,3 +596,4 @@ compose では、`PROVISIONING_API_LISTEN_ADDR` は既定値（`:9444`）のま�
 | r5 | 2026-10-08 | RADIUSクライアントにサーバー採番の ID を導入（API 0.2.0。provisioning-api のバージョン 0.2.0）: §3 の識別子を ID に、§3.2 に `id` と、識別子の設計（`client:{IP}` の Hash の `id`、索引 `idx:client:{ID}`、カウンター `seq:client`、Lua による作成・IP の変更・削除、起動時の採番 `EnsureIDs`、`?ip=` による検索、ID に改めた理由）、PATCH での IP の変更（キーの付け替え、409）を追記。§3.4・§4.2 のパスを `/clients/{clientId}` に、§4.3 の `CLIENT_ALREADY_EXISTS` の条件に PATCH を追加。§6.1 に `assigned client ids`、§6.2 に `target_id` と details の `ip`。§10 の IPv6 に注記。simwifi で、変更前の版で登録したクライアントへの採番、IP の変更の認証への反映、Admin TUI の ID 表示を確認 |
 | r6 | 2026-10-09 | 監査ログとセッションの参照を追加（API 0.3.0。provisioning-api のバージョン 0.3.0）: §1.1・§1.4 の対象に監査ログの参照とセッションの参照を加え、一括操作（CSV）は Admin TUI だけで行い本APIでは扱わないことにした。§3.6（監査ログ。Valkey の Stream `audit:prov` への保存、上限 `PROVISIONING_API_AUDIT_MAX`、保存の失敗の扱い、aka-only-server に揃えた項目と `action` の命名）と §3.7（セッション。読み取りだけ、新しい順・`limit`・`total`、`?imsi=` と索引を掃除しないこと）を新設。§4.1 に一覧の作法、§4.2 に `GET /audit-logs`・`GET /sessions`、§4.4 に `sessionCount`、§6.1 に `audit_max` と `PROV_AUDIT_STORE_ERR`、§6.2 に Stream への保存、§7.1 に `SessionStore` と `audit` の Stream、§7.2 にセッションの読み出しの `pkg/masterdata` への移動、§8.1 に `PROVISIONING_API_AUDIT_MAX`、§9 に実施結果、§10・§11 を更新 |
 | r7 | 2026-10-10 | 加入者の停止・再開を追加（API 0.4.0。provisioning-api のバージョン 0.4.0）: §1.1 の責務に追加。§3.3 に `status`（応答だけ。`active` / `suspended`）と、専用の `PUT /policies/{imsi}/status`（404 `POLICY_NOT_FOUND`、200 で認可ポリシー全体、同じ状態への変更は書き込まず監査ログなし、検証、`PolicyStore.SetStatus`、次の認証から効く）、置き換え（PUT）では `status` を変えないこと・本文の `status` は `INVALID_MSG_FORMAT`、不正値はそのまま返すことを追加。§4.2 のエンドポイント一覧、§6.2 の監査ログ（`operation` の `suspend` / `resume`、`msg`、`action`、`details`）、§7.1（`version`、共通ライブラリの追加）、§9 の実施結果、§10（停止した加入者のセッションは切らない、停止中の一覧・件数）、§11 を更新 |
+| r8 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 4（ビルドの版の埋め込み、停止の猶予、`VALKEY_PASSWORD` が空なら compose が断ること）の反映: §6.1 の起動ログ `starting provisioning-api` に `build` を追加。§7.1 に `build`（`main.build`。Dockerfile の `ARG VERSION=dev` と `-X main.build=${VERSION}`、compose の `POC_VERSION`）と API の版の `version` との違いを追記し、§4.4 の `version` に注記。§8.1.2 に `POC_VERSION` を追加し、`VALKEY_PASSWORD` が空なら compose が断ることを追記。§8.2 に build.args と `stop_grace_period: 20s`（停止の上限 10秒が Docker の既定の猶予と同じだったため）を追加。provisioning-api のバージョン（API 0.4.0）は変えていない |

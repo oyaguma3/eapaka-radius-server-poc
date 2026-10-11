@@ -1,4 +1,4 @@
-﻿# D-09 Auth Server詳細設計書 (r22)
+﻿# D-09 Auth Server詳細設計書 (r23)
 
 ## ■セクション1: 概要
 
@@ -87,7 +87,8 @@
 
 ```
 apps/auth-server/
-├── main.go                        # エントリーポイント
+├── main.go                        # エントリーポイント（runServer で起動・停止）
+├── main_test.go                   # runServer・warnFallbackSecret のテスト
 └── internal/
     ├── config/
     │   ├── config.go              # 環境変数読み込み、設定構造体
@@ -147,7 +148,7 @@ apps/auth-server/
     │   ├── handler_test.go        # handler テスト
     │   ├── secret.go              # radius.SecretSource実装
     │   ├── secret_test.go         # secret テスト
-    │   ├── server.go              # PacketServer設定・起動・シャットダウン
+    │   ├── server.go              # PacketServer設定・起動・シャットダウン、パニックの回復（recoverHandler）
     │   └── server_test.go         # server テスト
     ├── session/
     │   ├── context.go             # EAPコンテキスト管理
@@ -302,7 +303,9 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o auth-server .
+# ビルドの版（compose の POC_VERSION から渡す。起動ログの build に出る）
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X main.build=${VERSION}" -o auth-server .
 
 # ランタイムステージ
 FROM debian:12.15-slim
@@ -336,7 +339,7 @@ ENTRYPOINT ["/usr/local/bin/auth-server"]
 | `curl`            | 将来のHTTPヘルスチェック対応に備える               |
 | `procps`          | ヘルスチェック用（`pgrep`コマンド提供）            |
 
-> **注記:** Auth ServerはUDPサービスのため、現時点ではプロセス存在確認（`pgrep`）でヘルスチェックを行う。`pgrep` は `procps` パッケージに含まれる。将来的にHTTPヘルスエンドポイントを追加する場合は `curl -fsS` を使用する。
+> **注記:** Auth ServerはUDPサービスのため、現時点ではプロセス存在確認（`pgrep`）でヘルスチェックを行う。`pgrep` は `procps` パッケージに含まれる。待ち受けを開始できない（ポートが使用中など）か、シグナルの前にサーバーが終わったときは、プロセスが終了コード 1 で終わる（`SYS_LISTEN_ERR`。§3.4、§3.9。r23）ため、待ち受けていないプロセスが残って `pgrep` が通ることはない（compose の `restart: always` で起動し直す）。将来的にHTTPヘルスエンドポイントを追加する場合は `curl -fsS` を使用する。
 
 ### 2.7 ファイル別責務詳細
 
@@ -470,8 +473,7 @@ const (
     ValkeyConnectTimeout = 3 * time.Second
     ValkeyCommandTimeout = 2 * time.Second
 
-    // Vector Gatewayタイムアウト（D-06準拠）
-    VectorConnectTimeout = 2 * time.Second
+    // Vector Gatewayタイムアウト（D-06準拠）。接続の確立も要求全体の上限に含める（接続だけの上限は設けない）
     VectorRequestTimeout = 5 * time.Second
 
     // EAPコンテキストTTL（D-02準拠）
@@ -548,66 +550,82 @@ func (c *Config) ValkeyAddr() string {
                     └───────────┬───────────┘
                                 │
         6. PacketServer        │
-           初期化・起動        ▼
+           初期化              ▼
                     ┌───────────────────────┐
                     │ server.NewSecretSource│
                     │ server.NewHandler     │
-                    │ server.New            │
-                    │ srv.ListenAndServe()  │
+                    │ server.NewServer      │
+                    │ (recoverHandler で    │
+                    │  ハンドラーを包む)    │
                     └───────────┬───────────┘
                                 │
-        7. シグナルハンドラ    │
-           登録・待機          ▼
+        7. 起動・シグナル待機  │
+           (runServer)         ▼
                     ┌───────────────────────┐
+                    │ srv.ListenAndServe()  │
                     │ SIGTERM/SIGINT待機    │
                     │ → srv.Shutdown(ctx)   │
-                    └───────────────────────┘
+                    └───────────┬───────────┘
+                                │ シグナルの前にサーバーが終わった
+                                │ (待ち受けの開始の失敗など):
+                                │ SYS_LISTEN_ERR を出して終了コード 1
 ```
 
 ### 3.4 main.go 実装
 
+実装（`apps/auth-server/main.go`）のとおり（r23 で実装に同期）。
+
 ```go
 // main.go
 
+// Package main はAuth Server（EAP-AKA/AKA' RADIUS認証サーバー）のエントリーポイント。
 package main
 
 import (
     "context"
+    "errors"
     "log/slog"
     "os"
     "os/signal"
     "syscall"
     "time"
 
-    "auth-server/internal/config"
-    "auth-server/internal/policy"
-    "auth-server/internal/server"
-    "auth-server/internal/session"
-    "auth-server/internal/store"
-    "auth-server/internal/vector"
+    "github.com/oyaguma3/eapaka-radius-server-poc/apps/auth-server/internal/config"
+    "github.com/oyaguma3/eapaka-radius-server-poc/apps/auth-server/internal/engine"
+    "github.com/oyaguma3/eapaka-radius-server-poc/apps/auth-server/internal/policy"
+    "github.com/oyaguma3/eapaka-radius-server-poc/apps/auth-server/internal/server"
+    "github.com/oyaguma3/eapaka-radius-server-poc/apps/auth-server/internal/session"
+    "github.com/oyaguma3/eapaka-radius-server-poc/apps/auth-server/internal/store"
+    "github.com/oyaguma3/eapaka-radius-server-poc/apps/auth-server/internal/vector"
     "github.com/oyaguma3/eapaka-radius-server-poc/pkg/logging"
 )
+
+// build はビルドの版（git のコミットなど）。起動ログの build に出す。
+// イメージのビルドで -ldflags "-X main.build=..." として埋め込む（compose の POC_VERSION。既定 dev）。
+var build = "dev"
 
 func main() {
     // 1. 環境変数読み込み
     cfg, err := config.Load()
     if err != nil {
-        slog.Error("failed to load config", "error", err)
+        slog.Error("設定読み込み失敗", "error", err)
         os.Exit(1)
     }
 
     // 2. ロガー初期化（JSON形式、LOG_LEVEL 以上。既定 INFO）
     logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
         Level: logging.ParseLevel(cfg.LogLevel),
-    }))
+    })).With("app", "auth-server")
     slog.SetDefault(logger)
 
-    slog.Info("starting auth-server",
+    slog.Info("auth-server起動開始",
+        "build", build,
         "listen_addr", cfg.ListenAddr,
         "log_level", cfg.LogLevel,
         "vector_api_url", cfg.VectorAPIURL,
         "network_name", cfg.NetworkName,
-        "radius_secret_fallback", cfg.RadiusSecret != "") // 値は出さず、設定の有無だけ出す
+        "radius_secret_fallback", cfg.RadiusSecret != "",
+    )
     warnFallbackSecret(cfg.RadiusSecret)
 
     // 3. Valkeyクライアント初期化
@@ -615,55 +633,82 @@ func main() {
     if err != nil {
         slog.Error("Valkey接続失敗",
             "event_id", "VALKEY_CONN_ERR",
-            "error", err)
+            "error", err,
+        )
         os.Exit(1)
     }
     defer valkeyClient.Close()
 
+    slog.Info("Valkey接続完了", "addr", cfg.ValkeyAddr())
+
     // 4. Vector Gatewayクライアント初期化
     vectorClient := vector.NewClient(cfg)
 
-    // 5. サービス層初期化
+    // 5. Store/Session層生成
     clientStore := store.NewClientStore(valkeyClient)
     policyStore := store.NewPolicyStore(valkeyClient)
-    contextStore := session.NewContextStore(valkeyClient)
-    sessionStore := session.NewSessionStore(valkeyClient)
+    ctxStore := session.NewContextStore(valkeyClient)
+    sessStore := session.NewSessionStore(valkeyClient)
 
-    policyEvaluator := policy.NewEvaluator(policyStore)
-    sessionManager := session.NewManager(contextStore, sessionStore)
+    // 6. ポリシー評価器
+    evaluator := policy.NewEvaluator()
 
-    // 6. PacketServer初期化・起動
+    // 7. EAPエンジン
+    eapEngine := engine.NewEngine(vectorClient, ctxStore, sessStore, policyStore, evaluator, cfg)
+
+    // 8. RADIUS Secret解決
     secretSource := server.NewSecretSource(clientStore, cfg.RadiusSecret)
-    handler := server.NewHandler(server.Dependencies{
-        VectorClient:    vectorClient,
-        PolicyEvaluator: policyEvaluator,
-        SessionManager:  sessionManager,
-        Config:          cfg,
-    })
+
+    // 9. RADIUSハンドラ
+    handler := server.NewHandler(eapEngine)
+
+    // 10. UDPサーバー
     srv := server.NewServer(cfg.ListenAddr, handler, secretSource)
 
-    go func() {
-        slog.Info("starting RADIUS server", "addr", cfg.ListenAddr)
-        if err := srv.ListenAndServe(); err != nil {
-            slog.Error("server error", "error", err)
-        }
-    }()
-
-    // 7. シグナルハンドラ
+    // 11. サーバー起動、12. シグナル待機 → Graceful Shutdown
     sigCh := make(chan os.Signal, 1)
     signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
-
-    sig := <-sigCh
-    slog.Info("received signal, shutting down", "signal", sig)
-
-    ctx, cancel := context.WithTimeout(context.Background(), config.ShutdownTimeout)
-    defer cancel()
-
-    if err := srv.Shutdown(ctx); err != nil {
-        slog.Warn("shutdown error", "error", err)
+    if err := runServer(srv, cfg.ListenAddr, sigCh, config.ShutdownTimeout); err != nil {
+        // 待ち受けを開始できない（ポートが使用中など）か、異常終了した。プロセスを終えて、compose の restart で
+        // 起動し直させる（終了しないと、待ち受けていないのに pgrep の healthcheck が通ってしまう）
+        slog.Error("サーバーエラー", "event_id", "SYS_LISTEN_ERR", "addr", cfg.ListenAddr, "error", err)
+        os.Exit(1)
     }
 
-    slog.Info("auth-server stopped")
+    slog.Info("auth-server停止完了")
+}
+
+// radiusServer は runServer が使う RADIUS サーバーの操作（テストで差し替える）。
+type radiusServer interface {
+    ListenAndServe() error
+    Shutdown(ctx context.Context) error
+}
+
+// runServer は RADIUS サーバーを起動し、停止のシグナルを受けたらグレースフルに停止して nil を返す。
+// シグナルの前にサーバーが終わった（待ち受けの開始の失敗など）ときは、そのエラーを返す。
+func runServer(srv radiusServer, addr string, sigCh <-chan os.Signal, shutdownTimeout time.Duration) error {
+    errCh := make(chan error, 1)
+    go func() {
+        slog.Info("RADIUSサーバー起動", "addr", addr)
+        errCh <- srv.ListenAndServe()
+    }()
+
+    select {
+    case err := <-errCh:
+        if err == nil {
+            err = errors.New("RADIUS server stopped unexpectedly")
+        }
+        return err
+    case sig := <-sigCh:
+        slog.Info("シグナル受信、シャットダウン開始", "signal", sig)
+    }
+
+    ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+    defer cancel()
+    if err := srv.Shutdown(ctx); err != nil {
+        slog.Warn("シャットダウンエラー", "error", err)
+    }
+    return nil
 }
 
 // warnFallbackSecret は、RADIUS_SECRET（フォールバックの共有シークレット）が設定されているときにWARNログを出す。
@@ -676,6 +721,10 @@ func warnFallbackSecret(fallbackSecret string) {
     slog.Warn("RADIUS_SECRETが設定されているため、クライアント登録のない送信元IPのパケットもフォールバックの共有シークレットで受け付ける（インターネットに公開する場合は空にすること）")
 }
 ```
+
+> **注記（`build`。r23）:** `build` はビルドの版で、イメージのビルドで `-ldflags "-X main.build=${VERSION}"` として埋め込む（§2.6.1。compose の build.args の `VERSION: ${POC_VERSION:-dev}`。D-08 §4.1）。埋め込まずにビルドしたときは `dev`。起動ログの `build` に出る（§3.8、D-04 §3.1.8）。
+
+> **注記（`runServer`。r23）:** サーバーの起動とシグナルの待機を `runServer` に分けた（`main_test.go` で待ち受けの失敗とシグナルでの停止を確かめるため）。`ListenAndServe` が停止のシグナルの前に戻ったら（ポートが使用中などで待ち受けを開始できない、またはサーバーが異常終了した。エラーなしで戻った場合は `RADIUS server stopped unexpectedly`）、`runServer` はそのエラーを返し、`main` は ERROR `サーバーエラー`（`event_id` `SYS_LISTEN_ERR`、`addr`、`error`）を出して終了コード 1 で終える（compose の `restart: always` で起動し直す）。r22 まではゴルーチンの中でログを出すだけでプロセスが終了せず、待ち受けていないのに `pgrep` によるヘルスチェックが healthy のままだった。
 
 ### 3.5 IMSIマスキング設定
 
@@ -851,6 +900,7 @@ func NewClient(cfg *config.Config) *Client {
     "time": "2026-01-09T10:00:00.123Z",
     "level": "INFO",
     "msg": "starting auth-server",
+    "build": "8bc46ae",
     "listen_addr": ":1812",
     "log_level": "INFO",
     "vector_api_url": "http://vector-gateway:8080/api/v1/vector",
@@ -859,7 +909,7 @@ func NewClient(cfg *config.Config) *Client {
 }
 ```
 
-> **注記:** 実装（`main.go`）の起動ログの `msg` は `auth-server起動開始` で、`app`（`auth-server`）が付く（D-04 §3.1.8）。
+> **注記:** 実装（`main.go`）の起動ログの `msg` は `auth-server起動開始` で、`app`（`auth-server`）が付く（D-04 §3.1.8）。`build` はビルドの版（§3.4 注記。r23）で、`POC_VERSION` を渡さずにビルドしたときは `dev`。どの版が動いているかの確認に使う。
 
 **フォールバックの共有シークレットの起動時表示：**
 
@@ -910,7 +960,12 @@ SIGTERM/SIGINT受信
     │       ├── 処理中リクエスト完了待機
     │       └── タイムアウト時はエラー返却
     │
-    └── ログ出力、終了
+    └── ログ出力、終了（終了コード 0）
+
+シグナルの前にサーバーが終わった（待ち受けの開始の失敗など。r23）
+    │
+    └── ERROR: SYS_LISTEN_ERR（addr, error）を出して終了コード 1
+        （compose の restart: always で起動し直す）
 ```
 
 ### 3.10 設定値の妥当性検証
@@ -990,10 +1045,11 @@ PacketServer
 
 #### PacketServerの設定（パケットの認証とライブラリのログ）
 
-`internal/server/server.go` の `NewServer` は、`PacketServer` に次の2つを設定する（Acct Server も同じ。D-10 §4.1）。
+`internal/server/server.go` の `NewServer` は、`PacketServer` に次の3つを設定する（Acct Server も同じ。D-10 §4.1）。
 
 | フィールド | 設定値 | 目的 |
 |-----------|--------|------|
+| `Handler` | `recoverHandler(handler)` | パケットの処理中のパニックを回復して `SYS_PANIC`（ERROR）を出す（r23。下記「パニックの回復」） |
 | `InsecureSkipVerify` | `true` | パケットの認証（Request Authenticator / Message-Authenticator）をライブラリでは行わず、ハンドラーで検証する。失敗したら送信元IP付きのログを出して破棄する |
 | `ErrorLog` | `logging.NewRADIUSLibraryLogger()` | ライブラリが出すエラー（パケットのデコード失敗など）を、JSONのslog（`event_id`=`RADIUS_LIB_ERR`）に流す（E-03 共通ライブラリ（pkg）設計書） |
 
@@ -1004,7 +1060,7 @@ func NewServer(addr string, handler radius.Handler, secretSource radius.SecretSo
 		ps: &radius.PacketServer{
 			Addr:         addr,
 			SecretSource: secretSource,
-			Handler:      handler,
+			Handler:      recoverHandler(handler),
 			// パケットの認証（Request Authenticator / Message-Authenticator）はハンドラーで検証し、
 			// 失敗したら送信元IP付きのログを出して破棄する。ライブラリにも検証させると、
 			// Accounting-Request などのシークレット不一致や未知のCodeのパケットが、
@@ -1015,6 +1071,26 @@ func NewServer(addr string, handler radius.Handler, secretSource radius.SecretSo
 		},
 	}
 }
+
+// recoverHandler は、パケットの処理中のパニックを回復してログ（SYS_PANIC）に出す。
+// layeh.com/radius の PacketServer はパケットごとの goroutine でハンドラーを呼び、パニックを回復しないので、
+// 回復しないと 1 つのパケットでプロセスごと落ちる。そのパケットには応答しない（NAS は応答がなければ送り直す）。
+func recoverHandler(next radius.Handler) radius.Handler {
+	return radius.HandlerFunc(func(w radius.ResponseWriter, r *radius.Request) {
+		defer func() {
+			if p := recover(); p != nil {
+				slog.Error("パケット処理中のパニック（回復して処理を続ける）",
+					"event_id", "SYS_PANIC",
+					"src_ip", extractIP(r.RemoteAddr),
+					"code", r.Code,
+					"panic", fmt.Sprint(p),
+					"stack", string(debug.Stack()),
+				)
+			}
+		}()
+		next.ServeRADIUS(w, r)
+	})
+}
 ```
 
 **方針と理由：**
@@ -1023,6 +1099,12 @@ func NewServer(addr string, handler radius.Handler, secretSource radius.SecretSo
 - Auth Server が処理する Access-Request / Status-Server は、もともとライブラリが検証しない（Message-Authenticator はハンドラーで検証する。`PKT_MA_INVALID` / `RADIUS_STATUS_AUTH_FAIL`）。ライブラリの検証をやめたことで、それ以外の Code のパケット（Accounting-Request、未知の Code 等）も共有シークレットの正否にかかわらずハンドラーに届き、`PKT_UNKNOWN_CODE`（直前の `PKT_RECV` に `src_ip`）を出して応答しない。
 - 検証に失敗したパケットを処理せず応答しない点は従来と変わらない（セキュリティ上の扱いは同じ）。変わるのは、ログが送信元IP付きのJSONになる点である。
 - ライブラリは、共有シークレットの解決（SecretSource）→ パケットのデコード の順に処理する。シークレットが決まらずに捨てたとき（`radius: empty secret returned from secret source`）は、SecretSource が `RADIUS_NO_SECRET` 等を送信元の情報付きで出しているため、`RADIUS_LIB_ERR` は DEBUG とする。デコード失敗（`radius: unable to parse packet: ...`）・受信エラー（`radius: could not read packet: ...`）は WARN とする。ライブラリのメッセージには送信元IPが含まれないため、`RADIUS_LIB_ERR` は `src_ip` を持たない（D-04 §3.1.3）。
+
+#### パニックの回復（r23）
+
+- `layeh.com/radius` の `PacketServer` は、パケットごとのゴルーチンでハンドラーを呼び、パニックを回復しない。回復しないと 1 つのパケットでプロセスごと落ちるため、`NewServer` でハンドラーを `recoverHandler` で包む。
+- パニックを回復したら ERROR `パケット処理中のパニック（回復して処理を続ける）`（`event_id` `SYS_PANIC`、`src_ip`、`code`、`panic`（パニックの値）、`stack`（`runtime/debug.Stack()`））を出す。`trace_id` は持たない。
+- そのパケットには応答しない（NAS は応答がなければ送り直す）。プロセスは処理を続ける。
 
 #### シャットダウン
 
@@ -1041,7 +1123,7 @@ func NewServer(addr string, handler radius.Handler, secretSource radius.SecretSo
 
 - `ResponseWriter.Write(packet)` で応答送信
 - 応答不要の場合（パース失敗等）は `Write` を呼ばずにreturn
-- パニックリカバリは `PacketServer` が処理
+- パニックの回復は `PacketServer` ではなく `recoverHandler` が行う（`PacketServer` は回復しない。§4.3。r23）
 
 #### Trace ID
 
@@ -1056,6 +1138,8 @@ func NewServer(addr string, handler radius.Handler, secretSource radius.SecretSo
 | `DynamicSecretSource` 構造体 | `SecretSource` 実装、IP別Secret解決   |
 | `Handler` 構造体             | `radius.Handler` 実装、リクエスト処理 |
 | `NewServer()`                | `PacketServer` 初期化                 |
+| `recoverHandler()`           | ハンドラーを包み、パニックを回復（`SYS_PANIC`） |
+| `runServer()`（`main.go`）   | サーバー起動・シグナル待機・停止。シグナルの前にサーバーが終わったらエラーを返す |
 | `Run(ctx)`                   | サーバー起動（`ListenAndServe`）      |
 
 ### 4.6 ログ出力
@@ -1063,6 +1147,8 @@ func NewServer(addr string, handler radius.Handler, secretSource radius.SecretSo
 | タイミング     | event_id           | レベル          | 内容                   |
 | -------------- | ------------------ | --------------- | ---------------------- |
 | サーバー起動   | -                  | INFO            | リッスンアドレス       |
+| 待ち受けの開始の失敗・異常終了 | `SYS_LISTEN_ERR` | ERROR | `addr`、`error`（終了コード 1 で終了。r23） |
+| パケット処理中のパニック | `SYS_PANIC` | ERROR | `src_ip`、`code`、`panic`、`stack`（応答しない。r23） |
 | Secret解決失敗 | `RADIUS_NO_SECRET` | WARN            | 送信元IP               |
 | ライブラリのエラー（デコード失敗等） | `RADIUS_LIB_ERR` | WARN（Secret不明で破棄したときは DEBUG） | ライブラリのメッセージ（`error`） |
 | パケット受信   | `PKT_RECV`         | INFO（Status-Serverは DEBUG） | 送信元IP、RADIUSコード、NAS-Identifier（Access-Requestのとき） |
@@ -2307,8 +2393,9 @@ func BuildAKAIdentityRequest(identifier uint8, eapType uint8) ([]byte, error) {
 
 | 項目                   | 値   |
 | ---------------------- | ---- |
-| 接続タイムアウト       | 2秒  |
-| リクエストタイムアウト | 5秒  |
+| リクエストタイムアウト | 5秒（接続の確立を含む要求全体。`VectorRequestTimeout`） |
+
+> **注記（接続タイムアウト。r23）:** r22 までは「接続タイムアウト 2秒」を記載していたが、実装は resty の `SetTimeout(config.VectorRequestTimeout)` による要求全体の上限だけで、接続の確立もこの 5秒に含まれる。使っていない定数 `VectorConnectTimeout`（2秒）は削除し、本節を実装に合わせた（D-06 §4.1）。
 
 > **注記（Vector Gateway側のタイムアウトとの関係）：** Vector Gateway のバックエンド向けタイムアウト（`VECTOR_GATEWAY_INTERNAL_TIMEOUT` / `VECTOR_GATEWAY_AKAONLY_TIMEOUT`、既定 3秒）は、本節のリクエストタイムアウト（`VectorRequestTimeout`、5秒）より短くしている。バックエンド（vector-api / aka-only-server）障害時に Vector Gateway が 502 を返す前に Auth Server がタイムアウトすると、ログが `VECTOR_API_ERR`（`http_status`=502）ではなく `VECTOR_CONN_ERR` になるためである。Vector Gateway は起動時に、設定値が 5秒以上なら WARN を出す（D-12 §5.3）。その判定に使う定数 `authServerVectorTimeout`（`apps/vector-gateway/main.go`）は `VectorRequestTimeout` と同じ値であり、`VectorRequestTimeout` を変更するときは Vector Gateway 側の定数も合わせて変更すること。
 
@@ -3840,9 +3927,8 @@ const (
     ValkeyPoolSize       = 10
 )
 
-// Vector Gateway接続設定（D-06準拠）
+// Vector Gateway接続設定（D-06準拠）。接続の確立も要求全体の上限に含める（接続だけの上限は設けない）
 const (
-    VectorConnectTimeout = 2 * time.Second
     VectorRequestTimeout = 5 * time.Second
 )
 
@@ -4469,7 +4555,6 @@ var (
 | `Load()`               | func   | 環境変数から設定読み込み     |
 | `ValkeyConnectTimeout` | const  | Valkey接続タイムアウト       |
 | `ValkeyCommandTimeout` | const  | Valkeyコマンドタイムアウト   |
-| `VectorConnectTimeout` | const  | Vector接続タイムアウト       |
 | `VectorRequestTimeout` | const  | Vectorリクエストタイムアウト |
 | `EAPContextTTL`        | const  | EAPコンテキストTTL           |
 | `SessionTTL`           | const  | セッションTTL                |
@@ -4727,3 +4812,4 @@ Auth Server内で直接参照する外部パッケージの型：
 | r20 | 2026-10-06 | NAS-Identifier を NAS の識別情報としてセッションとログに加えた実装修正（D-04 r33、D-02 r20）の反映（radsecproxy 等のプロキシ経由では送信元IPがプロキシのIPになり NAS を区別できないため）: §4.6 / §5.10 の `PKT_RECV` に `nas_identifier`（Access-Request のとき）、§8.10 の `AUTH_POLICY_NOT_FOUND`・`AUTH_POLICY_DENIED`、§3.5 の `AUTH_SUCCESS` の例に `nas_identifier` を追加。§9.3 / §9.7.3 / §10.4.2 のセッション構造体・初期値・作成処理に `nas_identifier`（ポリシー評価に使った NAS-Identifier）を追加 |
 | r21 | 2026-10-10 | 加入者の停止の印（D-02 r25 の `policy:{IMSI}` の `status`）の反映: §8.2 の処理フロー、§8.3.1 のフィールド定義、§8.4.1 の取得（`status` の読み込み、不正値は `ErrPolicyInvalid`）、§8.4.2 の主要型（`Status`、`IsSuspended`）を更新し、§8.4.4（停止の判定。ポリシー取得の後・ルール評価の前に判定し、`suspended` なら `AUTH_SUBSCRIBER_SUSPENDED`（WARN）で EAP-Failure を含む Access-Reject。停止中も SQN は進む、次の認証から効く）を新設。§8.8 のエラー表、§8.9 の処理フロー図、§8.10 のログ出力仕様、§3.5.4 の IMSI マスキングの適用箇所の表に `AUTH_SUBSCRIBER_SUSPENDED` を追加 |
 | r22 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 3（Go 1.27.2 への更新とイメージの版の固定）の反映: Dockerfile 方針のベースイメージを実ファイルに同期（ビルド `golang:1.25-bookworm` → `golang:1.27.2-bookworm`（Go 1.27.2）、ランタイム `debian:bookworm-slim` → `debian:12.15-slim`（Debian 12 bookworm のポイントリリース）） |
+| r23 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 4（待ち受けの失敗での終了、パニックの回復、ビルドの版の埋め込み、使っていない定数の削除）の反映: §3.4 の main.go を実装に同期（`build`、起動ログの `build`、`runServer` に分けた起動・シグナル待機・停止、シグナルの前にサーバーが終わったら `SYS_LISTEN_ERR` を出して終了コード 1）し、注記を追加。§3.3 の初期化シーケンス、§3.9 のシャットダウン処理に待ち受けの失敗時の終了を追加。§4.3 の PacketServer の設定に `Handler: recoverHandler(handler)` を加えてコードを実装に同期し、「パニックの回復」（パケットの処理中のパニックを回復して `SYS_PANIC` を出し、そのパケットには応答しない）を新設。§4.4 の「パニックリカバリは `PacketServer` が処理」を訂正。§4.5・§4.6 に `recoverHandler`・`runServer`・`SYS_LISTEN_ERR`・`SYS_PANIC` を追加。§2.1 のディレクトリ構造に `main_test.go` を追加。§2.6.1 の Dockerfile に `ARG VERSION=dev` と `-X main.build=${VERSION}` を追加し、§2.6.3 の注記に待ち受けの失敗で終了するため `pgrep` が通り続けないことを追記。§3.8 の起動ログの例に `build` を追加。§7.2 のタイムアウト設定から「接続タイムアウト 2秒」を削除し（実装は要求全体の 5秒だけで、接続の確立も含む）、§3.2・§10.2.1 の定数と §10.7.1 のエクスポート一覧から使っていない `VectorConnectTimeout` を削除 |

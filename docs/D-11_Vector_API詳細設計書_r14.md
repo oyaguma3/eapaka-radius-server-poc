@@ -1,4 +1,4 @@
-# D-11 Vector API詳細設計書 (r13)
+# D-11 Vector API詳細設計書 (r14)
 
 ## ■セクション1: 概要
 
@@ -244,7 +244,9 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o vector-api .
+# ビルドの版（compose の POC_VERSION から渡す。起動ログの build に出る）
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X main.build=${VERSION}" -o vector-api .
 
 # ランタイムステージ
 FROM debian:12.15-slim
@@ -364,7 +366,7 @@ ENTRYPOINT ["/usr/local/bin/vector-api"]
 | `LOG_MASK_IMSI` | No | `true` | bool | IMSIマスキング有効化 |
 | `GIN_MODE` | No | `release` | string | Gin動作モード（debug/release） |
 | `TEST_VECTOR_ENABLED` | No | `false` | bool | テストベクターモード有効化 |
-| `TEST_VECTOR_IMSI_PREFIX` | No | `00101` | string | テスト対象IMSIプレフィックス（5-6桁） |
+| `TEST_VECTOR_IMSI_PREFIX` | No | `00101` | string | テスト対象IMSIプレフィックス（1〜15 桁の数字。テストベクターモードが有効なとき、形式が違えば起動しない（r14）。§3.2） |
 
 ### 3.2 設定構造体
 
@@ -393,8 +395,15 @@ func Load() (*Config, error) {
     if err := envconfig.Process("", &cfg); err != nil {
         return nil, fmt.Errorf("failed to load config: %w", err)
     }
+    // テストベクターモードの IMSI の前方一致は数字だけ（数字以外だと、どの IMSI にも一致しないまま起動してしまう）
+    if cfg.TestVectorEnabled && !imsiPrefixPattern.MatchString(cfg.TestVectorIMSIPrefix) {
+        return nil, fmt.Errorf("failed to load config: TEST_VECTOR_IMSI_PREFIX must be 1-15 digits: %q", cfg.TestVectorIMSIPrefix)
+    }
     return &cfg, nil
 }
+
+// imsiPrefixPattern は TEST_VECTOR_IMSI_PREFIX の形式（1〜15 桁の数字）。
+var imsiPrefixPattern = regexp.MustCompile(`^[0-9]{1,15}$`)
 
 // RedisAddr はValkey接続文字列を返す
 func (c *Config) RedisAddr() string {
@@ -402,16 +411,19 @@ func (c *Config) RedisAddr() string {
 }
 ```
 
+> **注記（設定の検証。r14）:** テストベクターモードが有効（`TEST_VECTOR_ENABLED=true`）なとき、`TEST_VECTOR_IMSI_PREFIX` が 1〜15 桁の数字でなければ（空を含む）、`Load` がエラーを返し、起動しない（`failed to load config`。D-04 §3.4.6、D-06 §3.4.5）。テストベクターモードが無効なら確かめない。r13 までは確かめず、数字以外を含む値でも、どの IMSI にも一致しないまま起動していた。
+
 ### 3.3 起動処理フロー
 
 ```
 main()
    │
    ├─1. config.Load()
-   │      └─ 環境変数読み込み・検証
+   │      └─ 環境変数読み込み・検証（TEST_VECTOR_IMSI_PREFIX の形式）
    │
    ├─2. slog.SetDefault()
-   │      └─ ロガー初期化（JSON形式。LOG_LEVEL は logging.ParseLevel で変換）
+   │      ├─ ロガー初期化（JSON形式。LOG_LEVEL は logging.ParseLevel で変換）
+   │      └─ 起動ログ starting vector-api（build, listen_addr, log_level, test_mode）
    │
    ├─3. store.NewValkeyClient()
    │      └─ Valkey接続確立・Ping確認
@@ -497,13 +509,21 @@ import (
     "github.com/gin-gonic/gin"
 )
 
+// HTTP サーバーの時間の上限。
+const (
+    readHeaderTimeout = 10 * time.Second
+    readTimeout       = 30 * time.Second
+    writeTimeout      = 30 * time.Second
+    idleTimeout       = 120 * time.Second
+)
+
 type Server struct {
     engine *gin.Engine
     server *http.Server
     cfg    *config.Config
 }
 
-func New(cfg *config.Config, handler *handler.VectorHandler) *Server {
+func New(cfg *config.Config, h *handler.VectorHandler) *Server {
     // Ginモード設定
     gin.SetMode(cfg.GinMode)
     
@@ -511,17 +531,23 @@ func New(cfg *config.Config, handler *handler.VectorHandler) *Server {
     
     // ミドルウェア登録
     engine.Use(TraceIDMiddleware())
-    engine.Use(LoggingMiddleware(cfg))
+    engine.Use(LoggingMiddleware())
     engine.Use(RecoveryMiddleware())
     
     // ルーティング
-    SetupRouter(engine, handler)
+    SetupRouter(engine, h)
     
     return &Server{
         engine: engine,
         server: &http.Server{
             Addr:    cfg.ListenAddr,
             Handler: engine,
+            // 遅いクライアントや切れない接続でゴルーチンが溜まらないよう、上限を設ける（provisioning-api と同じ値）。
+            // 処理の時間はバックエンドへの呼び出しの上限（数秒）に収まるので、書き出しの 30 秒で足りる
+            ReadHeaderTimeout: readHeaderTimeout,
+            ReadTimeout:       readTimeout,
+            WriteTimeout:      writeTimeout,
+            IdleTimeout:       idleTimeout,
         },
         cfg: cfg,
     }
@@ -537,6 +563,8 @@ func (s *Server) Shutdown(ctx context.Context) error {
     return s.server.Shutdown(ctx)
 }
 ```
+
+> **注記（HTTPサーバーの時間の上限。r14）:** `http.Server` に `ReadHeaderTimeout` 10秒・`ReadTimeout` 30秒・`WriteTimeout` 30秒・`IdleTimeout` 120秒を設定する（Vector Gateway、Provisioning API と同じ値。D-06 §4.1）。r13 までは設定しておらず、遅いクライアントや切れない接続でゴルーチンが溜まるおそれがあった。停止のシグナルを受けたら `Shutdown` に 10秒の上限を与えて止める（`main.go`）。Docker の既定の停止の猶予（10秒）と重ならないよう、compose で `stop_grace_period: 20s` とする（D-08 §4.1）。
 
 ### 4.2 ミドルウェア
 
@@ -1778,7 +1806,7 @@ D-04で定義されたVector API用event_id:
 | `SQN_CONFLICT_ERR` | WARN | SQN更新の競合がやり直しの上限を超過（409返却。ハンドラー層の1行） |
 | `VALKEY_CONN_ERR` | ERROR | 加入者取得・SQN更新時のValkeyエラー（500返却。テストベクターモードの対象IMSIも同じ） |
 
-> **注記:** 各event_idの `msg`・属性はD-04 §3.4を参照。ハンドラーが定義済みエラー（`ProblemError`）から出力するログ（`CALC_ERR` の一部 / `SQN_RESYNC_*_ERR` / `SQN_OVERFLOW_ERR` / `VALKEY_CONN_ERR`）は `error` 属性に原因を含むエラー文を持つ（§9.3）。起動時のValkey接続失敗は event_id なしの `failed to connect to Valkey` で出力する。Valkey接続の復旧検知ログは出力しない。`SQN_CONFLICT_ERR` もハンドラーが `ProblemError` から出力し、`error` 属性に原因（例: `SQN update conflict: conflicted 3 times`）を持つ。テストベクターモード専用のエラー系 event_id はない（r7 まで記載していた `TEST_SQN_FALLBACK` / `TEST_SQN_PARSE_ERR` / `TEST_SQN_PERSIST_ERR` は r8 で廃止。エラーは通常モードと同じ event_id で出力する）。
+> **注記:** 各event_idの `msg`・属性はD-04 §3.4を参照。ハンドラーが定義済みエラー（`ProblemError`）から出力するログ（`CALC_ERR` の一部 / `SQN_RESYNC_*_ERR` / `SQN_OVERFLOW_ERR` / `VALKEY_CONN_ERR`）は `error` 属性に原因を含むエラー文を持つ（§9.3）。起動時のValkey接続失敗は event_id なしの `failed to connect to Valkey` で出力する。起動ログ `starting vector-api`（event_id なし）は `build`（ビルドの版。compose の `POC_VERSION`、既定 `dev`。r14）・`listen_addr`・`log_level`・`test_mode` を持つ（D-04 §3.4.6）。Valkey接続の復旧検知ログは出力しない。`SQN_CONFLICT_ERR` もハンドラーが `ProblemError` から出力し、`error` 属性に原因（例: `SQN update conflict: conflicted 3 times`）を持つ。テストベクターモード専用のエラー系 event_id はない（r7 まで記載していた `TEST_SQN_FALLBACK` / `TEST_SQN_PARSE_ERR` / `TEST_SQN_PERSIST_ERR` は r8 で廃止。エラーは通常モードと同じ event_id で出力する）。
 
 ### 11.2 ログ出力例
 
@@ -2057,7 +2085,7 @@ E2Eテスト・結合テスト（eapaka_test等）向けに、対象IMSIの Ki /
 | 環境変数 | デフォルト | 説明 |
 |---------|-----------|------|
 | `TEST_VECTOR_ENABLED` | `false` | テストベクターモード有効化 |
-| `TEST_VECTOR_IMSI_PREFIX` | `00101` | テスト対象IMSIプレフィックス（5-6桁） |
+| `TEST_VECTOR_IMSI_PREFIX` | `00101` | テスト対象IMSIプレフィックス（1〜15 桁の数字。形式が違えば起動しない。§3.2） |
 
 #### 判定ロジック
 
@@ -2311,3 +2339,4 @@ Admin TUI の加入者編集（`pkg/masterdata/subscriber.go`。Provisioning API
 | r11 | 2026-10-04 | Admin TUI の加入者編集による `sqn` の上書き（巻き戻り）を解消した実装修正の反映: §13.6.9 を「残っている制約」から「Admin TUI の書き込みとの関係」に改め、Admin TUI は SQN を変えていなければ `sqn` を書かず、変えたときは編集開始時の値と一致するときだけ書き込むこと（Vector API の CAS との関係）、比較せずに書き込むのは新規作成と CSV インポートだけであることを記載。§13.3 の SQN競合制御の行を合わせて修正し、将来対応を削除。§1.3 参照版数更新（D-02 r19、D-04 r29） |
 | r12 | 2026-10-07 | Admin TUI の加入者・RADIUSクライアント・認可ポリシーの store と validation を pkg に移した実装修正（Provisioning API（D-13）と共通で使うため。E-03 r11）の反映: §13.6.9 の Admin TUI の加入者編集の実装箇所を `pkg/masterdata/subscriber.go` に修正 |
 | r13 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 3（Go 1.27.2 への更新とイメージの版の固定）の反映: Dockerfile 方針のベースイメージを実ファイルに同期（ビルド `golang:1.25-bookworm` → `golang:1.27.2-bookworm`（Go 1.27.2）、ランタイム `debian:bookworm-slim` → `debian:12.15-slim`（Debian 12 bookworm のポイントリリース）） |
+| r14 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 4（HTTP サーバーの時間の上限、設定の検証、ビルドの版の埋め込み）の反映: §4.1 の `http.Server` に `ReadHeaderTimeout` 10秒・`ReadTimeout` 30秒・`WriteTimeout` 30秒・`IdleTimeout` 120秒（Provisioning API と同じ値）を加え、コード片を実装に同期（`LoggingMiddleware()` の引数なし、引数名 `h`）し、注記（`stop_grace_period: 20s`）を追加。§3.1・§13.5 の `TEST_VECTOR_IMSI_PREFIX` を「1〜15 桁の数字」とし、§3.2 の `Load` にテストベクターモードが有効なときの形式の検証（`imsiPrefixPattern`。違えば起動しない）と注記を追加。§3.3 の起動処理フローに起動ログ（`build`）を追記。§2.6.1 の Dockerfile に `ARG VERSION=dev` と `-X main.build=${VERSION}` を追加。§11.1 の注記に起動ログの `build` を追記 |
