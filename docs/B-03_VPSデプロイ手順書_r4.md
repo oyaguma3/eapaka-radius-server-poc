@@ -1,4 +1,4 @@
-# B-03 VPSデプロイ手順書（AWS Lightsail）(r3)
+# B-03 VPSデプロイ手順書（AWS Lightsail）(r4)
 
 ## 1. 概要
 
@@ -45,14 +45,14 @@ Lightsail・Ubuntu 24.04 に固有の点（コンソールの操作、ファイ�
 
 | ドキュメント | 参照内容 |
 |-------------|---------|
-| B-01 ホストOS構築手順書 (r5) | ホストOS設定（本書と差分のない手順） |
-| B-02 アプリケーションデプロイ手順書 (r19) | デプロイ手順（本書と差分のない手順） |
-| D-01 ミニPC版設計仕様書 (r17) | §4 インターネット越しに RADIUS を受ける場合の注意 |
-| D-08 インフラ設定・運用設計書 (r21) | §5.4 Docker の公開ポートと UFW、§5.7 インターネット越しの RADIUS、§8 セキュリティチェックリスト |
-| O-01 操作ガイド (r7) | §4.5 登録する IP アドレスと共有シークレット |
-| O-03 障害対応手順書 (r12) | 認証できない場合の切り分け（§4.3.4 `RADIUS_AUTH_ERR` 等） |
-| O-04 バックアップ・リストア手順書 (r2) | バックアップ・リストア、ホスト外への退避 |
-| O-05 ログ解析ガイド (r18) | §8.5 RADIUS パケットの破棄の調査 |
+| B-01 ホストOS構築手順書 | ホストOS設定（本書と差分のない手順） |
+| B-02 アプリケーションデプロイ手順書 | デプロイ手順（本書と差分のない手順） |
+| D-01 ミニPC版設計仕様書 | §4 インターネット越しに RADIUS を受ける場合の注意 |
+| D-08 インフラ設定・運用設計書 | §5.4 Docker の公開ポートと UFW、§5.7 インターネット越しの RADIUS、§8 セキュリティチェックリスト |
+| O-01 操作ガイド | §4.5 登録する IP アドレスと共有シークレット |
+| O-03 障害対応手順書 | 認証できない場合の切り分け（§4.3.4 `RADIUS_AUTH_ERR` 等） |
+| O-04 バックアップ・リストア手順書 | バックアップ・リストア、ホスト外への退避 |
+| O-05 ログ解析ガイド | §8.5 RADIUS パケットの破棄の調査 |
 
 ### 1.6 対象読者
 
@@ -372,13 +372,17 @@ chmod 755 ~/eapaka-radius-server-poc/deployments/logs_on_host
 
 ```bash
 cd ~/eapaka-radius-server-poc/deployments
+# ビルドの版（git のコミット）をイメージに埋め込む（起動ログの build に出る。B-02 §6.1、D-08 §4.2）
+export POC_VERSION=$(git rev-parse --short HEAD)
 for s in auth-server acct-server vector-gateway vector-api; do
   docker compose build "$s" || break
 done
 docker compose pull valkey fluent-bit
 ```
 
-メモリ 2GB 以上かつスワップありなら、B-02 §6.1 の `docker compose build` でもよい。ビルドが `signal: killed` 等で失敗した場合は §8.3 を参照。
+> **注記（`POC_VERSION`。r4）:** `POC_VERSION` を付けずにビルドすると、起動ログの `build` は `dev` になる（B-02 §6.1 注記）。上では `export` で、ループの中の各 `docker compose build` に同じ値を渡す。provisioning-api（B-02 §15）は、有効にするときの `POC_VERSION=$(git rev-parse --short HEAD) docker compose --profile provisioning up -d --build` でビルドされる。
+
+メモリ 2GB 以上かつスワップありなら、B-02 §6.1 の `POC_VERSION=$(git rev-parse --short HEAD) docker compose build` でもよい。ビルドが `signal: killed` 等で失敗した場合は §8.3 を参照。
 
 以降、B-02 §6.2〜§6.5（起動、起動確認、ヘルスチェック、systemd 起動テスト）はそのまま実施する。B-02 §6.4 の Valkey の接続確認は、パスワードをコマンドラインに書かない形（`.env` を読み込み、`VALKEYCLI_AUTH` で渡す）になっている。VPS では、Valkey のパスワードを直接入力するコマンド（`valkey-cli -a <パスワード>`、`VALKEY_PASSWORD=<パスワード> ~/admin-tui` 等）は使わないこと（シェルの履歴に残る）。
 
@@ -513,3 +517,4 @@ B-01 §9・B-02 §11 に加えて確認する。D-08 §8（セキュリティチ
 | r1 | 2026-10-04 | 初版作成（机上確認）。AWS Lightsail の Ubuntu 24.04 LTS に、B-01 / B-02 の手順をもとに構築・デプロイする手順を作成。インスタンスの作成（デュアルスタック、メモリ 2GB 以上推奨）、静的IP、IPv4 / IPv6 ファイアウォール（SSH は 22 のまま管理端末のIPに限りブラウザ SSH を許可、HTTP 80 を削除、RADIUS は AP のグローバルIPに限って後から追加）、スワップ、`admin` ユーザーの作成、B-01 / B-02 の差分（時刻同期の確認、sshd のドロップイン、UFW は任意、ログディレクトリ 755、1つずつのイメージビルド、golang コンテナでの Admin TUI のビルド、`RADIUS_SECRET` を空に）、自動スナップショット、VPS 固有のチェックリストとトラブルシューティングを記載。検証機（Debian 13）で compose 一式・logrotate の権限・Admin TUI のコンテナビルド・バックアップとリストアを確認し、Lightsail 固有の点は AWS / Ubuntu の公式情報をもとに記載。机上確認（別の担当者による通読）の指摘を反映: 前提となるソースの版とクローン後の確認コマンド（§1.4、§5.5）、`.env` の確認コマンド、SSH・UFW の設定前の手動スナップショットと復旧の限界、`apt upgrade` での sshd_config の確認画面、IPv6 では RADIUS を受けない・Docker ゲートウェイIPを登録しない、Admin TUI の起動で `.env` を読み込む、B-02 §12 / §14.3 と D-08 §8 の読み替え |
 | r2 | 2026-10-04 | §4.4 の `admin` ユーザーの作成を訂正: Ubuntu には旧来の sudo 用の `admin` グループが既にあり、`sudo adduser --gecos "" admin` が `fatal: The group 'admin' already exists.` で失敗する（Lightsail の実機でユーザーが確認）。既存の `admin` グループを主グループにする `sudo adduser --gecos "" --ingroup admin admin` に変更し、`getent group admin` と `id admin` の確認を追加（Ubuntu 24.04 のコンテナで再現と修正を確認）。§1.3 に実機で判明した点を反映する旨を追記。§5.6 に、オプション項目はコメントアウトのまま触らない（デフォルト値で動く、設定例の値に注意）旨を追記。§5.7 に、Valkey のパスワードを直接入力するコマンドを使わない旨と B-02 §6.4 の確認方法への参照を追記。§1.5 参照版数更新（B-02 r19、D-08 r21） |
 | r3 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 3（Go 1.27.2 への更新とイメージの版の固定）の反映: admin-tui を golang のコンテナでビルドする手順のイメージを `golang:1.25-bookworm` → `golang:1.27.2-bookworm` に |
+| r4 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 6（文書の整理）の反映: §1.5 の関連ドキュメントの表から、他の文書の版数を外した（8 か所。今の版はドキュメント一覧で分かるため、参照に版を書かない）。§5.7 のメモリが少ないときのサービスごとのビルドに `POC_VERSION`（起動ログの `build` に出るビルドの版。B-02 §6.1、D-08 §4.2）を付け（`export POC_VERSION=$(git rev-parse --short HEAD)`）、付けないと `dev` になる旨と provisioning-api のビルドの注記を追加。一括ビルドの例も `POC_VERSION` 付きに |

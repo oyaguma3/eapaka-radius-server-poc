@@ -1,4 +1,4 @@
-# D-07 Admin TUI 詳細設計書【後半】(r14)
+# D-07 Admin TUI 詳細設計書【後半】(r15)
 
 ## 1. 概要
 
@@ -26,9 +26,9 @@
 
 | ドキュメント | 参照内容 |
 |-------------|---------|
-| D-05_Admin_TUI詳細設計書_前半_r11 | 共通仕様、キーバインド規約、ページネーション仕様、ページライフサイクル管理、tview Table Selectable状態管理、非同期データ取得パターン |
-| D-02_Valkeyデータ設計仕様書 (r24) | `sess:{UUID}`, `idx:user:{IMSI}` のデータ構造 |
-| D-06_エラーハンドリング詳細設計書 (r13) | TUIエラー表示仕様 |
+| D-05_Admin_TUI詳細設計書_前半 | 共通仕様、キーバインド規約、ページネーション仕様、ページライフサイクル管理、tview Table Selectable状態管理、非同期データ取得パターン |
+| D-02_Valkeyデータ設計仕様書 | `sess:{UUID}`, `idx:user:{IMSI}` のデータ構造 |
+| D-06_エラーハンドリング詳細設計書 | TUIエラー表示仕様 |
 
 ### 1.4 PoC対象外機能
 
@@ -1134,3 +1134,4 @@ Admin TUIの監査ログでは、**IMSIを常に生値（マスキングなし�
 | r12 | 2026-10-07 | Admin TUI の加入者・RADIUSクライアント・認可ポリシーの store と validation を pkg に移した実装修正（Provisioning API（D-13）と共通で使うため。E-03 r11）の反映: §8.1 の StatisticsStore の構造体で、加入者・クライアント・ポリシーのストアを `pkg/masterdata` の型に修正（ポリシーの件数は `PolicyStore.Count`） |
 | r13 | 2026-10-09 | セッションの読み出しを Provisioning API（D-13 r6 の `GET /sessions`）と共通の `pkg/masterdata.SessionStore` に移した実装修正の反映: §5.8.3（Hash の変換。`sessionFromHash`）、§5.8.4（一覧の取得）、§6.9.3（SCAN フォールバック。`ListByIMSI`）、§6.10.1（インデックスのクリーンアップ。stale を受け取って Admin TUI が SREM する）の説明と抜粋、§5.8.1 の手順の関数名を更新。§1.3 の D-02 の版数を r24 に更新。Admin TUI の動作は変えていない |
 | r14 | 2026-10-10 | 加入者の停止・再開（D-05 r16）の反映: §7.3 のヘルプのレイアウトの右カラムに `Policy List`（`F7 / s  Suspend/Resume selected`）を追加。§10.1.1 の `target_imsi` を記録する操作に停止・再開（`suspend` / `resume`）を追加 |
+| r15 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 6（文書の整理）の反映: §1.3 の関連ドキュメントの表から、他の文書の版数を外した（3 か所。今の版はドキュメント一覧で分かるため、参照に版を書かない） |

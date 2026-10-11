@@ -1,6 +1,6 @@
-# S-01 eapaka_test 利用ノウハウ (r4)
+# S-01 eapaka_test 利用ノウハウ (r5)
 
-**版数:** r4
+**版数:** r5
 **作成日:** 2026-02-24
 **改版日:** 2026-10-04
 **分類:** 補足資料
@@ -33,7 +33,7 @@ eapaka_test は、RADIUS 経由で EAP-AKA / EAP-AKA' を実行するサーバ�
 
 ```
 docs/supplement/eapaka_test/
-├── S-01_eapaka_test利用ノウハウ_r4.md    # 本ドキュメント
+├── S-01_eapaka_test利用ノウハウ_r5.md    # 本ドキュメント
 ├── configs/                               # 設定ファイル（5件）
 │   ├── example.yaml                       # サンプル設定ファイル
 │   ├── config_testvector.yaml             # テストベクターモード用（AMF=B9B9。IMSI 003 を含む全ケース）
@@ -481,7 +481,7 @@ radclient -x -r 1 -t 3 127.0.0.1:1812 status TESTSECRET123 < /tmp/status.attrs
 
 ### 9.4 aka-only-server（接続方式01）相手での利用パターン（r2追記）
 
-- 対象は T-03 G10（INT-GW-AKAONLY-001〜015）と T-04 E2E-301〜316。事前準備・設定例・実行手順は T-03 (r9) セクション5.10 を参照
+- 対象は T-03 G10（INT-GW-AKAONLY-001〜015）と T-04 E2E-301〜316。事前準備・設定例・実行手順は T-03 セクション5.10 を参照
 - SIM パラメータ（Ki/OPc、AMF `8000`）は aka-only-server 側に登録し、eapaka_test の `sim.ki` / `sim.opc` / `sim.amf` をそれに合わせる（PoC の Valkey には `sub:` を登録しない。ポリシーは登録が必要）
 - `identity.realm` は PLMN に合わせる（PLMN 44010 なら `wlan.mnc010.mcc440.3gppnetwork.org`）
 - SQN ストアは config の `sim.imsi` をキーにするため、IMSI ごと・用途（通常 / 再同期）ごとに config と `sqn_store.path` を分ける
@@ -498,3 +498,4 @@ radclient -x -r 1 -t 3 127.0.0.1:1812 status TESTSECRET123 < /tmp/status.attrs
 | r2 | 2026-10-04 | Vector Gateway 接続方式01（aka-only-server）対応: 6.5「IND と再同期（aka-only-server 相手の場合）」・9.4「aka-only-server 相手での利用パターン」を追加、3.5 に AKA' の `net_name` は AT_KDF_INPUT が優先される旨を追記、4.3 の INT-GW-PLMN-010 の前提を `441999:02` に変更、8.3 に再同期不発の行を追加、1.2/1.3 を更新。テストベクターモードの実動作（2026-10-04 確認）に合わせて修正: 3.2 にテストベクターモードの動作（Ki/OPc/AMF は Test Set 1 固定・AMF `B9B9`、`sub:{IMSI}` は SQN 管理のみ）を追記し、IMSI 003 のケースもテストベクターモードでは `config_testvector.yaml` を使い `config_testvector_imsi003.yaml` は実計算モード専用とした（1.3・3.3・4.3・5.4・6.3・7.1・7.2・8.1・8.2・9.1・9.2）。4.3 で `reject_imsi_not_found.yaml` の IMSI をテストベクター対象外の `001029999999999` に変更した旨と、`mismatch_strict_fail.yaml` は現実装では IMSI 未登録で Reject になり方式ミスマッチを検証できない旨を追記。Valkey 操作を `valkey-cli -a "$VALKEY_PASSWORD" --no-auth-warning` 形式に統一、`EAP_RESYNC` を `EAP_RESYNC_CHALLENGE` に修正 |
 | r3 | 2026-10-04 | テストベクターモードでも加入者登録を必須にした Vector API の実装修正の反映: 3.2 のテストベクターモードの動作を修正（テストベクター対象の IMSI も `sub:{IMSI}` の登録が必要で未登録なら 404。既定 SQN へのフォールバック・`sqn` だけの書き込みは廃止）。4.3 `reject_imsi_not_found.yaml`（テストベクター対象外の IMSI）は引き続き 404 を期待する旨を追記。8.1 の加入者データ未登録の行、9.1 の未登録 IMSI・テストデータ投入の記述を修正。9.4 の T-03 参照を r9 に更新。`testdata/cases/reject_imsi_not_found.yaml`・`policy_not_found_testvector.yaml` のコメントを更新 |
 | r4 | 2026-10-04 | 内部 Vector API 相手の再同期の手順を訂正: 6.5 の見出しを「IND と再同期」に改め、T-03 G3（INT-003 系）で再同期を起こすにはサーバー側 SQN を `sqn_initial_hex`（`FF9BB4D0B607`、IND=7）と同じ IND の少し古い値（`FF9BB4D0B587`）にすることを追記。`000000000001`（IND=1）では再同期が起きないこと（2026-10-04 simwifi 実機で確認）、デルタ検証との関係を追記し、「2026-10-04 の実施時は INT-003-01/02 とも再同期が発生した」の記述を訂正。8 のトラブルシューティング表の対処に内部 Vector API の場合を追記 |
+| r5 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 6（文書の整理）の反映: §9.4 の T-03 の参照から版数を外した（1 か所。今の版はドキュメント一覧で分かるため、参照に版を書かない）。§1.3 のファイル構成の本書のファイル名を r5 に |

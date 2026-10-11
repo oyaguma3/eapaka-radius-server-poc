@@ -1,7 +1,9 @@
 # eapaka-radius-server-poc
 
-[![Go](https://img.shields.io/badge/Go-1.25.5-00ADD8?logo=go)](https://go.dev/)
+[![Go](https://img.shields.io/badge/Go-1.27.2-00ADD8?logo=go)](https://go.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+このリポジトリは PoC セット（[eapaka-pocset](https://github.com/oyaguma3/eapaka-pocset)）の一部です。組み合わせと変更の記録（CHANGELOG）は eapaka-pocset を参照してください。
 
 ## 概要
 
@@ -64,7 +66,7 @@ eapaka-radius-server-poc/
 │   ├── .env.example        # 環境変数テンプレート
 │   ├── certs/              # aka-only-server 接続用証明書の配置先（中身は .gitignore 対象）
 │   └── lnav_formats/       # lnav ログフォーマット定義
-├── docs/                   # 設計・運用ドキュメント (27ファイル)
+├── docs/                   # 設計・運用ドキュメント (全29件とドキュメント一覧)
 ├── go.work                 # Go Workspace 定義
 └── go.work.sum
 ```
@@ -142,18 +144,23 @@ API 仕様は `docs/openapi/provisioning-api.yaml`、設計は D-13、手順の�
 
 ## テスト実行
 
+Go Workspace (`go.work`) 構成のため、リポジトリ直下で `go test ./...` は使えません。Makefile が各モジュールを指定します。
+
 ```bash
-# Go Workspace ルートから全モジュールのテストを実行
-go test ./...
+# 全モジュールのテストを実行
+make test
+
+# データ競合の検出付きで実行（CI と同じ。CGO_ENABLED=1 が必要）
+make test-race
 
 # カバレッジ付きで実行
-go test -cover ./...
+make test-cover
 
 # 特定のアプリケーションのみ
 go test ./apps/auth-server/...
 ```
 
-テスト規模: 129 テストファイル、1,474 テストケース (T-02 単体テスト仕様書準拠)
+テスト規模: 134 テストファイル、864 テスト関数、1,531 テストケース (T-02 単体テスト仕様書 §4.1)
 
 ## 実装状況
 
@@ -204,7 +211,7 @@ go test ./apps/auth-server/...
 | No. | ドキュメント名 | 内容 |
 |---|---|---|
 | T-01 | テスト戦略書 | テスト方針・カバレッジ目標 |
-| T-02 | 単体テスト仕様書 | 全 1,474 テストケース定義 |
+| T-02 | 単体テスト仕様書 | 単体テストのケース（1,531 件） |
 | T-03 | 結合テスト仕様書 | コンポーネント間連携テスト |
 | T-04 | E2E テスト仕様書 | 実機テスト・擬似 E2E (計 11 シナリオ) |
 
@@ -232,7 +239,7 @@ go test ./apps/auth-server/...
 |---|---|---|
 | S-01 | eapaka_test 利用ノウハウ | eapaka_test の設定・テストケース解説・トラブルシューティング |
 
-詳細は [ドキュメント一覧](docs/EAP-AKA_RADIUS_PoC環境_ドキュメント一覧_r66.md) を参照してください。
+詳細は [ドキュメント一覧](docs/EAP-AKA_RADIUS_PoC環境_ドキュメント一覧_r67.md) を参照してください。
 
 ## ライセンス
 

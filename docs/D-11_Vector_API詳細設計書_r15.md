@@ -1,4 +1,4 @@
-# D-11 Vector API詳細設計書 (r14)
+# D-11 Vector API詳細設計書 (r15)
 
 ## ■セクション1: 概要
 
@@ -30,17 +30,17 @@
 
 | No. | ドキュメント | 参照内容 |
 |-----|-------------|---------|
-| D-01 | ミニPC版設計仕様書 (r10) | システム構成、パッケージ利用マップ |
-| D-02 | Valkeyデータ設計仕様書 (r19) | 加入者データ構造、キー設計、Go構造体、SQN更新方式（Lua による比較・置き換え） |
-| D-03 | Vector-API/ステートマシン設計書 (r8) | API仕様、リクエスト/レスポンス定義、409 Conflict |
-| D-04 | ログ仕様設計書 (r29) | event_id定義、ログフォーマット |
-| D-09 | Auth Server詳細設計書 (r10) | Auth Server連携仕様 |
-| D-06 | エラーハンドリング詳細設計書 (r15) | エラー分類、タイムアウト設定、SQN競合エラー（409） |
-| D-07 | Admin TUI詳細設計書【後半】 (r8) | 管理用TUIアプリケーション仕様 |
-| D-08 | インフラ設定・運用設計書 (r14) | 環境変数設定、テストベクターモード |
-| D-12 | Vector Gateway詳細設計書 (r5) | X-Trace-ID伝搬、呼び出し元仕様 |
-| E-02 | コーディング規約（簡易版） (r3) | コーディング規約 |
-| E-03 | 共通ライブラリ(pkg)設計書 (r7) | 共通ライブラリ（pkg）。`logging.MaskIMSI`, `logging.ParseLevel` |
+| D-01 | ミニPC版設計仕様書 | システム構成、パッケージ利用マップ |
+| D-02 | Valkeyデータ設計仕様書 | 加入者データ構造、キー設計、Go構造体、SQN更新方式（Lua による比較・置き換え） |
+| D-03 | Vector-API/ステートマシン設計書 | API仕様、リクエスト/レスポンス定義、409 Conflict |
+| D-04 | ログ仕様設計書 | event_id定義、ログフォーマット |
+| D-09 | Auth Server詳細設計書 | Auth Server連携仕様 |
+| D-06 | エラーハンドリング詳細設計書 | エラー分類、タイムアウト設定、SQN競合エラー（409） |
+| D-07 | Admin TUI詳細設計書【後半】 | 管理用TUIアプリケーション仕様 |
+| D-08 | インフラ設定・運用設計書 | 環境変数設定、テストベクターモード |
+| D-12 | Vector Gateway詳細設計書 | X-Trace-ID伝搬、呼び出し元仕様 |
+| E-02 | コーディング規約（簡易版） | コーディング規約 |
+| E-03 | 共通ライブラリ(pkg)設計書 | 共通ライブラリ（pkg）。`logging.MaskIMSI`, `logging.ParseLevel` |
 
 ### 1.4 準拠規格
 
@@ -2340,3 +2340,4 @@ Admin TUI の加入者編集（`pkg/masterdata/subscriber.go`。Provisioning API
 | r12 | 2026-10-07 | Admin TUI の加入者・RADIUSクライアント・認可ポリシーの store と validation を pkg に移した実装修正（Provisioning API（D-13）と共通で使うため。E-03 r11）の反映: §13.6.9 の Admin TUI の加入者編集の実装箇所を `pkg/masterdata/subscriber.go` に修正 |
 | r13 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 3（Go 1.27.2 への更新とイメージの版の固定）の反映: Dockerfile 方針のベースイメージを実ファイルに同期（ビルド `golang:1.25-bookworm` → `golang:1.27.2-bookworm`（Go 1.27.2）、ランタイム `debian:bookworm-slim` → `debian:12.15-slim`（Debian 12 bookworm のポイントリリース）） |
 | r14 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 4（HTTP サーバーの時間の上限、設定の検証、ビルドの版の埋め込み）の反映: §4.1 の `http.Server` に `ReadHeaderTimeout` 10秒・`ReadTimeout` 30秒・`WriteTimeout` 30秒・`IdleTimeout` 120秒（Provisioning API と同じ値）を加え、コード片を実装に同期（`LoggingMiddleware()` の引数なし、引数名 `h`）し、注記（`stop_grace_period: 20s`）を追加。§3.1・§13.5 の `TEST_VECTOR_IMSI_PREFIX` を「1〜15 桁の数字」とし、§3.2 の `Load` にテストベクターモードが有効なときの形式の検証（`imsiPrefixPattern`。違えば起動しない）と注記を追加。§3.3 の起動処理フローに起動ログ（`build`）を追記。§2.6.1 の Dockerfile に `ARG VERSION=dev` と `-X main.build=${VERSION}` を追加。§11.1 の注記に起動ログの `build` を追記 |
+| r15 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 6（文書の整理）の反映: §1.3 の関連ドキュメントの表から、他の文書の版数を外した（11 か所。今の版はドキュメント一覧で分かるため、参照に版を書かない） |

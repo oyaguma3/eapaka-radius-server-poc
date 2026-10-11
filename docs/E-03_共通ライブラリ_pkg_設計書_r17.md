@@ -1,4 +1,4 @@
-# E-03 共通ライブラリ(pkg)設計書 (r16)
+# E-03 共通ライブラリ(pkg)設計書 (r17)
 
 ## 1. 概要
 
@@ -26,12 +26,12 @@
 
 | ドキュメント | 参照内容 |
 |-------------|---------|
-| D-01 ミニPC版設計仕様書 (r9) | リポジトリ構成、パッケージ利用マップ |
-| D-02 Valkeyデータ設計仕様書 (r15) | Go構造体定義、ストア層変換方式 |
-| D-04 ログ仕様設計書 (r31) | IMSIマスキング仕様（User-Nameのマスク規則を含む）、ログレベル設定（LOG_LEVEL）、`RADIUS_LIB_ERR` |
-| D-06 エラーハンドリング詳細設計書 (r17) | エラー定義パターン |
-| D-11 Vector API詳細設計書 (r6) | RFC 7807 Problem Details |
-| E-02 コーディング規約（簡易版）(r1) | pkg配置方針、命名規則 |
+| D-01 ミニPC版設計仕様書 | リポジトリ構成、パッケージ利用マップ |
+| D-02 Valkeyデータ設計仕様書 | Go構造体定義、ストア層変換方式 |
+| D-04 ログ仕様設計書 | IMSIマスキング仕様（User-Nameのマスク規則を含む）、ログレベル設定（LOG_LEVEL）、`RADIUS_LIB_ERR` |
+| D-06 エラーハンドリング詳細設計書 | エラー定義パターン |
+| D-11 Vector API詳細設計書 | RFC 7807 Problem Details |
+| E-02 コーディング規約（簡易版） | pkg配置方針、命名規則 |
 
 ### 1.4 pkg配置方針
 
@@ -1456,3 +1456,4 @@ next, err := subs.ListPage(ctx, "00101", page.NextCursor, 50) // 次のページ
 | r14 | 2026-10-09 | セッションの読み出しを Admin TUI から `pkg/masterdata` に移した（Provisioning API の `GET /sessions` と共通で使うため。D-13 r6）: §9.1 の責務にセッション・索引の読み出しを加え、§9.2 に `SessionStore`（`Get` / `List` / `Count` / `ListByIMSI` / `IndexCount`）、`SessionKey` / `UserIndexKey`、`ErrSessionNotFound` を追加。索引の掃除は Admin TUI に残した |
 | r15 | 2026-10-10 | 加入者の停止の印（D-02 r25 の `policy:{IMSI}` の `status`）の追加: §6.4 の `pkg/model.Policy` に `Status`、定数 `PolicyStatusActive` / `PolicyStatusSuspended`、`IsSuspended` を追加（`NewPolicy` は `active`、`Clone` は `Status` も写す）。§8.2 に `ValidatePolicyStatus` / `NormalizePolicyStatus` を追加。§9.2 の `PolicyStore` に `SetStatus` と、読み出し・`Create` / `Update` / `Put`・`BulkCreate` での `status` の扱いを追加。§9.3 に `SetStatus`（`setStatusScript`）と `Put`（`putPolicyScript`）の原子性を追加 |
 | r16 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 3（Go 1.27.2 への更新とイメージの版の固定）の反映: pkg/go.mod の例の go ディレクティブを `go 1.27.2` に |
+| r17 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 6（文書の整理）の反映: §1.3 の関連ドキュメントの表から、他の文書の版数を外した（6 か所。今の版はドキュメント一覧で分かるため、参照に版を書かない） |

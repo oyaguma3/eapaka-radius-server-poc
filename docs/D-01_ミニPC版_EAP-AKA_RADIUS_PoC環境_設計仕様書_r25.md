@@ -1,4 +1,4 @@
-# D-01 ミニPC版 EAP-AKA RADIUS PoC環境 設計仕様書 (r24)
+# D-01 ミニPC版 EAP-AKA RADIUS PoC環境 設計仕様書 (r25)
 
 ## 1. システム概要
 
@@ -125,7 +125,7 @@
 | 接続方式 | go-redis クライアントの接続プール機能を利用 |
 | 再接続 | go-redis の自動再接続機能に依存 |
 | ヘルスチェック | go-redis の自動ヘルスチェックに依存 |
-| 復旧検知 | 復旧を検知するログは出力しない（実装なし）。Valkey 障害中は各処理のエラーログ（D-04 r19 参照）が出力され、復旧後は通常のログに戻る |
+| 復旧検知 | 復旧を検知するログは出力しない（実装なし）。Valkey 障害中は各処理のエラーログ（D-04 参照）が出力され、復旧後は通常のログに戻る |
 
 > **注記：** Valkey接続断時の各コンポーネントの動作詳細は「エラーハンドリング詳細設計書」を参照。
 
@@ -260,8 +260,8 @@ my-radius-project/
 │   ├── B-01〜B-03                # セットアップ手引書群（B-03 は VPS 向け）
 │   ├── E-01〜E-03                # 開発環境・規約ドキュメント群
 │   ├── T-01〜T-04                # テスト戦略・仕様書群
-│   ├── subdocs/                  # 補助ドキュメント（テスト詳細仕様、実装ガイド等）
-│   └── testresults/              # テスト結果保存先
+│   ├── subdocs/                  # 補助ドキュメント（テスト詳細仕様、実装ガイド等。git の管理外の非公開の作業資料）
+│   └── testresults/              # テスト結果保存先（git の管理外。非公開）
 │
 └── go.work                       # Go Workspace設定
 ```
@@ -691,3 +691,4 @@ VECTOR_GATEWAY_PLMN_MAP=""
 | r22 | 2026-10-09 | Provisioning API の監査ログとセッションの参照（D-13 r6、API 0.3.0）の反映: コンポーネント一覧の Provisioning API に `/audit-logs`・`/sessions` と、監査ログの Stream（`audit:prov`）への保存を追記。compose の抜粋に `PROVISIONING_API_AUDIT_MAX` を追加 |
 | r23 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 3（Go 1.27.2 への更新とイメージの版の固定）の反映: compose の写しのイメージを実ファイルに同期（`valkey/valkey:9.0` → `9.1.2`、`fluent/fluent-bit:4.2` → `4.2.8`。パッチ版まで固定） |
 | r24 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 4（ビルドの版の埋め込み、`VALKEY_PASSWORD` が空なら compose が断ること、Valkey のヘルスチェック、停止の猶予）の反映: §7 の `docker-compose.yml` の全文を実ファイルに同期（5 つのアプリの build.args `VERSION: ${POC_VERSION:-dev}`、`REDIS_PASS` と `--requirepass` の `${VALKEY_PASSWORD:?…}`、Valkey の `VALKEYCLI_AUTH` と healthcheck `valkey-cli ping \| grep -q PONG`、vector-gateway / vector-api / provisioning-api の `stop_grace_period: 20s`）し、それぞれの注記を追加。§4 のシークレット管理の `VALKEY_PASSWORD` に空なら compose が断ることを追記。§8 の `VECTOR_GATEWAY_INTERNAL_TIMEOUT` に 0 以下なら起動しないことを、§3.5 の Auth Server → Vector Gateway に接続の確立を含む要求全体の上限であることを追記 |
+| r25 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 6（文書の整理）の反映: §3.4 の Valkey 障害の復旧検知の行の D-04 の参照から版数を外した（1 か所。今の版はドキュメント一覧で分かるため、参照に版を書かない）。§6 のリポジトリ構成の `docs/subdocs/`・`docs/testresults/` に、git の管理外（非公開）である旨を追記 |

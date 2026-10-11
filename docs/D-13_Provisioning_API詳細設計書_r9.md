@@ -1,4 +1,4 @@
-# D-13 Provisioning API 詳細設計書 (r8)
+# D-13 Provisioning API 詳細設計書 (r9)
 
 **作成日:** 2026-10-07
 **更新日:** 2026-10-12
@@ -550,13 +550,13 @@ compose では、`PROVISIONING_API_LISTEN_ADDR` は既定値（`:9444`）のま�
 
 **実施結果（2026-10-09。r6 の監査ログ・セッションの参照）:**
 
-- 単体: パッケージごとのカバレッジは audit 98.4%、auth 98.4%、config 100%、dto 100%、handler 98.7%、server 96.3%、service 97.6%、`pkg/masterdata` 90.0%（`SessionStore` を含む）。Admin TUI の store（SessionStore を `pkg/masterdata` に委ねた後）の既存のテストもそのまま通る。ケースは T-02（r23）を参照。
-- 結合: simwifi で、作業ツリーを profile `provisioning` で起動し、`GET /audit-logs`（新しい順、ページ送り、400、ログファイルの `trace_id` との対応、再起動後の保持、`PROVISIONING_API_AUDIT_MAX`=50 での件数の抑制（254件の記録で 62件））と、eapaka_test の認証で作られたセッションの `GET /sessions`（新しい順、`total`、`?imsi=`、400、`/status` の `sessionCount`）、索引を API は掃除せず Admin TUI の Session Search が掃除すること（セッションの読み出しを移した版の Admin TUI の Statistics・Session List・Session Search の表示を含む）を確認した。手順と結果は T-03（r19）の INT-PROV-037〜043 を参照。
+- 単体: パッケージごとのカバレッジは audit 98.4%、auth 98.4%、config 100%、dto 100%、handler 98.7%、server 96.3%、service 97.6%、`pkg/masterdata` 90.0%（`SessionStore` を含む）。Admin TUI の store（SessionStore を `pkg/masterdata` に委ねた後）の既存のテストもそのまま通る。ケースは T-02 を参照。
+- 結合: simwifi で、作業ツリーを profile `provisioning` で起動し、`GET /audit-logs`（新しい順、ページ送り、400、ログファイルの `trace_id` との対応、再起動後の保持、`PROVISIONING_API_AUDIT_MAX`=50 での件数の抑制（254件の記録で 62件））と、eapaka_test の認証で作られたセッションの `GET /sessions`（新しい順、`total`、`?imsi=`、400、`/status` の `sessionCount`）、索引を API は掃除せず Admin TUI の Session Search が掃除すること（セッションの読み出しを移した版の Admin TUI の Statistics・Session List・Session Search の表示を含む）を確認した。手順と結果は T-03 の INT-PROV-037〜043 を参照。
 
 **実施結果（2026-10-10。r7 の加入者の停止・再開）:**
 
-- 単体: パッケージごとのカバレッジは audit 98.4%、dto 100%、handler 98.8%、server 96.4%、service 97.7%、`pkg/masterdata` 90.2%、`pkg/validation` 92.6%、`pkg/model` 95.5%。ケースは T-02（r24）を参照。
-- 結合: simwifi で、aka-only-server（接続方式 `01`、PLMN 44010）と本PoC（profile `provisioning`）を起動し、本PoCに鍵を置く加入者（PLMN 44020）と aka-only-server に鍵を置く加入者のそれぞれで、`PUT /policies/{imsi}/status` で停止すると eapaka_test の EAP-AKA / AKA' が Access-Reject（`AUTH_SUBSCRIBER_SUSPENDED`）、再開すると Access-Accept になること、停止中の置き換え（PUT）で停止が解けないこと、404 / 400 の応答、同じ状態への変更で監査ログが増えないこと、`GET /audit-logs` の `policy.suspend` / `policy.resume`、Valkey に書いた不正な値で拒否されることを確かめた。Admin TUI の停止・再開と CSV も同じ環境で確かめた。手順は T-03（r20）G12。
+- 単体: パッケージごとのカバレッジは audit 98.4%、dto 100%、handler 98.8%、server 96.4%、service 97.7%、`pkg/masterdata` 90.2%、`pkg/validation` 92.6%、`pkg/model` 95.5%。ケースは T-02 を参照。
+- 結合: simwifi で、aka-only-server（接続方式 `01`、PLMN 44010）と本PoC（profile `provisioning`）を起動し、本PoCに鍵を置く加入者（PLMN 44020）と aka-only-server に鍵を置く加入者のそれぞれで、`PUT /policies/{imsi}/status` で停止すると eapaka_test の EAP-AKA / AKA' が Access-Reject（`AUTH_SUBSCRIBER_SUSPENDED`）、再開すると Access-Accept になること、停止中の置き換え（PUT）で停止が解けないこと、404 / 400 の応答、同じ状態への変更で監査ログが増えないこと、`GET /audit-logs` の `policy.suspend` / `policy.resume`、Valkey に書いた不正な値で拒否されることを確かめた。Admin TUI の停止・再開と CSV も同じ環境で確かめた。手順は T-03 G12。
 
 ---
 
@@ -597,3 +597,4 @@ compose では、`PROVISIONING_API_LISTEN_ADDR` は既定値（`:9444`）のま�
 | r6 | 2026-10-09 | 監査ログとセッションの参照を追加（API 0.3.0。provisioning-api のバージョン 0.3.0）: §1.1・§1.4 の対象に監査ログの参照とセッションの参照を加え、一括操作（CSV）は Admin TUI だけで行い本APIでは扱わないことにした。§3.6（監査ログ。Valkey の Stream `audit:prov` への保存、上限 `PROVISIONING_API_AUDIT_MAX`、保存の失敗の扱い、aka-only-server に揃えた項目と `action` の命名）と §3.7（セッション。読み取りだけ、新しい順・`limit`・`total`、`?imsi=` と索引を掃除しないこと）を新設。§4.1 に一覧の作法、§4.2 に `GET /audit-logs`・`GET /sessions`、§4.4 に `sessionCount`、§6.1 に `audit_max` と `PROV_AUDIT_STORE_ERR`、§6.2 に Stream への保存、§7.1 に `SessionStore` と `audit` の Stream、§7.2 にセッションの読み出しの `pkg/masterdata` への移動、§8.1 に `PROVISIONING_API_AUDIT_MAX`、§9 に実施結果、§10・§11 を更新 |
 | r7 | 2026-10-10 | 加入者の停止・再開を追加（API 0.4.0。provisioning-api のバージョン 0.4.0）: §1.1 の責務に追加。§3.3 に `status`（応答だけ。`active` / `suspended`）と、専用の `PUT /policies/{imsi}/status`（404 `POLICY_NOT_FOUND`、200 で認可ポリシー全体、同じ状態への変更は書き込まず監査ログなし、検証、`PolicyStore.SetStatus`、次の認証から効く）、置き換え（PUT）では `status` を変えないこと・本文の `status` は `INVALID_MSG_FORMAT`、不正値はそのまま返すことを追加。§4.2 のエンドポイント一覧、§6.2 の監査ログ（`operation` の `suspend` / `resume`、`msg`、`action`、`details`）、§7.1（`version`、共通ライブラリの追加）、§9 の実施結果、§10（停止した加入者のセッションは切らない、停止中の一覧・件数）、§11 を更新 |
 | r8 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 4（ビルドの版の埋め込み、停止の猶予、`VALKEY_PASSWORD` が空なら compose が断ること）の反映: §6.1 の起動ログ `starting provisioning-api` に `build` を追加。§7.1 に `build`（`main.build`。Dockerfile の `ARG VERSION=dev` と `-X main.build=${VERSION}`、compose の `POC_VERSION`）と API の版の `version` との違いを追記し、§4.4 の `version` に注記。§8.1.2 に `POC_VERSION` を追加し、`VALKEY_PASSWORD` が空なら compose が断ることを追記。§8.2 に build.args と `stop_grace_period: 20s`（停止の上限 10秒が Docker の既定の猶予と同じだったため）を追加。provisioning-api のバージョン（API 0.4.0）は変えていない |
+| r9 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 6（文書の整理）の反映: §9 のテスト方針の単体・結合の記録で、T-02・T-03 の参照から版数を外した（4 か所。今の版はドキュメント一覧で分かるため、参照に版を書かない） |

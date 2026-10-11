@@ -1,4 +1,4 @@
-# D-10 Acct Server詳細設計書 (r16)
+# D-10 Acct Server詳細設計書 (r17)
 
 ## ■セクション1: 概要
 
@@ -23,16 +23,16 @@
 
 | No. | ドキュメント | 参照内容 |
 |-----|-------------|---------|
-| D-01 | ミニPC版設計仕様書 (r16) | システム構成、パッケージ利用マップ |
-| D-02 | Valkeyデータ設計仕様書 (r13) | データ構造、キー設計、Go構造体 |
-| D-03 | Vector-APIインターフェース定義書およびEAP-AKAステートマシン設計書 (r6) | 認証フロー |
-| D-04 | ログ仕様設計書 (r31) | event_id定義、ログフォーマット、IMSIマスキング |
-| D-06 | エラーハンドリング詳細設計書 (r17) | エラー分類、タイムアウト、リトライ戦略 |
-| D-11 | Vector API詳細設計書 (r7) | AKA認証ベクター生成 |
-| D-08 | インフラ設定・運用設計書 (r19) | Docker Compose設定、環境変数 |
-| D-09 | Auth Server詳細設計書 (r17) | セッション作成処理（Class属性設定） |
-| E-02 | コーディング規約（簡易版） (r3) | コーディング規約 |
-| E-03 | 共通ライブラリ(pkg)設計書 (r9) | 共通ライブラリ（pkg） |
+| D-01 | ミニPC版設計仕様書 | システム構成、パッケージ利用マップ |
+| D-02 | Valkeyデータ設計仕様書 | データ構造、キー設計、Go構造体 |
+| D-03 | Vector-APIインターフェース定義書およびEAP-AKAステートマシン設計書 | 認証フロー |
+| D-04 | ログ仕様設計書 | event_id定義、ログフォーマット、IMSIマスキング |
+| D-06 | エラーハンドリング詳細設計書 | エラー分類、タイムアウト、リトライ戦略 |
+| D-11 | Vector API詳細設計書 | AKA認証ベクター生成 |
+| D-08 | インフラ設定・運用設計書 | Docker Compose設定、環境変数 |
+| D-09 | Auth Server詳細設計書 | セッション作成処理（Class属性設定） |
+| E-02 | コーディング規約（簡易版） | コーディング規約 |
+| E-03 | 共通ライブラリ(pkg)設計書 | 共通ライブラリ（pkg） |
 
 ### 1.4 PoC対象外機能
 
@@ -2264,3 +2264,4 @@ func (s *Server) Shutdown(ctx context.Context) error {
 | r14 | 2026-10-06 | NAS-Identifier を NAS の識別情報としてセッションとログに加えた実装修正（D-04 r33、D-02 r20）の反映（radsecproxy 等のプロキシ経由では送信元IPがプロキシのIPになり NAS を区別できないため）: §5 の Start / Interim / Stop のコードで `src_ip` を持つログに `nas_identifier` を追加し、Start / Interim のセッション更新に `NasIdentifier`（NAS-Identifier があるときだけ `nas_identifier` を上書き、なければ Auth Server が書いた値を残す）を追加。§5.7（セッション状態操作）の UpdateOnStart / UpdateOnInterim、§9.1 の型定義を更新。§8.1 に `nas_identifier` の注記を追加 |
 | r15 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 3（Go 1.27.2 への更新とイメージの版の固定）の反映: Dockerfile 方針のベースイメージを実ファイルに同期（ビルド `golang:1.25-bookworm` → `golang:1.27.2-bookworm`（Go 1.27.2）、ランタイム `debian:bookworm-slim` → `debian:12.15-slim`（Debian 12 bookworm のポイントリリース）） |
 | r16 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 4（待ち受けの失敗での終了、パニックの回復、ビルドの版の埋め込み）の反映: §10.3 の main.go を実装に同期（`build`、起動ログの `build`、`runServer` に分けた起動・シグナル待機・停止、シグナルの前にサーバーが終わったら `SYS_LISTEN_ERR` を出して終了コード 1）し、`internal/server/server.go` を実装に同期（`Handler: recoverHandler(handler)`、パケットの処理中のパニックを回復して `SYS_PANIC` を出し、そのパケットには応答しない）して説明を追加。§7.1.4（システムエラー）を新設し、§8.1 の event_id 一覧に `SYS_LISTEN_ERR`・`SYS_PANIC` を追加。§2.1 のディレクトリ構造に `main_test.go` を追加。§2.5.1 の Dockerfile に `ARG VERSION=dev` と `-X main.build=${VERSION}` を追加し、§2.5.3 の注記に待ち受けの失敗で終了するため `pgrep` が通り続けないことを追記 |
+| r17 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 6（文書の整理）の反映: §1.3 の関連ドキュメントの表から、他の文書の版数を外した（10 か所。今の版はドキュメント一覧で分かるため、参照に版を書かない） |
