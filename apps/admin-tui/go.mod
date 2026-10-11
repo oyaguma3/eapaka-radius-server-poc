@@ -1,6 +1,6 @@
 module github.com/oyaguma3/eapaka-radius-server-poc/apps/admin-tui
 
-go 1.25.5
+go 1.27.2
 
 require (
 	github.com/alicebob/miniredis/v2 v2.36.1
@@ -16,7 +16,7 @@ require (
 	github.com/lucasb-eyer/go-colorful v1.3.0 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
-	golang.org/x/sys v0.38.0 // indirect
-	golang.org/x/term v0.37.0 // indirect
-	golang.org/x/text v0.31.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/term v0.46.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 )

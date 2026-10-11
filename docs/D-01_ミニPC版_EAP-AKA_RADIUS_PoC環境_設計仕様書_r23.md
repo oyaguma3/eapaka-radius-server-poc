@@ -1,4 +1,4 @@
-# D-01 ミニPC版 EAP-AKA RADIUS PoC環境 設計仕様書 (r22)
+# D-01 ミニPC版 EAP-AKA RADIUS PoC環境 設計仕様書 (r23)
 
 ## 1. システム概要
 
@@ -489,7 +489,7 @@ services:
   # Data Layer
   # ==========================================================================
   valkey:
-    image: valkey/valkey:9.0
+    image: valkey/valkey:9.1.2
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
@@ -522,7 +522,7 @@ services:
   # Logging Layer
   # ==========================================================================
   fluent-bit:
-    image: fluent/fluent-bit:4.2
+    image: fluent/fluent-bit:4.2.8
     command: ["/fluent-bit/bin/fluent-bit", "-c", "/fluent-bit/etc/fluent-bit.yaml"]
     # Docker のログドライバーはホストの localhost:24224 に接続する。外部には公開しない
     ports:
@@ -659,3 +659,4 @@ VECTOR_GATEWAY_PLMN_MAP=""
 | r20 | 2026-10-08 | 同じホストの BFF から provisioning-api に接続するための共有ネットワーク（既定名 `eapaka-prov`。D-13 r4）の反映: §2 の provisioning-api の注記、§5 のコンテナ一覧に共有ネットワークへの参加を追記し、§7 の docker-compose.yml を実ファイルと一致させた |
 | r21 | 2026-10-08 | RADIUSクライアントにサーバー採番の ID を導入（D-02 r23、D-13 r5）: §3.1 のデータモデル注記の RadiusClient に `id`（索引 `idx:client:{ID}`、カウンター `seq:client`）を追加 |
 | r22 | 2026-10-09 | Provisioning API の監査ログとセッションの参照（D-13 r6、API 0.3.0）の反映: コンポーネント一覧の Provisioning API に `/audit-logs`・`/sessions` と、監査ログの Stream（`audit:prov`）への保存を追記。compose の抜粋に `PROVISIONING_API_AUDIT_MAX` を追加 |
+| r23 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 3（Go 1.27.2 への更新とイメージの版の固定）の反映: compose の写しのイメージを実ファイルに同期（`valkey/valkey:9.0` → `9.1.2`、`fluent/fluent-bit:4.2` → `4.2.8`。パッチ版まで固定） |

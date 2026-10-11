@@ -28,8 +28,8 @@ Wi-Fi 認証 (WPA2/WPA3-Enterprise) 向けの RADIUS 認証・課金機能、AKA
 
 ## 技術スタック
 
-- **言語:** Go 1.25.5
-- **データストア:** Valkey 9.0
+- **言語:** Go 1.27.2
+- **データストア:** Valkey 9.1
 - **コンテナ:** Docker Compose
 - **ログ収集:** Fluent Bit 4.2
 - **ロギング:** log/slog (構造化ログ)
@@ -74,7 +74,7 @@ eapaka-radius-server-poc/
 ### 前提条件
 
 - Docker & Docker Compose
-- Go 1.25.5 (ローカル開発時)
+- Go 1.27.2 (ローカル開発時)
 
 ### 起動手順
 
@@ -232,7 +232,7 @@ go test ./apps/auth-server/...
 |---|---|---|
 | S-01 | eapaka_test 利用ノウハウ | eapaka_test の設定・テストケース解説・トラブルシューティング |
 
-詳細は [ドキュメント一覧](docs/EAP-AKA_RADIUS_PoC環境_ドキュメント一覧_r64.md) を参照してください。
+詳細は [ドキュメント一覧](docs/EAP-AKA_RADIUS_PoC環境_ドキュメント一覧_r65.md) を参照してください。
 
 ## ライセンス
 

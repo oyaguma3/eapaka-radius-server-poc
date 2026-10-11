@@ -1,4 +1,4 @@
-# D-11 Vector API詳細設計書 (r12)
+# D-11 Vector API詳細設計書 (r13)
 
 ## ■セクション1: 概要
 
@@ -237,7 +237,7 @@ type VectorUseCaseInterface interface {
 
 ```dockerfile
 # ビルドステージ
-FROM golang:1.25-bookworm AS builder
+FROM golang:1.27.2-bookworm AS builder
 
 WORKDIR /app
 COPY go.mod go.sum ./
@@ -247,7 +247,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o vector-api .
 
 # ランタイムステージ
-FROM debian:bookworm-slim
+FROM debian:12.15-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -267,8 +267,8 @@ ENTRYPOINT ["/usr/local/bin/vector-api"]
 
 | ステージ   | イメージ               | 理由                                     |
 | ---------- | ---------------------- | ---------------------------------------- |
-| ビルド     | `golang:1.25-bookworm` | Go 1.25.x、Debian Bookwormベース         |
-| ランタイム | `debian:bookworm-slim` | 最小構成、ヘルスチェック用curlが導入可能 |
+| ビルド     | `golang:1.27.2-bookworm` | Go 1.27.2、Debian Bookwormベース         |
+| ランタイム | `debian:12.15-slim` | 最小構成、ヘルスチェック用curlが導入可能 |
 
 #### 2.6.3 必須パッケージ
 
@@ -2310,3 +2310,4 @@ Admin TUI の加入者編集（`pkg/masterdata/subscriber.go`。Provisioning API
 | r10 | 2026-10-04 | SQN競合制御（CAS）の実装の反映: 方式を WATCH/MULTI から Lua スクリプトによる `sqn` フィールドの比較・置き換えに変更して実装した。§7.5 を「SQN競合制御の検討」から「SQN競合制御」に改め、検討した方式の採否と理由・守る性質（SQN は IMSI ごとに一意で単調増加、飛ぶのは許容）を記載。§8.2 の `UpdateSQN`（単純な HSET、後勝ち）を `CompareAndSetSQN`（Lua、期待値は読んだ生の文字列、キーが無ければ作らない）に置き換え、§8.3 を合わせて修正。§8.4 のデータアクセスフローを1回の試行（CAS → 成功後に Milenage 計算）と競合時のやり直しに更新（r9 までは計算後に書き戻していた）。§9.1 / §9.3 に `ErrSQNConflict`（409、`SQN_CONFLICT_ERR`、WARN、detail に IMSI・原因を含めない）を追加。§10.1 のコードを実装（`GenerateVector` の最大3回の試行、`generateOnce`、`processResync` の戻り値 `resyncResult` と再同期のやり直しで SQN_HE >= SQN_MS なら同期済みとみなして +32、`logResync` で CAS 成功後に `SQN_RESYNC` を1回、`waitRandom` で 1〜10ms 待つ）に更新し、SQN競合制御の注記を追加。§11.1 / §11.2 に `SQN_CONFLICT_RETRY`（WARN、`attempt`）・`SQN_CONFLICT_ERR` と出力例を追加し、`SQN_RESYNC` の出力タイミングと msg（2種類）を明記。§13.6 を実装済みとして全面的に書き直し（方式詳細、処理フロー、再同期のやり直しの扱いと理由、409 応答、Lua スクリプト、ハンドラー・呼び出し側の扱い、409 を 5xx にしない理由、残っている制約）。§13.3 の SQN競合制御の行を Admin TUI の `sqn` 上書きの制約に、§13.4 に store・並行性のテストを追記。§2.1 のディレクトリ構造（テストファイル追加）、§2.5 / §2.7 / §12.3 のインターフェース・ファイル責務を更新。§1.3 参照版数更新（D-02 r18、D-03 r8、D-04 r28、D-06 r15） |
 | r11 | 2026-10-04 | Admin TUI の加入者編集による `sqn` の上書き（巻き戻り）を解消した実装修正の反映: §13.6.9 を「残っている制約」から「Admin TUI の書き込みとの関係」に改め、Admin TUI は SQN を変えていなければ `sqn` を書かず、変えたときは編集開始時の値と一致するときだけ書き込むこと（Vector API の CAS との関係）、比較せずに書き込むのは新規作成と CSV インポートだけであることを記載。§13.3 の SQN競合制御の行を合わせて修正し、将来対応を削除。§1.3 参照版数更新（D-02 r19、D-04 r29） |
 | r12 | 2026-10-07 | Admin TUI の加入者・RADIUSクライアント・認可ポリシーの store と validation を pkg に移した実装修正（Provisioning API（D-13）と共通で使うため。E-03 r11）の反映: §13.6.9 の Admin TUI の加入者編集の実装箇所を `pkg/masterdata/subscriber.go` に修正 |
+| r13 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 3（Go 1.27.2 への更新とイメージの版の固定）の反映: Dockerfile 方針のベースイメージを実ファイルに同期（ビルド `golang:1.25-bookworm` → `golang:1.27.2-bookworm`（Go 1.27.2）、ランタイム `debian:bookworm-slim` → `debian:12.15-slim`（Debian 12 bookworm のポイントリリース）） |

@@ -6,19 +6,37 @@ on:
   pull_request:
     branches: [main, develop]
 
+permissions:
+  contents: read
+
+# 同じブランチで新しく push したら、古い実行は止める。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.work
           cache: true
+
+      - name: Format
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt で整形されていないファイル:"
+            echo "$unformatted"
+            exit 1
+          fi
 
       - name: Build
         run: make build
@@ -26,11 +44,37 @@ jobs:
       - name: Vet
         run: make vet
 
+      # 第三者の Action はコミットの SHA で固定する（PoC セットの決まり）。
       - name: Lint
-        uses: golangci/golangci-lint-action@v7
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          version: v2.10
+          version: v2.14.0
           args: ./pkg/... ./apps/auth-server/... ./apps/acct-server/... ./apps/vector-gateway/... ./apps/vector-api/... ./apps/provisioning-api/... ./apps/admin-tui/...
 
       - name: Test
         run: make test-race
+
+  docker:
+    name: イメージと compose の設定
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: イメージのビルド
+        run: |
+          for app in auth-server acct-server vector-gateway vector-api provisioning-api; do
+            echo "::group::$app"
+            docker build -f "apps/$app/Dockerfile" -t "eapaka-$app:ci" .
+            echo "::endgroup::"
+          done
+
+      - name: compose の設定
+        working-directory: deployments
+        run: |
+          cp .env.example .env
+          docker compose -f docker-compose.yml config -q
+          docker compose -f docker-compose.yml -f docker-compose.aka-av.yml --profile provisioning config -q
+          docker compose -f docker-compose.yml -f docker-compose.aka-av.yml --profile provisioning config --services

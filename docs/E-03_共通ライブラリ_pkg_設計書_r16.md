@@ -1,4 +1,4 @@
-# E-03 共通ライブラリ(pkg)設計書 (r15)
+# E-03 共通ライブラリ(pkg)設計書 (r16)
 
 ## 1. 概要
 
@@ -140,7 +140,7 @@ pkg/
 
 module eap-aka-radius-poc/pkg
 
-go 1.25
+go 1.27.2
 
 require (
     github.com/redis/go-redis/v9 v9.x.x
@@ -1455,3 +1455,4 @@ next, err := subs.ListPage(ctx, "00101", page.NextCursor, 50) // 次のページ
 | r13 | 2026-10-08 | RADIUSクライアントにサーバー採番の ID を導入（D-13 r5、D-02 r23）: §9.2 の `ClientStore` に `GetByID`・`EnsureIDs` を追加し、`Create`（採番）・`Patch`（IP の変更）・`Delete`（索引の削除）・`BulkCreate`（ID の引き継ぎ）の動作を追記。§9.3 に RADIUSクライアントの Lua を追記。`pkg/model.RadiusClient` に `ID` |
 | r14 | 2026-10-09 | セッションの読み出しを Admin TUI から `pkg/masterdata` に移した（Provisioning API の `GET /sessions` と共通で使うため。D-13 r6）: §9.1 の責務にセッション・索引の読み出しを加え、§9.2 に `SessionStore`（`Get` / `List` / `Count` / `ListByIMSI` / `IndexCount`）、`SessionKey` / `UserIndexKey`、`ErrSessionNotFound` を追加。索引の掃除は Admin TUI に残した |
 | r15 | 2026-10-10 | 加入者の停止の印（D-02 r25 の `policy:{IMSI}` の `status`）の追加: §6.4 の `pkg/model.Policy` に `Status`、定数 `PolicyStatusActive` / `PolicyStatusSuspended`、`IsSuspended` を追加（`NewPolicy` は `active`、`Clone` は `Status` も写す）。§8.2 に `ValidatePolicyStatus` / `NormalizePolicyStatus` を追加。§9.2 の `PolicyStore` に `SetStatus` と、読み出し・`Create` / `Update` / `Put`・`BulkCreate` での `status` の扱いを追加。§9.3 に `SetStatus`（`setStatusScript`）と `Put`（`putPolicyScript`）の原子性を追加 |
+| r16 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 3（Go 1.27.2 への更新とイメージの版の固定）の反映: pkg/go.mod の例の go ディレクティブを `go 1.27.2` に |

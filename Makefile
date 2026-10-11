@@ -11,7 +11,13 @@ MODULES := ./pkg/... \
 	./apps/provisioning-api/... \
 	./apps/admin-tui/...
 
-.PHONY: build test test-cover test-race fmt vet lint clean
+# Go Workspace 内のモジュールのディレクトリ（govulncheck はモジュールごとに実行する）
+MODULE_DIRS := pkg apps/auth-server apps/acct-server apps/vector-gateway apps/vector-api apps/provisioning-api apps/admin-tui
+
+# govulncheck の版（CI と同じ）
+GOVULNCHECK := golang.org/x/vuln/cmd/govulncheck@v1.9.0
+
+.PHONY: build test test-cover test-race fmt vet lint vulncheck clean
 
 ## build: 全モジュールをビルド
 build:
@@ -41,6 +47,10 @@ vet:
 ## lint: golangci-lint による静的解析
 lint:
 	golangci-lint run $(MODULES)
+
+## vulncheck: 依存と標準ライブラリの既知の脆弱性の検査（govulncheck。go.work の直下では動かないのでモジュールごと）
+vulncheck:
+	@set -e; for d in $(MODULE_DIRS); do echo "== $$d"; (cd $$d && go run $(GOVULNCHECK) ./...); done
 
 ## clean: ビルド成果物・カバレッジファイルの削除
 clean:

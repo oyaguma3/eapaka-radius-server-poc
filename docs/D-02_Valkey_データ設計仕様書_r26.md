@@ -1,8 +1,8 @@
-# D-02 Valkey データ設計仕様書 (r25)
+# D-02 Valkey データ設計仕様書 (r26)
 
 ## 1. 全体方針
 
-- **接続方式:** Valkey コンテナ（`valkey/valkey:9.0`）。コンテナ間は `valkey:6379`（各アプリの環境変数 `REDIS_HOST` / `REDIS_PORT`）、ホスト（Admin TUI）からは `127.0.0.1:6379`（ループバックのみ公開）で接続する
+- **接続方式:** Valkey コンテナ（`valkey/valkey:9.1.2`）。コンテナ間は `valkey:6379`（各アプリの環境変数 `REDIS_HOST` / `REDIS_PORT`）、ホスト（Admin TUI）からは `127.0.0.1:6379`（ループバックのみ公開）で接続する
 - **認証:** パスワード認証必須（`--requirepass ${VALKEY_PASSWORD}`。各アプリへは `REDIS_PASS` として渡す）
 - **データ永続化:** AOF (Append Only File) 有効化（`--appendonly yes`、`--appendfsync everysec`）。メモリ上限 512MB、`--maxmemory-policy noeviction`
 - **ネーミング規則:** キーの役割を明確にするため、以下のプレフィックスを厳守する。
@@ -729,3 +729,4 @@ type Subscriber struct {
 | r23 | 2026-10-08 | RADIUSクライアントにサーバー採番の ID を導入（D-13 r5）: §1 のキー一覧に `idx:client:`（ID → IP の索引、String）と `seq:client`（採番のカウンター）を追加。§2.B に `id` フィールドと「IDと索引」（作成・上書き・IP の変更・削除の Lua、ID からの取得、起動時の採番 `EnsureIDs`、simwifi での確認）を追加。§4 の Admin TUI / Provisioning API のアクセスパターン、§5.1 の `RadiusClient` に `ID` を追加。Auth / Acct Server の `client:{IP}` の参照は変更なし |
 | r24 | 2026-10-09 | Provisioning API の監査ログとセッションの参照（D-13 r6、API 0.3.0）: §1 のキー一覧に `audit:prov`（Stream）を追加し、§2.H（監査ログの写し。フィールド、XADD の MAXLEN、読み出し、メモリの目安）を新設。§3.F の注記に Provisioning API は索引を掃除しないことを、§5.1 の `pkg/model` の利用元に Provisioning API と `Policy` / `PolicyRule`（`pkg/masterdata` で使用。r21 以降の実態に合わせる）を、§4 の Provisioning API に監査ログの読み書きと `GET /sessions` の読み出し（`pkg/masterdata.SessionStore`）、`/status` の `sess:*` の件数を追記 |
 | r25 | 2026-10-10 | 加入者の停止の印（一時停止・再開）を追加: §2.C の `policy:{IMSI}` にフィールド `status`（`active` / `suspended`。ないときは `active`）を加え、Auth Server の扱い（`suspended` はルールを評価せずに Reject・`AUTH_SUBSCRIBER_SUSPENDED`、不正値は安全側に Reject）と「停止の印」の節（書き込むのは停止・再開の操作だけ、ポリシーの保存・置き換えでは残る、CSV の取り込みの扱い、削除で消える、次の認証から効く、停止中も SQN は進む）を追加。§3 の Auth Server の処理フロー、Admin TUI・Provisioning API の操作（`PolicyStore.SetStatus`、PUT の応答の `status`）、§4 の `pkg/model.Policy` と Auth Server の `Policy` に `Status` を追記 |
+| r26 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 3（Go 1.27.2 への更新とイメージの版の固定）の反映: 接続方式の Valkey コンテナのイメージを `valkey/valkey:9.0` → `valkey/valkey:9.1.2` に |

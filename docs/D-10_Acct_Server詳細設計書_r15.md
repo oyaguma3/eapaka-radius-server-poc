@@ -1,4 +1,4 @@
-# D-10 Acct Server詳細設計書 (r14)
+# D-10 Acct Server詳細設計書 (r15)
 
 ## ■セクション1: 概要
 
@@ -204,7 +204,7 @@ D-01で定義されたパッケージ利用マップに基づく。
 
 ```dockerfile
 # ビルドステージ
-FROM golang:1.25-bookworm AS builder
+FROM golang:1.27.2-bookworm AS builder
 
 WORKDIR /app
 COPY go.mod go.sum ./
@@ -214,7 +214,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o acct-server .
 
 # ランタイムステージ
-FROM debian:bookworm-slim
+FROM debian:12.15-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -234,8 +234,8 @@ ENTRYPOINT ["/usr/local/bin/acct-server"]
 
 | ステージ   | イメージ               | 理由                                                 |
 | ---------- | ---------------------- | ---------------------------------------------------- |
-| ビルド     | `golang:1.25-bookworm` | Go 1.25.x、Debian Bookwormベース                     |
-| ランタイム | `debian:bookworm-slim` | 最小構成、将来のHTTPヘルスエンドポイント追加に備える |
+| ビルド     | `golang:1.27.2-bookworm` | Go 1.27.2、Debian Bookwormベース                     |
+| ランタイム | `debian:12.15-slim` | 最小構成、将来のHTTPヘルスエンドポイント追加に備える |
 
 #### 2.5.3 必須パッケージ
 
@@ -2194,3 +2194,4 @@ func (s *Server) Shutdown(ctx context.Context) error {
 | r12 | 2026-10-04 | RADIUSパケットの検証をハンドラーに一本化し、RADIUSライブラリのログをJSONにした実装修正（`PacketServer` に `InsecureSkipVerify: true` と `ErrorLog: logging.NewRADIUSLibraryLogger()` を設定）の反映: §4.1 の処理フローにデコード（失敗時 `RADIUS_LIB_ERR`）・Secret不明・`RADIUS_AUTH_ERR` を追記し、パケットの認証をハンドラーで行う方針と理由の注記を追加。§4.2 注記にライブラリの DEBUG ログを追記。§4.3 の `VerifyAccountingAuthenticator` を実装のコードに置き換え、`MarshalBinary` による検証が受信バイト列での検証と等価であること・ライブラリが検証しないことを注記。§7.1.2 のパケットパース失敗のログを `RADIUS_LIB_ERR` に修正し、Authenticator検証失敗・未知のRADIUS Codeの条件を実装に合わせて修正。§8.1 の `RADIUS_AUTH_ERR` / `RADIUS_UNKNOWN_CODE` の説明を修正し `RADIUS_LIB_ERR` を追加、以前は Accounting-Request のシークレット不一致で `RADIUS_AUTH_ERR` が出ていなかった旨を注記。§10.3 に `internal/server/server.go` の実装を追加し「DEBUGログはない」を修正。§2.1 / §2.3 に `server_test.go`・`NewRADIUSLibraryLogger` を追加。§1.3 参照版数更新（D-04 r30→r31、D-06 r16→r17、D-09 r16→r17、E-03 r4→r9） |
 | r13 | 2026-10-05 | Status-Server に正常に応答したときのログを DEBUG に下げた実装修正（D-04 r32）の反映: §4.7 の `HandleStatusServer` の例の `slog.Info` を `slog.Debug` に、§4.7.4 注意点を DEBUG とその理由（radsecproxy 等の複数のプロキシが定期的に送る構成で INFO ログが埋まる）に修正、§8.1 の `PKT_RECV` を DEBUG に変更。あわせて event_id を `PKT_RECV` から Auth Server と同じ `RADIUS_STATUS_OK` に変更（§4.7 の例、§4.7.4、§8.1）。検証失敗の `RADIUS_AUTH_ERR`（WARN）と `PKT_SEND_ERR`（ERROR）は変更なし |
 | r14 | 2026-10-06 | NAS-Identifier を NAS の識別情報としてセッションとログに加えた実装修正（D-04 r33、D-02 r20）の反映（radsecproxy 等のプロキシ経由では送信元IPがプロキシのIPになり NAS を区別できないため）: §5 の Start / Interim / Stop のコードで `src_ip` を持つログに `nas_identifier` を追加し、Start / Interim のセッション更新に `NasIdentifier`（NAS-Identifier があるときだけ `nas_identifier` を上書き、なければ Auth Server が書いた値を残す）を追加。§5.7（セッション状態操作）の UpdateOnStart / UpdateOnInterim、§9.1 の型定義を更新。§8.1 に `nas_identifier` の注記を追加 |
+| r15 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 3（Go 1.27.2 への更新とイメージの版の固定）の反映: Dockerfile 方針のベースイメージを実ファイルに同期（ビルド `golang:1.25-bookworm` → `golang:1.27.2-bookworm`（Go 1.27.2）、ランタイム `debian:bookworm-slim` → `debian:12.15-slim`（Debian 12 bookworm のポイントリリース）） |

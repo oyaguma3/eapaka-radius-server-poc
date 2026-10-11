@@ -1,4 +1,4 @@
-# D-12 Vector Gateway 詳細設計書 (r9)
+# D-12 Vector Gateway 詳細設計書 (r10)
 
 ## 1. 概要
 
@@ -523,7 +523,7 @@ vector-gateway:
 
 ```dockerfile
 # ビルドステージ
-FROM golang:1.25-bookworm AS builder
+FROM golang:1.27.2-bookworm AS builder
 
 WORKDIR /app
 COPY go.mod go.sum ./
@@ -533,7 +533,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o vector-gateway .
 
 # ランタイムステージ
-FROM debian:bookworm-slim
+FROM debian:12.15-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -553,8 +553,8 @@ ENTRYPOINT ["/usr/local/bin/vector-gateway"]
 
 | ステージ   | イメージ               | 理由                                     |
 | ---------- | ---------------------- | ---------------------------------------- |
-| ビルド     | `golang:1.25-bookworm` | Go 1.25.x、Debian Bookwormベース         |
-| ランタイム | `debian:bookworm-slim` | 最小構成、ヘルスチェック用curlが導入可能 |
+| ビルド     | `golang:1.27.2-bookworm` | Go 1.27.2、Debian Bookwormベース         |
+| ランタイム | `debian:12.15-slim` | 最小構成、ヘルスチェック用curlが導入可能 |
 
 #### 4.7.3 必須パッケージ
 
@@ -1354,3 +1354,4 @@ D-12: Vector Gateway詳細設計書 (未) ◄── 新規追加
 | r7 | 2026-10-04 | vector-gateway のログレベル変換を `pkg/logging.ParseLevel` に統一した実装修正の反映: §5.2 注記の `LOG_LEVEL` の変換を `initLogger` 独自の変換から `pkg/logging.ParseLevel`（`WARNING` も `WARN`、前後の空白を無視）に修正 |
 | r8 | 2026-10-04 | acct-server の LOG_LEVEL 対応（compose で acct-server にも `LOG_LEVEL` を渡す）の反映: §5.2 注記の `LOG_LEVEL` を渡す対象を4サーバー（auth-server / acct-server / vector-gateway / vector-api）に修正（「acct-server は LOG_LEVEL 未対応のため渡さない」を削除） |
 | r9 | 2026-10-04 | vector-gateway のバックエンド向けタイムアウトを auth-server より短くした実装修正の反映: §5.1 環境変数（PoC版）・接続方式 `01` の環境変数表・§5.2 docker-compose.yml（抜粋）・§6.2 設定構造体の `VECTOR_GATEWAY_INTERNAL_TIMEOUT` / `VECTOR_GATEWAY_AKAONLY_TIMEOUT` の既定値を 5s → 3s に修正。§5.3 の起動時 WARN に `backend timeout should be shorter than the auth-server timeout; auth-server may time out before receiving 502`（`setting` / `timeout` / `auth_server_timeout`。AKAONLY は `01` 有効時のみ判定）を追加し、タイムアウトの考え方（auth-server の 5秒より短くする理由、定数 `authServerVectorTimeout` と auth-server の `VectorRequestTimeout` を合わせること）を追記 |
+| r10 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 3（Go 1.27.2 への更新とイメージの版の固定）の反映: Dockerfile 方針のベースイメージを実ファイルに同期（ビルド `golang:1.25-bookworm` → `golang:1.27.2-bookworm`（Go 1.27.2）、ランタイム `debian:bookworm-slim` → `debian:12.15-slim`（Debian 12 bookworm のポイントリリース）） |

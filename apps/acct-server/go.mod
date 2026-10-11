@@ -1,6 +1,6 @@
 module github.com/oyaguma3/eapaka-radius-server-poc/apps/acct-server
 
-go 1.25.5
+go 1.27.2
 
 require (
 	github.com/alicebob/miniredis/v2 v2.36.1

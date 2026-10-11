@@ -1,5 +1,5 @@
 # ビルドステージ
-FROM golang:1.25-bookworm AS builder
+FROM golang:1.27.2-bookworm AS builder
 
 WORKDIR /workspace
 
@@ -24,7 +24,7 @@ COPY pkg/ ./pkg/
 RUN cd apps/provisioning-api && CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/provisioning-api .
 
 # ランタイムステージ
-FROM debian:bookworm-slim
+FROM debian:12.15-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \

@@ -1,4 +1,4 @@
-﻿# D-09 Auth Server詳細設計書 (r21)
+﻿# D-09 Auth Server詳細設計書 (r22)
 
 ## ■セクション1: 概要
 
@@ -295,7 +295,7 @@ type ClientStore interface {
 
 ```dockerfile
 # ビルドステージ
-FROM golang:1.25-bookworm AS builder
+FROM golang:1.27.2-bookworm AS builder
 
 WORKDIR /app
 COPY go.mod go.sum ./
@@ -305,7 +305,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o auth-server .
 
 # ランタイムステージ
-FROM debian:bookworm-slim
+FROM debian:12.15-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -325,8 +325,8 @@ ENTRYPOINT ["/usr/local/bin/auth-server"]
 
 | ステージ   | イメージ               | 理由                                                 |
 | ---------- | ---------------------- | ---------------------------------------------------- |
-| ビルド     | `golang:1.25-bookworm` | Go 1.25.x、Debian Bookwormベース                     |
-| ランタイム | `debian:bookworm-slim` | 最小構成、将来のHTTPヘルスエンドポイント追加に備える |
+| ビルド     | `golang:1.27.2-bookworm` | Go 1.27.2、Debian Bookwormベース                     |
+| ランタイム | `debian:12.15-slim` | 最小構成、将来のHTTPヘルスエンドポイント追加に備える |
 
 #### 2.6.3 必須パッケージ
 
@@ -4726,3 +4726,4 @@ Auth Server内で直接参照する外部パッケージの型：
 | r19 | 2026-10-05 | Status-Server に正常に応答したときのログを DEBUG に下げた実装修正（D-04 r32）の反映: §4.6 / §5.10 の `PKT_RECV` を Status-Server のときだけ DEBUG、§5.10 の `RADIUS_STATUS_OK` を DEBUG に変更。§5.8 の注意点に、DEBUG とする理由（radsecproxy 等の複数のプロキシが定期的に送る構成で INFO ログが埋まる）と `PKT_SEND_ERR` を追記。検証失敗の `RADIUS_STATUS_AUTH_FAIL`（WARN）は変更なし |
 | r20 | 2026-10-06 | NAS-Identifier を NAS の識別情報としてセッションとログに加えた実装修正（D-04 r33、D-02 r20）の反映（radsecproxy 等のプロキシ経由では送信元IPがプロキシのIPになり NAS を区別できないため）: §4.6 / §5.10 の `PKT_RECV` に `nas_identifier`（Access-Request のとき）、§8.10 の `AUTH_POLICY_NOT_FOUND`・`AUTH_POLICY_DENIED`、§3.5 の `AUTH_SUCCESS` の例に `nas_identifier` を追加。§9.3 / §9.7.3 / §10.4.2 のセッション構造体・初期値・作成処理に `nas_identifier`（ポリシー評価に使った NAS-Identifier）を追加 |
 | r21 | 2026-10-10 | 加入者の停止の印（D-02 r25 の `policy:{IMSI}` の `status`）の反映: §8.2 の処理フロー、§8.3.1 のフィールド定義、§8.4.1 の取得（`status` の読み込み、不正値は `ErrPolicyInvalid`）、§8.4.2 の主要型（`Status`、`IsSuspended`）を更新し、§8.4.4（停止の判定。ポリシー取得の後・ルール評価の前に判定し、`suspended` なら `AUTH_SUBSCRIBER_SUSPENDED`（WARN）で EAP-Failure を含む Access-Reject。停止中も SQN は進む、次の認証から効く）を新設。§8.8 のエラー表、§8.9 の処理フロー図、§8.10 のログ出力仕様、§3.5.4 の IMSI マスキングの適用箇所の表に `AUTH_SUBSCRIBER_SUSPENDED` を追加 |
+| r22 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 3（Go 1.27.2 への更新とイメージの版の固定）の反映: Dockerfile 方針のベースイメージを実ファイルに同期（ビルド `golang:1.25-bookworm` → `golang:1.27.2-bookworm`（Go 1.27.2）、ランタイム `debian:bookworm-slim` → `debian:12.15-slim`（Debian 12 bookworm のポイントリリース）） |

@@ -1,4 +1,4 @@
-# B-03 VPSデプロイ手順書（AWS Lightsail）(r2)
+# B-03 VPSデプロイ手順書（AWS Lightsail）(r3)
 
 ## 1. 概要
 
@@ -391,14 +391,14 @@ docker compose pull valkey fluent-bit
 ```bash
 cd ~/eapaka-radius-server-poc
 docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e CGO_ENABLED=0 \
-  -v "$PWD":/src -w /src golang:1.25-bookworm \
+  -v "$PWD":/src -w /src golang:1.27.2-bookworm \
   go build -buildvcs=false -o /src/admin-tui-linux ./apps/admin-tui
 mv admin-tui-linux ~/admin-tui
 chmod +x ~/admin-tui
 ```
 
 - `--user` で自分のユーザーとして実行し、出来上がったファイルが自分の所有になるようにする。`-buildvcs=false` は、コンテナ内で git の VCS 情報を取得できずにビルドが失敗するのを避けるためである（root で実行した検証では `error obtaining VCS status` で失敗した）。
-- 使い終わった golang イメージは `docker image rm golang:1.25-bookworm` で削除してよい（次のイメージビルドで再び取得される）。
+- 使い終わった golang イメージは `docker image rm golang:1.27.2-bookworm` で削除してよい（次のイメージビルドで再び取得される）。
 
 動作確認は B-02 §7.3 のとおりだが、VPS では Valkey のパスワードをコマンドラインに直接書かない（シェルの履歴に残るため）。`.env` を読み込んでから起動する。
 
@@ -512,3 +512,4 @@ B-01 §9・B-02 §11 に加えて確認する。D-08 §8（セキュリティチ
 |------|------|------|
 | r1 | 2026-10-04 | 初版作成（机上確認）。AWS Lightsail の Ubuntu 24.04 LTS に、B-01 / B-02 の手順をもとに構築・デプロイする手順を作成。インスタンスの作成（デュアルスタック、メモリ 2GB 以上推奨）、静的IP、IPv4 / IPv6 ファイアウォール（SSH は 22 のまま管理端末のIPに限りブラウザ SSH を許可、HTTP 80 を削除、RADIUS は AP のグローバルIPに限って後から追加）、スワップ、`admin` ユーザーの作成、B-01 / B-02 の差分（時刻同期の確認、sshd のドロップイン、UFW は任意、ログディレクトリ 755、1つずつのイメージビルド、golang コンテナでの Admin TUI のビルド、`RADIUS_SECRET` を空に）、自動スナップショット、VPS 固有のチェックリストとトラブルシューティングを記載。検証機（Debian 13）で compose 一式・logrotate の権限・Admin TUI のコンテナビルド・バックアップとリストアを確認し、Lightsail 固有の点は AWS / Ubuntu の公式情報をもとに記載。机上確認（別の担当者による通読）の指摘を反映: 前提となるソースの版とクローン後の確認コマンド（§1.4、§5.5）、`.env` の確認コマンド、SSH・UFW の設定前の手動スナップショットと復旧の限界、`apt upgrade` での sshd_config の確認画面、IPv6 では RADIUS を受けない・Docker ゲートウェイIPを登録しない、Admin TUI の起動で `.env` を読み込む、B-02 §12 / §14.3 と D-08 §8 の読み替え |
 | r2 | 2026-10-04 | §4.4 の `admin` ユーザーの作成を訂正: Ubuntu には旧来の sudo 用の `admin` グループが既にあり、`sudo adduser --gecos "" admin` が `fatal: The group 'admin' already exists.` で失敗する（Lightsail の実機でユーザーが確認）。既存の `admin` グループを主グループにする `sudo adduser --gecos "" --ingroup admin admin` に変更し、`getent group admin` と `id admin` の確認を追加（Ubuntu 24.04 のコンテナで再現と修正を確認）。§1.3 に実機で判明した点を反映する旨を追記。§5.6 に、オプション項目はコメントアウトのまま触らない（デフォルト値で動く、設定例の値に注意）旨を追記。§5.7 に、Valkey のパスワードを直接入力するコマンドを使わない旨と B-02 §6.4 の確認方法への参照を追記。§1.5 参照版数更新（B-02 r19、D-08 r21） |
+| r3 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 3（Go 1.27.2 への更新とイメージの版の固定）の反映: admin-tui を golang のコンテナでビルドする手順のイメージを `golang:1.25-bookworm` → `golang:1.27.2-bookworm` に |

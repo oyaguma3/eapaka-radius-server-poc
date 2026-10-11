@@ -216,7 +216,7 @@ services:
   # Data Layer
   # ==========================================================================
   valkey:
-    image: valkey/valkey:9.0
+    image: valkey/valkey:9.1.2
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
@@ -249,7 +249,7 @@ services:
   # Logging Layer
   # ==========================================================================
   fluent-bit:
-    image: fluent/fluent-bit:4.2
+    image: fluent/fluent-bit:4.2.8
     command: ["/fluent-bit/bin/fluent-bit", "-c", "/fluent-bit/etc/fluent-bit.yaml"]
     # Docker のログドライバーはホストの localhost:24224 に接続する。外部には公開しない
     ports:

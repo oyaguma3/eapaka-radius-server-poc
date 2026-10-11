@@ -51,6 +51,7 @@ RADIUS認証機能・課金機能と、AKA認証ベクター生成機能と、�
   - `make fmt` — コードフォーマット
   - `make vet` — go vet 実行
   - `make lint` — golangci-lint 実行
+  - `make vulncheck` — govulncheck（依存と標準ライブラリの既知の脆弱性。`go.work` の直下では動かないのでモジュールごとに実行）
   - `make clean` — ビルド成果物の削除
 - golangci-lint は **v2** 形式（`version: "2"` 必須）
   - v2での注意: `gosimple` は staticcheck に統合済み、`typecheck` は linter ではない
@@ -60,8 +61,10 @@ RADIUS認証機能・課金機能と、AKA認証ベクター生成機能と、�
 ## CI/CD（GitHub Actions）
 - 設定ファイル: `.github/workflows/ci.yml`
 - トリガー: `main` / `develop` への push および PR
-- パイプライン: Checkout → Setup Go → Build → Vet → Lint → Test(race)
-- `golangci/golangci-lint-action` は **v7** を使用（v6は golangci-lint v2非対応）
+- パイプライン: Checkout → Setup Go → Format(gofmt) → Build → Vet → Lint → Test(race)。別のジョブでイメージのビルド（5 つ）と compose の設定を確かめる
+- `golangci/golangci-lint-action` は v9.3.0 をコミットの SHA で固定し、golangci-lint は v2.14.0（Go 1.27 に対応した版）。第三者の Action は SHA で固定する（PoC セット eapaka-pocset の決まり）
+- `.github/workflows/govulncheck.yml` が push・PR と毎週月曜に `make vulncheck` を実行する
+- イメージ（Dockerfile、compose）の版はパッチ版まで書く（PoC セットの決まり）
 - Go バージョンは `go.work` の `go` ディレクティブから自動取得
 
 ## ブランチ戦略・PRワークフロー
