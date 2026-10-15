@@ -1,7 +1,7 @@
-# EAP-AKA RADIUS PoC環境 ドキュメント一覧 (r67)
+# EAP-AKA RADIUS PoC環境 ドキュメント一覧 (r68)
 
 **作成日:** 2025-12-30
-**最終更新:** 2026-10-12
+**最終更新:** 2026-10-16
 **ステータス:** 運用準備フェーズ
 
 > **版数の書き方:** 他の文書を参照するときは、文書の ID と名前だけを書き、版数を書かない（今の版はこの一覧で分かる）。各文書の改訂履歴の記述は、当時の版を書く（記録のため、後から書き換えない）。
@@ -67,10 +67,10 @@
 
 | No. | ドキュメント名 | 版数 | 最終更新 | 内容 |
 |-----|---------------|------|---------|------|
-| T-01 | テスト戦略書 | r5 | 2026-10-12 | テストレベル定義、テスト範囲、テスト環境、モック戦略、テストデータ戦略、品質ゲート、テストベクターモード運用注記、.env例の環境変数名（RADIUS_SECRET）を実装に整合、テストベクターモードの動作を実装に整合（加入者登録必須）、CI（GitHub Actions の ci.yml・govulncheck.yml）・PoC セットを通した試験（eapaka-pocset）・結合テスト環境（T-03 の手順書）・静的解析（golangci-lint v2）を実態に合わせて書き直し、関連ドキュメントの版数の削除 |
-| T-02 | 単体テスト仕様書 | r26 | 2026-10-12 | コンポーネント別テストケース（全1,531件）、モック戦略、テストデータ設計、Vector Gateway接続方式01のテストケース追加、IMSIマスク漏れ修正のテストケース追加、acct-server Interimシーケンス判定修正のテストケース反映、vector-apiテストベクターモードの加入者登録必須化のテストケース反映、auth-serverポリシーnas_idワイルドカード（`*`）のテストケース追加、auth-server trace_id引き継ぎ・LOG_LEVEL対応のテストケース反映（ParseLevel・TraceIDFromState等を追加、EngineErrorを欠番）、vector-apiログ整理のテストケース反映（LogAttributes・LogsTraceIDAndMaskedIMSI等を追加、ErrInvalidIMSIの検証を欠番）、acct-server の重複Interim分離・SYS_ERR削除・LOG_LEVEL対応のテストケース反映（TestLoadLogLevel を追加、ProcessorError を欠番）、admin-tui 監査ログの件数・検索IMSI記録修正のテストケース反映（LogExport_ZeroRecords・LogCreate_NoCounts を追加、LogSearch を4件のテーブル駆動に）、vector-gateway のタイムアウト既定値変更・起動時 WARN のテストケース反映（TestWarnBackendConfig_Timeouts を追加）、admin-tui のキー配線漏れ修正のテストケース追加（`internal/ui` 配下に初のテスト。一覧の Enter / F6、IsTextInput、入力ダイアログの Esc、Session List のソート、Session Search の検索結果の並べ替え。新カテゴリ UT-TUI-UI）、SQN競合制御のテストケース追加（store の CompareAndSetSQN、競合時のやり直し・409・再同期、同一IMSIへの並行リクエスト）、Admin TUI の加入者編集（Update / UpdateWithSQN、編集・新規作成画面）のテストケース追加、auth-server / acct-server の起動時 WARN のテストケース追加、PacketServer の UDP テストと RADIUS ライブラリのログのテストケース追加、Status-Server の正常時ログを DEBUG にしたテストケース追加、NAS-Identifier をセッションとログに加えたテストケース追加、store / validation の pkg への移動に伴うテストの移動（ID を UT-PKG-VALID / UT-PKG-MASTER に）と追加、provisioning-api の単体テスト（UT-PROV、84件）と masterdata の ListPage・ClientStore.Patch のテスト（16件）を追加、Admin TUI のフォームの高さのテスト（UT-TUI-UI-029〜031）を追加、RADIUSクライアントの ID のテスト、Provisioning API の監査ログ・セッションの参照のテストと SessionStore のテスト（UT-PKG-MASTER-062〜064）、加入者の停止・再開のテスト（§5.7。29件）、品質改善のステップ 4 のテスト（§5.8。12件。runServer・recoverHandler・HTTP サーバーの時間の上限・設定の検証）、参照の版数の削除、subdoc（非公開）へのリンクの削除と公開の範囲の案内 |
+| T-01 | テスト戦略書 | r6 | 2026-10-16 | テストレベル定義、テスト範囲、テスト環境、モック戦略、テストデータ戦略、品質ゲート、テストベクターモード運用注記、.env例の環境変数名（RADIUS_SECRET）を実装に整合、テストベクターモードの動作を実装に整合（加入者登録必須）、CI（GitHub Actions の ci.yml・govulncheck.yml）・PoC セットを通した試験（eapaka-pocset）・結合テスト環境（T-03 の手順書）・静的解析（golangci-lint v2）を実態に合わせて書き直し、関連ドキュメントの版数の削除、全体を実装（テストコード・モックのファイル・go.mod）と照合して整合（パッケージ別テスト内容、モック戦略、mockgen の版、テスト用IMSIの例、テスト用RADIUSクライアント） |
+| T-02 | 単体テスト仕様書 | r27 | 2026-10-16 | コンポーネント別テストケース（全1,531件）、モック戦略、テストデータ設計、Vector Gateway接続方式01のテストケース追加、IMSIマスク漏れ修正のテストケース追加、acct-server Interimシーケンス判定修正のテストケース反映、vector-apiテストベクターモードの加入者登録必須化のテストケース反映、auth-serverポリシーnas_idワイルドカード（`*`）のテストケース追加、auth-server trace_id引き継ぎ・LOG_LEVEL対応のテストケース反映（ParseLevel・TraceIDFromState等を追加、EngineErrorを欠番）、vector-apiログ整理のテストケース反映（LogAttributes・LogsTraceIDAndMaskedIMSI等を追加、ErrInvalidIMSIの検証を欠番）、acct-server の重複Interim分離・SYS_ERR削除・LOG_LEVEL対応のテストケース反映（TestLoadLogLevel を追加、ProcessorError を欠番）、admin-tui 監査ログの件数・検索IMSI記録修正のテストケース反映（LogExport_ZeroRecords・LogCreate_NoCounts を追加、LogSearch を4件のテーブル駆動に）、vector-gateway のタイムアウト既定値変更・起動時 WARN のテストケース反映（TestWarnBackendConfig_Timeouts を追加）、admin-tui のキー配線漏れ修正のテストケース追加（`internal/ui` 配下に初のテスト。一覧の Enter / F6、IsTextInput、入力ダイアログの Esc、Session List のソート、Session Search の検索結果の並べ替え。新カテゴリ UT-TUI-UI）、SQN競合制御のテストケース追加（store の CompareAndSetSQN、競合時のやり直し・409・再同期、同一IMSIへの並行リクエスト）、Admin TUI の加入者編集（Update / UpdateWithSQN、編集・新規作成画面）のテストケース追加、auth-server / acct-server の起動時 WARN のテストケース追加、PacketServer の UDP テストと RADIUS ライブラリのログのテストケース追加、Status-Server の正常時ログを DEBUG にしたテストケース追加、NAS-Identifier をセッションとログに加えたテストケース追加、store / validation の pkg への移動に伴うテストの移動（ID を UT-PKG-VALID / UT-PKG-MASTER に）と追加、provisioning-api の単体テスト（UT-PROV、84件）と masterdata の ListPage・ClientStore.Patch のテスト（16件）を追加、Admin TUI のフォームの高さのテスト（UT-TUI-UI-029〜031）を追加、RADIUSクライアントの ID のテスト、Provisioning API の監査ログ・セッションの参照のテストと SessionStore のテスト（UT-PKG-MASTER-062〜064）、加入者の停止・再開のテスト（§5.7。29件）、品質改善のステップ 4 のテスト（§5.8。12件。runServer・recoverHandler・HTTP サーバーの時間の上限・設定の検証）、参照の版数の削除、subdoc（非公開）へのリンクの削除と公開の範囲の案内、テスト環境・依存ツール・モック生成（§2・§3）を実装に整合（Go 1.27.2、go.mod の版、testify の削除、モックの置き場所） |
 | T-03 | 結合テスト仕様書 | r21 | 2026-10-12 | コンポーネント間連携テスト、シナリオテスト、テストベクターモード検証、Valkeyデータ整合性検証、Secret体系明確化、SQN再同期手順改訂、IMSI 003専用config追加、障害系PASS条件修正、identityオーバーライドIMSIのSQNリセット運用補足、Dockerイメージ再ビルド注意事項追加、eapaka_testパス参照をsupplement配下に一般化、INT-ACCT-ON-017/INT-ACCT-OFF-018追加、aka-only-server結合シナリオ追加、INT-GW-PLMN-010の未実装IDを02に変更、テストベクターモードでも加入者登録必須（テストIMSI帯でも未登録は404）・事前準備での登録を明記、INT-006 の期待結果に Auth Server の全パケットの PKT_RECV も同一 trace_id であることを追記、INT-006-03 に Vector API の SQN_RESYNC も同一 trace_id であることを追記、G6 と INT-005 の ACCT_DUPLICATE_INTERIM、INT-FAULT の Acct Server ベストエフォート動作を現行ハンドラー（SYS_ERR なし）に整合、INT-FAULT-001（Vector API停止）の PASS 条件を VECTOR_API_ERR（502）のみに（vector-gateway のタイムアウト 3s）、G3（SQN再同期）の手順を訂正（サーバー側 SQN を IND=7 の `FF9BB4D0B587` にして確実に再同期を起こす、PASS 条件に再同期ログ）、G11 Provisioning API 結合（INT-PROV-001〜023。simwifi で全件 PASS）を追加、G11 に共有ネットワークのケース（INT-PROV-024〜029）を追加、G11 に RADIUSクライアントの ID のケース（INT-PROV-030〜036）、付録Aの件数の不一致（G9 の INT-VALKEY-005 の行の欠落）を修正し全98件、G11 に監査ログ・セッションの参照（INT-PROV-037〜043。simwifi で PASS）を追加し全105件、G12（加入者の停止・再開。INT-SUSPEND-001〜012。simwifi で PASS）を追加し全117件、参照の版数の削除、subdoc（非公開）へのリンクの削除と公開の範囲の案内、aka-only-server との突き合わせを trace_id に（認証ベクターAPI 0.2.0-draft 以降） |
-| T-04 | E2Eテスト仕様書 | r9 | 2026-10-12 | 実機テスト（SIM/AP）3件、擬似E2E（eapaka_test）5件、実機異常系3件の計11シナリオ、SQN管理注意事項追加、Valkey再起動後データ残存確認追加、eapaka_testパス参照をsupplement配下に一般化、aka-only-server接続E2Eシナリオと実施結果（2026-10-04）追加、テストベクターモードのT-03との差分（加入者登録必須）を実装に整合、認可ポリシーのnas_id `*`（任意のNASに一致）を反映、E2E-002 のログ確認に ACCT_DUPLICATE_INTERIM を追加、参照の版数の削除、subdoc（非公開）へのリンクの削除、§10.4 に aka-only-server の trace_id の注記 |
+| T-04 | E2Eテスト仕様書 | r10 | 2026-10-16 | 実機テスト（SIM/AP）3件、擬似E2E（eapaka_test）5件、実機異常系3件の計11シナリオ（E2E-001〜203）と接続方式01（aka-only-server）の16シナリオ（E2E-301〜316）、SQN管理注意事項追加、Valkey再起動後データ残存確認追加、eapaka_testパス参照をsupplement配下に一般化、aka-only-server接続E2Eシナリオと実施結果（2026-10-04）追加、テストベクターモードのT-03との差分（加入者登録必須）を実装に整合、認可ポリシーのnas_id `*`（任意のNASに一致）を反映、E2E-002 のログ確認に ACCT_DUPLICATE_INTERIM を追加、参照の版数の削除、subdoc（非公開）へのリンクの削除、§10.4 に aka-only-server の trace_id の注記、§8.5・§1.5 の件数の書き方を整理 |
 
 ### 3.2 未作成
 
@@ -156,10 +156,10 @@
                     ▼                                                   │
 [テストドキュメント] ───────────────────────────────────────────────────┤
     │                                                                   │
-    ├─ T-01: テスト戦略書 (r5) ✓                                        │
-    ├─ T-02: 単体テスト仕様書 (r26) ✓                                    │
+    ├─ T-01: テスト戦略書 (r6) ✓                                        │
+    ├─ T-02: 単体テスト仕様書 (r27) ✓                                    │
     ├─ T-03: 結合テスト仕様書 (r21) ✓                                   │
-    └─ T-04: E2Eテスト仕様書 (r9) ✓                                    │
+    └─ T-04: E2Eテスト仕様書 (r10) ✓                                   │
                     │                                                   │
                     ▼                                                   │
 [構築・デプロイドキュメント] ───────────────────────────────────────────┤
@@ -200,15 +200,15 @@
 | 7 | E-01 | 開発環境セットアップガイド | **完了 (r11)** |
 | 8 | E-02 | コーディング規約（簡易版） | **完了 (r7)** |
 | 9 | E-03 | 共通ライブラリ(pkg)設計書 | **完了 (r17)** |
-| 10 | T-01 | テスト戦略書 | **完了 (r5)** |
+| 10 | T-01 | テスト戦略書 | **完了 (r6)** |
 
 ### フェーズ3: 開発・テスト
 
 | 順序 | ドキュメントID | ドキュメント名 | ステータス |
 |-----|---------------|---------------|-----------|
-| 11 | T-02 | 単体テスト仕様書 | **完了 (r26)** |
+| 11 | T-02 | 単体テスト仕様書 | **完了 (r27)** |
 | 12 | T-03 | 結合テスト仕様書 | **完了 (r21)** |
-| 13 | T-04 | E2Eテスト仕様書 | **完了 (r9)** |
+| 13 | T-04 | E2Eテスト仕様書 | **完了 (r10)** |
 
 ### フェーズ4: 構築・デプロイ
 
@@ -317,3 +317,4 @@
 | r65 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 3（Go 1.25.5 → 1.27.2、govulncheck の指摘による `golang.org/x/net` v0.60.0・`quic-go` v0.59.1 への更新、イメージの版の固定（`golang:1.27.2-bookworm`、`debian:12.15-slim`、`valkey/valkey:9.1.2`、`fluent/fluent-bit:4.2.8`）、CI（gofmt、golangci-lint v2.14.0、イメージと compose の設定、govulncheck））の反映: B-03(r2→r3)、D-01(r22→r23)、D-02(r25→r26)、D-08(r26→r27)、D-09(r21→r22)、D-10(r14→r15)、D-11(r12→r13)、D-12(r9→r10)、E-01(r8→r9)、E-03(r15→r16) |
 | r66 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 4（auth-server・acct-server の待ち受けの失敗での終了（`SYS_LISTEN_ERR`、終了コード 1）とパケット処理中のパニックの回復（`SYS_PANIC`）、vector-api・vector-gateway の HTTP サーバーの時間の上限、`VALKEY_PASSWORD` が空なら compose が断ることと Valkey の healthcheck（`VALKEYCLI_AUTH`、PONG の確認）、5 つのアプリへのビルドの版の埋め込み（起動ログの `build`、compose の `POC_VERSION`）、`VECTOR_GATEWAY_INTERNAL_TIMEOUT` と `TEST_VECTOR_IMSI_PREFIX` の検証、使っていない `VectorConnectTimeout` の削除、`stop_grace_period: 20s`、aka-only-server の X-Trace-ID の記録）の反映: D-01(r23→r24)、D-04(r37→r38)、D-06(r18→r19)、D-08(r27→r28)、D-09(r22→r23)、D-10(r15→r16)、D-11(r13→r14)、D-12(r10→r11)、D-13(r7→r8)、E-01(r9→r10)、T-02(r24→r25)、B-02(r23→r24)、O-03(r13→r14)、O-05(r24→r25) |
 | r67 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 6（文書の整理）の反映: 他の文書を参照するときに版数を書かない方針に変え（今の版はこの一覧で分かる。冒頭に注記を追加。改訂履歴の記述と、本文の経緯の注記は当時の版のまま）、本文の参照から版数を外した（24 文書・196 か所。大半は各文書の関連ドキュメントの表）。git の管理外で公開しない `docs/subdocs/`・`docs/testresults/` へのリンク・参照（59 か所）を外して「非公開の作業資料」と注記し、公開の文書（T-02 の付録A、T-03 の §3.1・§5・付録A など）を案内。T-01 の CI/CD（GitHub Actions の ci.yml・govulncheck.yml）、PoC セットを通した試験（eapaka-pocset の scripts/e2e.sh・e2e.yml）、結合テスト環境（存在しない .env.test・docker-compose.test.yml・tests/integration/ をやめ T-03 の手順書に）、静的解析（golangci-lint v2）を実態に合わせて書き直し。T-03 §5.10 と T-04 §10.4 の aka-only-server との突き合わせを、認証ベクターAPI 0.2.0-draft（aka-only-server f0756ab）以降は trace_id で行えるに（T-04 は実施記録のため注記）。B-03 §5.7 のサービスごとのビルドに POC_VERSION。D-09 の関連ドキュメントの表の誤り（ID・名前）を訂正。§3.1 の T-02 の行のテストケースの件数を 1,531件に（1,519件のままだった）、§8 の推奨作成順序の版数を今の版に（D-07・T-03・O-01・O-02 が古かった）。版数更新: B-01(r5→r6)、B-02(r24→r25)、B-03(r3→r4)、D-01(r24→r25)、D-06(r19→r20)、D-07(r14→r15)、D-08(r28→r29)、D-09(r23→r24)、D-10(r16→r17)、D-11(r14→r15)、D-13(r8→r9)、E-01(r10→r11)、E-02(r6→r7)、E-03(r16→r17)、O-01(r8→r9)、O-02(r4→r5)、O-03(r14→r15)、O-04(r2→r3)、O-05(r25→r26)、S-01(r4→r5)、T-01(r4→r5)、T-02(r25→r26)、T-03(r20→r21)、T-04(r8→r9)。README のテストの件数・実行方法（make test / make test-race）・文書の件数・Go のバッジ・PoC セットへの案内も更新 |
+| r68 | 2026-10-16 | PoC セット（eapaka-pocset）のリリース前の整理（文書と実装の照合）: T-01 の全体を実装に合わせた（§3.2〜§3.6 のパッケージ別テスト内容を実際のパッケージに（存在しない `handler`・`model` を削除し、Auth Server の `engine`・`eap/akaprime`、Acct Server の `acct`、Vector API の `dto`、Admin TUI の `audit`・`csv`・`format` を追加）、§3.7 に Admin TUI のフォームの高さの描画のテストを例外として注記、§4.1 の mockgen を go.mod の版（v0.6.0）に、§5 モック戦略（モック対象のインターフェースの名前と定義場所、go:generate は Vector API の usecase だけで Auth Server・Acct Server は `internal/mocks` に mockgen を直接実行して生成、テストダブルの使用例を実際のテストの抜粋に、miniredis の対象パッケージ）、§6.1 のテスト用IMSIの例を15桁に、§6.2 のテスト用RADIUSクライアントを実際の使い方に）。T-02 の §2・§3（Go 1.27.2、mockgen・miniredis の版を go.mod の版に、使っていない testify を削除、モック生成と置き場所、Fake の対象）を実装に合わせた（テストケースと件数は変えていない）。T-04 の §8.5 の完全合格を「E2E-001〜203 の全11シナリオ」に、§1.5 の T-03 のシナリオ数を 117件に。§3.1 の T-04 の行の概要に接続方式01 の16シナリオ（E2E-301〜316）を追記。版数更新: T-01(r5→r6)、T-02(r26→r27)、T-04(r9→r10)。README の T-04 の行（11 シナリオと接続方式01 の 16 シナリオ）とドキュメント一覧へのリンクも更新 |
