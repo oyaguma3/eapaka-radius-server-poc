@@ -1,6 +1,6 @@
 module github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-api
 
-go 1.27.2
+go 1.27.3
 
 require (
 	github.com/alicebob/miniredis/v2 v2.36.1

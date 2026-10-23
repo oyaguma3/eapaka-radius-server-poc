@@ -1,4 +1,4 @@
-# D-12 Vector Gateway 詳細設計書 (r11)
+# D-12 Vector Gateway 詳細設計書 (r12)
 
 ## 1. 概要
 
@@ -523,7 +523,7 @@ vector-gateway:
 
 ```dockerfile
 # ビルドステージ
-FROM golang:1.27.2-bookworm AS builder
+FROM golang:1.27.3-bookworm AS builder
 
 WORKDIR /app
 COPY go.mod go.sum ./
@@ -555,7 +555,7 @@ ENTRYPOINT ["/usr/local/bin/vector-gateway"]
 
 | ステージ   | イメージ               | 理由                                     |
 | ---------- | ---------------------- | ---------------------------------------- |
-| ビルド     | `golang:1.27.2-bookworm` | Go 1.27.2、Debian Bookwormベース         |
+| ビルド     | `golang:1.27.3-bookworm` | Go 1.27.3、Debian Bookwormベース         |
 | ランタイム | `debian:12.15-slim` | 最小構成、ヘルスチェック用curlが導入可能 |
 
 #### 4.7.3 必須パッケージ
@@ -1369,3 +1369,4 @@ D-12: Vector Gateway詳細設計書 (未) ◄── 新規追加
 | r9 | 2026-10-04 | vector-gateway のバックエンド向けタイムアウトを auth-server より短くした実装修正の反映: §5.1 環境変数（PoC版）・接続方式 `01` の環境変数表・§5.2 docker-compose.yml（抜粋）・§6.2 設定構造体の `VECTOR_GATEWAY_INTERNAL_TIMEOUT` / `VECTOR_GATEWAY_AKAONLY_TIMEOUT` の既定値を 5s → 3s に修正。§5.3 の起動時 WARN に `backend timeout should be shorter than the auth-server timeout; auth-server may time out before receiving 502`（`setting` / `timeout` / `auth_server_timeout`。AKAONLY は `01` 有効時のみ判定）を追加し、タイムアウトの考え方（auth-server の 5秒より短くする理由、定数 `authServerVectorTimeout` と auth-server の `VectorRequestTimeout` を合わせること）を追記 |
 | r10 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 3（Go 1.27.2 への更新とイメージの版の固定）の反映: Dockerfile 方針のベースイメージを実ファイルに同期（ビルド `golang:1.25-bookworm` → `golang:1.27.2-bookworm`（Go 1.27.2）、ランタイム `debian:bookworm-slim` → `debian:12.15-slim`（Debian 12 bookworm のポイントリリース）） |
 | r11 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 4（HTTP サーバーの時間の上限、設定の検証、ビルドの版の埋め込み、停止の猶予、X-Trace-ID）の反映: aka-only-server が認証ベクターAPI 0.2.0-draft で X-Trace-ID を受け取り、払い出しのログの `trace_id` に残すようになった（aka-only-server f0756ab）ことに合わせ、§2.3 のトレーサビリティの責務範囲、§4.5.2 のリクエストヘッダ、§5.5 のログの突き合わせ、§9.1 の外部バックエンド利用時の説明と図を更新。§5.3 の起動時検証に `VECTOR_GATEWAY_INTERNAL_TIMEOUT` が正の値であること（0 以下なら起動しない）を、起動ログに `build` を追加し、バックエンド向けタイムアウトの考え方の auth-server のタイムアウトを「接続の確立を含めた要求全体で5秒」に訂正（使っていない `VectorConnectTimeout` の削除）。§5.1 の環境変数の例と §6.2 の `Load()` に検証を追記。§5.2 の compose の抜粋に build.args（`VERSION: ${POC_VERSION:-dev}`）と `stop_grace_period: 20s` を追加し、注記を追加。§4.7.1 の Dockerfile に `ARG VERSION=dev` と `-X main.build=${VERSION}` を追加。§7.1 に HTTP サーバーの時間の上限（`ReadHeaderTimeout` 10秒、`ReadTimeout` 30秒、`WriteTimeout` 30秒、`IdleTimeout` 120秒）の注記を追加 |
+| r12 | 2026-10-23 | PoC セット（eapaka-pocset）の pocset-v1.0.1（Go 1.27.3 への更新。crypto/x509 の CVE-2026-111943（GO-2026-6809）の修正）の反映: Dockerfile 方針のビルドのイメージを実ファイルに同期（§4.7.1 の Dockerfile の例と §4.7.2 のベースイメージ選定の表を `golang:1.27.2-bookworm` → `golang:1.27.3-bookworm`（Go 1.27.3）に） |

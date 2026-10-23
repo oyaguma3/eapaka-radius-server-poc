@@ -1,6 +1,6 @@
 # eapaka-radius-server-poc
 
-[![Go](https://img.shields.io/badge/Go-1.27.2-00ADD8?logo=go)](https://go.dev/)
+[![Go](https://img.shields.io/badge/Go-1.27.3-00ADD8?logo=go)](https://go.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 このリポジトリは PoC セット（[eapaka-pocset](https://github.com/oyaguma3/eapaka-pocset)）の一部です。組み合わせと変更の記録（CHANGELOG）は eapaka-pocset を参照してください。
@@ -30,7 +30,7 @@ Wi-Fi 認証 (WPA2/WPA3-Enterprise) 向けの RADIUS 認証・課金機能、AKA
 
 ## 技術スタック
 
-- **言語:** Go 1.27.2
+- **言語:** Go 1.27.3
 - **データストア:** Valkey 9.1
 - **コンテナ:** Docker Compose
 - **ログ収集:** Fluent Bit 4.2
@@ -76,7 +76,7 @@ eapaka-radius-server-poc/
 ### 前提条件
 
 - Docker & Docker Compose
-- Go 1.27.2 (ローカル開発時)
+- Go 1.27.3 (ローカル開発時)
 
 ### 起動手順
 
@@ -239,7 +239,7 @@ go test ./apps/auth-server/...
 |---|---|---|
 | S-01 | eapaka_test 利用ノウハウ | eapaka_test の設定・テストケース解説・トラブルシューティング |
 
-詳細は [ドキュメント一覧](docs/EAP-AKA_RADIUS_PoC環境_ドキュメント一覧_r68.md) を参照してください。
+詳細は [ドキュメント一覧](docs/EAP-AKA_RADIUS_PoC環境_ドキュメント一覧_r69.md) を参照してください。
 
 ## ライセンス
 

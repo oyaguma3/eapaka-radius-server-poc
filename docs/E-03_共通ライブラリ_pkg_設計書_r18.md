@@ -1,4 +1,4 @@
-# E-03 共通ライブラリ(pkg)設計書 (r17)
+# E-03 共通ライブラリ(pkg)設計書 (r18)
 
 ## 1. 概要
 
@@ -140,7 +140,7 @@ pkg/
 
 module eap-aka-radius-poc/pkg
 
-go 1.27.2
+go 1.27.3
 
 require (
     github.com/redis/go-redis/v9 v9.x.x
@@ -1457,3 +1457,4 @@ next, err := subs.ListPage(ctx, "00101", page.NextCursor, 50) // 次のページ
 | r15 | 2026-10-10 | 加入者の停止の印（D-02 r25 の `policy:{IMSI}` の `status`）の追加: §6.4 の `pkg/model.Policy` に `Status`、定数 `PolicyStatusActive` / `PolicyStatusSuspended`、`IsSuspended` を追加（`NewPolicy` は `active`、`Clone` は `Status` も写す）。§8.2 に `ValidatePolicyStatus` / `NormalizePolicyStatus` を追加。§9.2 の `PolicyStore` に `SetStatus` と、読み出し・`Create` / `Update` / `Put`・`BulkCreate` での `status` の扱いを追加。§9.3 に `SetStatus`（`setStatusScript`）と `Put`（`putPolicyScript`）の原子性を追加 |
 | r16 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 3（Go 1.27.2 への更新とイメージの版の固定）の反映: pkg/go.mod の例の go ディレクティブを `go 1.27.2` に |
 | r17 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 6（文書の整理）の反映: §1.3 の関連ドキュメントの表から、他の文書の版数を外した（6 か所。今の版はドキュメント一覧で分かるため、参照に版を書かない） |
+| r18 | 2026-10-23 | PoC セット（eapaka-pocset）の pocset-v1.0.1（Go 1.27.3 への更新。crypto/x509 の CVE-2026-111943（GO-2026-6809）の修正）の反映: §2.4 の pkg/go.mod の例の go ディレクティブを `go 1.27.3` に |
