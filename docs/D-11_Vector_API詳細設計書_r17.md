@@ -1,4 +1,4 @@
-# D-11 Vector API詳細設計書 (r16)
+# D-11 Vector API詳細設計書 (r17)
 
 ## ■セクション1: 概要
 
@@ -237,7 +237,7 @@ type VectorUseCaseInterface interface {
 
 ```dockerfile
 # ビルドステージ
-FROM golang:1.27.3-bookworm AS builder
+FROM golang:1.27.4-bookworm AS builder
 
 WORKDIR /app
 COPY go.mod go.sum ./
@@ -269,7 +269,7 @@ ENTRYPOINT ["/usr/local/bin/vector-api"]
 
 | ステージ   | イメージ               | 理由                                     |
 | ---------- | ---------------------- | ---------------------------------------- |
-| ビルド     | `golang:1.27.3-bookworm` | Go 1.27.3、Debian Bookwormベース         |
+| ビルド     | `golang:1.27.4-bookworm` | Go 1.27.4、Debian Bookwormベース         |
 | ランタイム | `debian:12.15-slim` | 最小構成、ヘルスチェック用curlが導入可能 |
 
 #### 2.6.3 必須パッケージ
@@ -2342,3 +2342,4 @@ Admin TUI の加入者編集（`pkg/masterdata/subscriber.go`。Provisioning API
 | r14 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 4（HTTP サーバーの時間の上限、設定の検証、ビルドの版の埋め込み）の反映: §4.1 の `http.Server` に `ReadHeaderTimeout` 10秒・`ReadTimeout` 30秒・`WriteTimeout` 30秒・`IdleTimeout` 120秒（Provisioning API と同じ値）を加え、コード片を実装に同期（`LoggingMiddleware()` の引数なし、引数名 `h`）し、注記（`stop_grace_period: 20s`）を追加。§3.1・§13.5 の `TEST_VECTOR_IMSI_PREFIX` を「1〜15 桁の数字」とし、§3.2 の `Load` にテストベクターモードが有効なときの形式の検証（`imsiPrefixPattern`。違えば起動しない）と注記を追加。§3.3 の起動処理フローに起動ログ（`build`）を追記。§2.6.1 の Dockerfile に `ARG VERSION=dev` と `-X main.build=${VERSION}` を追加。§11.1 の注記に起動ログの `build` を追記 |
 | r15 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 6（文書の整理）の反映: §1.3 の関連ドキュメントの表から、他の文書の版数を外した（11 か所。今の版はドキュメント一覧で分かるため、参照に版を書かない） |
 | r16 | 2026-10-23 | PoC セット（eapaka-pocset）の pocset-v1.0.1（Go 1.27.3 への更新。crypto/x509 の CVE-2026-111943（GO-2026-6809）の修正）の反映: Dockerfile 方針のビルドのイメージを実ファイルに同期（§2.6.1 の Dockerfile の例と §2.6.2 のベースイメージ選定の表を `golang:1.27.2-bookworm` → `golang:1.27.3-bookworm`（Go 1.27.3）に） |
+| r17 | 2026-11-16 | PoC セット（eapaka-pocset）の pocset-v1.0.2（Go 1.27.4 への更新。net/http の CVE-2026-97054（GO-2026-6859）の修正）の反映: Dockerfile 方針のビルドのイメージを実ファイルに同期（§2.6.1 の Dockerfile の例と §2.6.2 のベースイメージ選定の表を `golang:1.27.3-bookworm` → `golang:1.27.4-bookworm`（Go 1.27.4）に） |

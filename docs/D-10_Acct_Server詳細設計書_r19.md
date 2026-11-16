@@ -1,4 +1,4 @@
-# D-10 Acct Server詳細設計書 (r18)
+# D-10 Acct Server詳細設計書 (r19)
 
 ## ■セクション1: 概要
 
@@ -205,7 +205,7 @@ D-01で定義されたパッケージ利用マップに基づく。
 
 ```dockerfile
 # ビルドステージ
-FROM golang:1.27.3-bookworm AS builder
+FROM golang:1.27.4-bookworm AS builder
 
 WORKDIR /app
 COPY go.mod go.sum ./
@@ -237,7 +237,7 @@ ENTRYPOINT ["/usr/local/bin/acct-server"]
 
 | ステージ   | イメージ               | 理由                                                 |
 | ---------- | ---------------------- | ---------------------------------------------------- |
-| ビルド     | `golang:1.27.3-bookworm` | Go 1.27.3、Debian Bookwormベース                     |
+| ビルド     | `golang:1.27.4-bookworm` | Go 1.27.4、Debian Bookwormベース                     |
 | ランタイム | `debian:12.15-slim` | 最小構成、将来のHTTPヘルスエンドポイント追加に備える |
 
 #### 2.5.3 必須パッケージ
@@ -2266,3 +2266,4 @@ func (s *Server) Shutdown(ctx context.Context) error {
 | r16 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 4（待ち受けの失敗での終了、パニックの回復、ビルドの版の埋め込み）の反映: §10.3 の main.go を実装に同期（`build`、起動ログの `build`、`runServer` に分けた起動・シグナル待機・停止、シグナルの前にサーバーが終わったら `SYS_LISTEN_ERR` を出して終了コード 1）し、`internal/server/server.go` を実装に同期（`Handler: recoverHandler(handler)`、パケットの処理中のパニックを回復して `SYS_PANIC` を出し、そのパケットには応答しない）して説明を追加。§7.1.4（システムエラー）を新設し、§8.1 の event_id 一覧に `SYS_LISTEN_ERR`・`SYS_PANIC` を追加。§2.1 のディレクトリ構造に `main_test.go` を追加。§2.5.1 の Dockerfile に `ARG VERSION=dev` と `-X main.build=${VERSION}` を追加し、§2.5.3 の注記に待ち受けの失敗で終了するため `pgrep` が通り続けないことを追記 |
 | r17 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 6（文書の整理）の反映: §1.3 の関連ドキュメントの表から、他の文書の版数を外した（10 か所。今の版はドキュメント一覧で分かるため、参照に版を書かない） |
 | r18 | 2026-10-23 | PoC セット（eapaka-pocset）の pocset-v1.0.1（Go 1.27.3 への更新。crypto/x509 の CVE-2026-111943（GO-2026-6809）の修正）の反映: Dockerfile 方針のビルドのイメージを実ファイルに同期（§2.5.1 の Dockerfile の例と §2.5.2 のベースイメージ選定の表を `golang:1.27.2-bookworm` → `golang:1.27.3-bookworm`（Go 1.27.3）に） |
+| r19 | 2026-11-16 | PoC セット（eapaka-pocset）の pocset-v1.0.2（Go 1.27.4 への更新。net/http の CVE-2026-97054（GO-2026-6859）の修正）の反映: Dockerfile 方針のビルドのイメージを実ファイルに同期（§2.5.1 の Dockerfile の例と §2.5.2 のベースイメージ選定の表を `golang:1.27.3-bookworm` → `golang:1.27.4-bookworm`（Go 1.27.4）に） |
