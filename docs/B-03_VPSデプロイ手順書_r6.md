@@ -1,4 +1,4 @@
-# B-03 VPSデプロイ手順書（AWS Lightsail）(r5)
+# B-03 VPSデプロイ手順書（AWS Lightsail）(r6)
 
 ## 1. 概要
 
@@ -395,14 +395,14 @@ docker compose pull valkey fluent-bit
 ```bash
 cd ~/eapaka-radius-server-poc
 docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e CGO_ENABLED=0 \
-  -v "$PWD":/src -w /src golang:1.27.3-bookworm \
+  -v "$PWD":/src -w /src golang:1.27.4-bookworm \
   go build -buildvcs=false -o /src/admin-tui-linux ./apps/admin-tui
 mv admin-tui-linux ~/admin-tui
 chmod +x ~/admin-tui
 ```
 
 - `--user` で自分のユーザーとして実行し、出来上がったファイルが自分の所有になるようにする。`-buildvcs=false` は、コンテナ内で git の VCS 情報を取得できずにビルドが失敗するのを避けるためである（root で実行した検証では `error obtaining VCS status` で失敗した）。
-- 使い終わった golang イメージは `docker image rm golang:1.27.3-bookworm` で削除してよい（次のイメージビルドで再び取得される）。
+- 使い終わった golang イメージは `docker image rm golang:1.27.4-bookworm` で削除してよい（次のイメージビルドで再び取得される）。
 
 動作確認は B-02 §7.3 のとおりだが、VPS では Valkey のパスワードをコマンドラインに直接書かない（シェルの履歴に残るため）。`.env` を読み込んでから起動する。
 
@@ -519,3 +519,4 @@ B-01 §9・B-02 §11 に加えて確認する。D-08 §8（セキュリティチ
 | r3 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 3（Go 1.27.2 への更新とイメージの版の固定）の反映: admin-tui を golang のコンテナでビルドする手順のイメージを `golang:1.25-bookworm` → `golang:1.27.2-bookworm` に |
 | r4 | 2026-10-12 | PoC セット（eapaka-pocset）の品質改善のステップ 6（文書の整理）の反映: §1.5 の関連ドキュメントの表から、他の文書の版数を外した（8 か所。今の版はドキュメント一覧で分かるため、参照に版を書かない）。§5.7 のメモリが少ないときのサービスごとのビルドに `POC_VERSION`（起動ログの `build` に出るビルドの版。B-02 §6.1、D-08 §4.2）を付け（`export POC_VERSION=$(git rev-parse --short HEAD)`）、付けないと `dev` になる旨と provisioning-api のビルドの注記を追加。一括ビルドの例も `POC_VERSION` 付きに |
 | r5 | 2026-10-23 | PoC セット（eapaka-pocset）の pocset-v1.0.1（Go 1.27.3 への更新。crypto/x509 の CVE-2026-111943（GO-2026-6809）の修正）の反映: §5.8 の admin-tui を golang のコンテナでビルドする手順のイメージを `golang:1.27.2-bookworm` → `golang:1.27.3-bookworm` に（2 か所） |
+| r6 | 2026-11-16 | PoC セット（eapaka-pocset）の pocset-v1.0.2（Go 1.27.4 への更新。net/http の CVE-2026-97054（GO-2026-6859）の修正）の反映: §5.8 の admin-tui を golang のコンテナでビルドする手順のイメージを `golang:1.27.3-bookworm` → `golang:1.27.4-bookworm` に（2 か所） |

@@ -1,6 +1,6 @@
 module github.com/oyaguma3/eapaka-radius-server-poc/apps/vector-gateway
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/gin-gonic/gin v1.11.0
